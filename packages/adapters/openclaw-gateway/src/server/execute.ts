@@ -1136,7 +1136,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     idempotencyKey: ctx.runId,
   };
   delete agentParams.text;
-  agentParams.paperclip = paperclipPayload;
+  // Move paperclip context to extraSystemPrompt to avoid OpenClaw schema rejection
+  // (OpenClaw uses additionalProperties: false and rejects unknown root-level fields)
+  const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
+  agentParams.extraSystemPrompt = paperclipContextXml;
 
   const configuredAgentId = nonEmpty(ctx.config.agentId);
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
