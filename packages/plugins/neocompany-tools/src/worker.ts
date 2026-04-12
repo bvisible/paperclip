@@ -12,7 +12,7 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext, ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS, type ToolContextAccess } from "./tools/index.js";
-import { TOOL_REGISTRY } from "./tools/registry.js";
+import { TOOL_REGISTRY, CATEGORY_LABELS, type ToolMetadata } from "./tools/registry.js";
 
 const PLUGIN_NAME = "neocompany-tools";
 
@@ -142,14 +142,105 @@ async function checkAccess(
 }
 
 // ---------------------------------------------------------------------------
-// Plugin definition
+// UI data + actions helpers
 // ---------------------------------------------------------------------------
+
+interface CategoryToggleState {
+  [category: string]: boolean;
+}
+
+async function getCategoryToggles(ctx: PluginContext, companyId: string): Promise<CategoryToggleState> {
+  const raw = await ctx.state.get({
+    scopeKind: "company",
+    scopeId: companyId,
+    stateKey: "access:categories",
+  });
+  return (raw ?? {}) as CategoryToggleState;
+}
+
+async function setCategoryToggles(
+  ctx: PluginContext,
+  companyId: string,
+  value: CategoryToggleState,
+): Promise<void> {
+  await ctx.state.set(
+    {
+      scopeKind: "company",
+      scopeId: companyId,
+      stateKey: "access:categories",
+    },
+    value as unknown,
+  );
+}
 
 const plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info(`${PLUGIN_NAME} plugin setup — registering ${ALL_TOOLS.length} tool(s)`);
 
     const ctxAccess = makeCtxAccess(ctx);
+
+    // ── Data: full tool catalog grouped by category ──────────────────
+    ctx.data.register("toolCatalog", async () => {
+      const byCategory: Record<string, { label: string; tools: ToolMetadata[] }> = {};
+      for (const meta of Object.values(TOOL_REGISTRY)) {
+        const key = meta.category as string;
+        if (!byCategory[key]) {
+          byCategory[key] = {
+            label: CATEGORY_LABELS[meta.category] ?? key,
+            tools: [],
+          };
+        }
+        byCategory[key].tools.push(meta);
+      }
+      return {
+        toolCount: Object.keys(TOOL_REGISTRY).length,
+        categories: byCategory,
+      };
+    });
+
+    // ── Data: current access state for a company (category toggles) ──
+    ctx.data.register("accessState", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { categoryToggles: {} };
+      const categoryToggles = await getCategoryToggles(ctx, companyId);
+      return { companyId, categoryToggles };
+    });
+
+    // ── Data: plugin instance config summary (which secrets are set) ─
+    ctx.data.register("configSummary", async () => {
+      const cfg = await readInstanceConfig(ctx);
+      return {
+        googleOAuthConfigured:
+          Boolean(cfg.googleClientId) &&
+          Boolean(cfg.googleClientSecretRef) &&
+          Boolean(cfg.googleRefreshTokenRef),
+        googlePsiKeyConfigured: Boolean(cfg.googlePsiApiKeyRef),
+        resendConfigured: Boolean(cfg.resendApiKeyRef),
+        defaultFromAddress: cfg.defaultFromAddress ?? "",
+      };
+    });
+
+    // ── Action: enable/disable a category toggle for a company ───────
+    ctx.actions.register("setCategoryEnabled", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const category = params.category as string;
+      const enabled = params.enabled as boolean;
+      if (!companyId || !category || typeof enabled !== "boolean") {
+        throw new Error("setCategoryEnabled requires companyId, category, enabled");
+      }
+      const current = await getCategoryToggles(ctx, companyId);
+      current[category] = enabled;
+      await setCategoryToggles(ctx, companyId, current);
+      await ctx.activity.log({
+        companyId,
+        message: `Category "${category}" ${enabled ? "enabled" : "disabled"}`,
+        entityType: "plugin-tool-settings",
+        entityId: category,
+        metadata: { category, enabled },
+      });
+      return { ok: true, category, enabled };
+    });
+
 
     for (const tool of ALL_TOOLS) {
       ctx.tools.register(
