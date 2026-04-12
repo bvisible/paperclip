@@ -156,6 +156,7 @@ export interface PluginToolDispatcher {
   registerPluginTools(
     pluginId: string,
     manifest: PaperclipPluginManifestV1,
+    pluginDbId?: string,
   ): void;
 
   /**
@@ -443,8 +444,13 @@ export function createPluginToolDispatcher(
     registerPluginTools(
       pluginId: string,
       manifest: PaperclipPluginManifestV1,
+      pluginDbId?: string,
     ): void {
-      registry.registerPlugin(pluginId, manifest);
+      // `pluginId` here is typically the plugin *key* (e.g. "neocompany-tools"),
+      // while the worker manager is keyed by the plugin DB UUID. Propagate the
+      // explicit DB id so downstream `executeTool` can look up the worker
+      // correctly; fall back to the key for backwards compatibility.
+      registry.registerPlugin(pluginId, manifest, pluginDbId);
     },
 
     unregisterPluginTools(pluginId: string): void {
