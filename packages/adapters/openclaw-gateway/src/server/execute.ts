@@ -330,6 +330,29 @@ function resolvePaperclipApiUrlOverride(value: unknown): string | null {
   }
 }
 
+/**
+ * Resolve the API URL used by the agent to call back into Paperclip.
+ * Fallback chain:
+ *   1. Adapter config override (`paperclipApiUrl`) — explicit, highest priority.
+ *   2. `PAPERCLIP_PUBLIC_URL` env var — the operator-configured public URL.
+ *   3. `http://127.0.0.1:{PORT|3100}` — loopback, works when the gateway runs
+ *      on the same host as the Paperclip server (our default topology).
+ */
+function resolvePaperclipApiUrlForAgent(value: unknown): string {
+  const override = resolvePaperclipApiUrlOverride(value);
+  if (override) return override;
+  const publicUrl = nonEmpty(process.env.PAPERCLIP_PUBLIC_URL);
+  if (publicUrl) {
+    try {
+      return new URL(publicUrl).toString().replace(/\/$/, "");
+    } catch {
+      // fall through
+    }
+  }
+  const port = nonEmpty(process.env.PORT) ?? "3100";
+  return `http://127.0.0.1:${port}`;
+}
+
 const DEFAULT_CLAIMED_API_KEY_PATH = "~/.openclaw/workspace/paperclip-claimed-api-key.json";
 
 function resolveClaimedApiKeyPath(value: unknown): string {
@@ -337,15 +360,15 @@ function resolveClaimedApiKeyPath(value: unknown): string {
 }
 
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
-  const paperclipApiUrlOverride = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
   const paperclipEnv: Record<string, string> = {
     ...buildPaperclipEnv(ctx.agent),
     PAPERCLIP_RUN_ID: ctx.runId,
   };
 
-  if (paperclipApiUrlOverride) {
-    paperclipEnv.PAPERCLIP_API_URL = paperclipApiUrlOverride;
-  }
+  // Always expose a usable PAPERCLIP_API_URL so plugin tools + wake text
+  // instructions have a concrete callback endpoint, even when the agent's
+  // adapter config doesn't override it.
+  paperclipEnv.PAPERCLIP_API_URL = resolvePaperclipApiUrlForAgent(ctx.config.paperclipApiUrl);
   if (wakePayload.taskId) paperclipEnv.PAPERCLIP_TASK_ID = wakePayload.taskId;
   if (wakePayload.wakeReason) paperclipEnv.PAPERCLIP_WAKE_REASON = wakePayload.wakeReason;
   if (wakePayload.wakeCommentId) paperclipEnv.PAPERCLIP_WAKE_COMMENT_ID = wakePayload.wakeCommentId;
@@ -1057,8 +1080,17 @@ interface PaperclipToolDescriptor {
  * Tools are invoked by the agent against Paperclip's existing
  * `POST /api/plugins/tools/execute` endpoint using the PAPERCLIP_API_KEY
  * that was already dropped in the claimed-api-key file.
+ *
+ * Caller passes the resolved `apiBase` + `claimedKeyPath` so chat sessions
+ * (which skip the task wake text where these values are normally exposed)
+ * still get a self-contained invocation guide.
  */
-function buildPaperclipToolsXml(ctx: AdapterExecutionContext): string | null {
+function buildPaperclipToolsXml(
+  ctx: AdapterExecutionContext,
+  apiBase: string | null,
+  claimedKeyPath: string,
+  runId: string,
+): string | null {
   const raw = (ctx.context as Record<string, unknown>).availableTools;
   if (!Array.isArray(raw) || raw.length === 0) return null;
 
@@ -1067,17 +1099,23 @@ function buildPaperclipToolsXml(ctx: AdapterExecutionContext): string | null {
   );
   if (tools.length === 0) return null;
 
+  const resolvedApiBase = apiBase ?? "(unresolved — ask the user for the Paperclip API URL)";
+
   const parts: string[] = [
     "<paperclip-tools>",
     "  <description>",
-    "    You have access to the following Paperclip plugin tools. To call one:",
-    "      1. Read PAPERCLIP_API_KEY from ~/.openclaw/workspace/paperclip-claimed-api-key.json (already on disk).",
-    "      2. POST $PAPERCLIP_API_URL/api/plugins/tools/execute",
-    "         Headers: Authorization: Bearer $PAPERCLIP_API_KEY, X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID, Content-Type: application/json",
-    "         Body:    { \"tool\": \"<namespacedName>\", \"parameters\": { ... matching the schema ... } }",
-    "      3. The server derives agentId/companyId/runId from your claimed key + the X-Paperclip-Run-Id header. You do not need to send a runContext.",
-    "      4. The response is { \"pluginId\", \"toolName\", \"result\": { \"content\"?, \"data\"?, \"error\"? } }. Read `result.content` for the human-readable summary.",
-    "    Use tools when they are the fastest path to the answer. Prefer your own knowledge when it suffices.",
+    "    You have access to the following Paperclip plugin tools. They run on the Paperclip server and you call them over HTTP from your shell.",
+    "    To invoke a tool:",
+    `      1. Read the JSON file ${claimedKeyPath}. It contains { apiUrl, apiKey, agentId, companyId, agentName }. Use apiKey as your bearer token.`,
+    `      2. POST ${resolvedApiBase}/api/plugins/tools/execute`,
+    "         Headers:",
+    "           Authorization: Bearer <apiKey from the claimed file>",
+    `           X-Paperclip-Run-Id: ${runId}`,
+    "           Content-Type: application/json",
+    "         Body: { \"tool\": \"<namespacedName>\", \"parameters\": { ... matches the tool schema ... } }",
+    "      3. The server derives agentId/companyId/runId from your credentials + the X-Paperclip-Run-Id header. You do NOT need to include a runContext in the body.",
+    "      4. Response shape: { \"pluginId\", \"toolName\", \"result\": { \"content\"?, \"data\"?, \"error\"? } }. Echo `result.content` back to the user verbatim when the call succeeds; surface `result.error` clearly if it fails.",
+    "    Only call a tool when it's the fastest path to the answer. Prefer your own knowledge when it suffices.",
     "  </description>",
   ];
 
@@ -1199,8 +1237,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
   // Expose plugin-contributed agent tools via a structured system-prompt block.
   // Each tool lists its JSON schema plus a ready-to-run curl example that uses
-  // the PAPERCLIP_API_KEY the agent already has on disk.
-  const toolsXml = buildPaperclipToolsXml(ctx);
+  // the PAPERCLIP_API_KEY the agent already has on disk. We inline the
+  // resolved API base + claimed-key path so chat sessions (which skip the
+  // task wake text) stay self-contained.
+  const claimedKeyPath = resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath);
+  const toolsXml = buildPaperclipToolsXml(
+    ctx,
+    paperclipEnv.PAPERCLIP_API_URL ?? null,
+    claimedKeyPath,
+    ctx.runId,
+  );
   agentParams.extraSystemPrompt = toolsXml
     ? `${paperclipContextXml}\n${toolsXml}`
     : paperclipContextXml;

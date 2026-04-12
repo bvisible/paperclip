@@ -9,6 +9,8 @@
 
 import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams, type GscConfig } from "./seo/gsc-keywords.js";
+import { runSeoRobotsCheck, seoRobotsCheckDeclaration, type SeoRobotsCheckParams } from "./seo/robots-check.js";
+import { runSeoSitemapCheck, seoSitemapCheckDeclaration, type SeoSitemapCheckParams } from "./seo/sitemap-check.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 
 export interface RegisteredToolEntry {
@@ -36,6 +38,20 @@ export interface ToolContextAccess {
 }
 
 export const ALL_TOOLS: RegisteredToolEntry[] = [
+  // ─── Zero-config SEO tools (no secrets required) ─────────────────────
+  {
+    name: "seoRobotsCheck",
+    declaration: seoRobotsCheckDeclaration,
+    run: async (params, runCtx, _ctxAccess) =>
+      runSeoRobotsCheck(params as SeoRobotsCheckParams, runCtx),
+  },
+  {
+    name: "seoSitemapCheck",
+    declaration: seoSitemapCheckDeclaration,
+    run: async (params, runCtx, _ctxAccess) =>
+      runSeoSitemapCheck(params as SeoSitemapCheckParams, runCtx),
+  },
+  // ─── SEO tools that need Google OAuth ────────────────────────────────
   {
     name: "seoGscKeywords",
     declaration: seoGscKeywordsDeclaration,
@@ -44,6 +60,7 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
       return runSeoGscKeywords(params as SeoGscKeywordsParams, config, runCtx);
     },
   },
+  // ─── Email (provider secret required) ────────────────────────────────
   {
     name: "emailSendMessage",
     declaration: emailSendMessageDeclaration,

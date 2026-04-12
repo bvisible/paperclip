@@ -50,7 +50,24 @@ export const CATEGORY_LABELS: Record<ToolCategory, string> = {
 };
 
 export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
-  // ─── SEO (MVP: GSC keywords is the first tool we port) ───────────────
+  // ─── SEO — zero-config ───────────────────────────────────────────────
+  seoRobotsCheck: {
+    name: "seoRobotsCheck",
+    label: "Check robots.txt",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["seo", "main"],
+  },
+  seoSitemapCheck: {
+    name: "seoSitemapCheck",
+    label: "Check sitemap.xml",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["seo", "main"],
+  },
+  // ─── SEO — Google OAuth required ────────────────────────────────────
   seoGscKeywords: {
     name: "seoGscKeywords",
     label: "GSC keywords performance",
@@ -60,8 +77,7 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     connectionTrigger: "google",
     allowedRoles: ["seo", "main"],
   },
-
-  // ─── Email (MVP: send is the second tool we port) ────────────────────
+  // ─── Email ───────────────────────────────────────────────────────────
   emailSendMessage: {
     name: "emailSendMessage",
     label: "Send email",
