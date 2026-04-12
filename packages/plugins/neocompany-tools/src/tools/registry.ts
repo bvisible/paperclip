@@ -83,6 +83,22 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["seo", "main"],
   },
+  seoCompetitorPageRank: {
+    name: "seoCompetitorPageRank",
+    label: "Competitor PageRank comparison",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["seo", "main"],
+  },
+  contentGenerateSocialPosts: {
+    name: "contentGenerateSocialPosts",
+    label: "Social formatting guidelines",
+    category: ToolCategory.CONTENT,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["writer", "community", "main"],
+  },
   // ─── SEO — Google OAuth required ────────────────────────────────────
   seoGscKeywords: {
     name: "seoGscKeywords",

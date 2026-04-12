@@ -75,6 +75,13 @@ const manifest: PaperclipPluginManifestV1 = {
           "Optional secret reference to a Google PSI API key. If unset, the public quota is used (fine for low volume).",
         format: "secret-ref",
       },
+      openPageRankApiKeyRef: {
+        type: "string",
+        title: "Open PageRank API Key (optional)",
+        description:
+          "Optional secret reference to an Open PageRank API key. The API also answers anonymous calls at low volume.",
+        format: "secret-ref",
+      },
       resendApiKeyRef: {
         type: "string",
         title: "Resend API Key",

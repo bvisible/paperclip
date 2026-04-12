@@ -13,6 +13,8 @@ import { runSeoRobotsCheck, seoRobotsCheckDeclaration, type SeoRobotsCheckParams
 import { runSeoSitemapCheck, seoSitemapCheckDeclaration, type SeoSitemapCheckParams } from "./seo/sitemap-check.js";
 import { runSeoPageSpeed, seoPageSpeedDeclaration, type SeoPageSpeedParams, type PageSpeedConfig } from "./seo/pagespeed.js";
 import { runSeoContentAudit, seoContentAuditDeclaration, type SeoContentAuditParams } from "./seo/content-audit.js";
+import { runSeoCompetitorPageRank, seoCompetitorPageRankDeclaration, type SeoCompetitorPageRankParams, type OpenPageRankConfig } from "./seo/competitor-pagerank.js";
+import { runContentGenerateSocialPosts, contentGenerateSocialPostsDeclaration, type ContentGenerateSocialPostsParams } from "./content/generate-social-posts.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 
 export interface RegisteredToolEntry {
@@ -38,6 +40,7 @@ export interface ToolContextAccess {
   getGscConfig(companyId: string): Promise<GscConfig>;
   getEmailSendConfig(companyId: string, agentId: string): Promise<EmailSendConfig>;
   getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
+  getOpenPageRankConfig(companyId: string): Promise<OpenPageRankConfig>;
 }
 
 export const ALL_TOOLS: RegisteredToolEntry[] = [
@@ -67,6 +70,21 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: seoContentAuditDeclaration,
     run: async (params, runCtx, _ctxAccess) =>
       runSeoContentAudit(params as SeoContentAuditParams, runCtx),
+  },
+  {
+    name: "seoCompetitorPageRank",
+    declaration: seoCompetitorPageRankDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getOpenPageRankConfig(runCtx.companyId);
+      return runSeoCompetitorPageRank(params as SeoCompetitorPageRankParams, config, runCtx);
+    },
+  },
+  // ─── Content (stateless) ─────────────────────────────────────────────
+  {
+    name: "contentGenerateSocialPosts",
+    declaration: contentGenerateSocialPostsDeclaration,
+    run: async (params, runCtx, _ctxAccess) =>
+      runContentGenerateSocialPosts(params as ContentGenerateSocialPostsParams, runCtx),
   },
   // ─── SEO tools that need Google OAuth ────────────────────────────────
   {

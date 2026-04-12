@@ -21,6 +21,7 @@ interface InstanceConfig {
   googleClientSecretRef?: string;
   googleRefreshTokenRef?: string;
   googlePsiApiKeyRef?: string;
+  openPageRankApiKeyRef?: string;
   resendApiKeyRef?: string;
   defaultFromAddress?: string;
 }
@@ -60,6 +61,13 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
         return {};
       }
       const apiKey = await ctx.secrets.resolve(cfg.googlePsiApiKeyRef);
+      return { apiKey };
+    },
+
+    async getOpenPageRankConfig(_companyId: string) {
+      const cfg = await readInstanceConfig(ctx);
+      if (!cfg.openPageRankApiKeyRef) return {};
+      const apiKey = await ctx.secrets.resolve(cfg.openPageRankApiKeyRef);
       return { apiKey };
     },
 
