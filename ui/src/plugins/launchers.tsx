@@ -16,6 +16,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { MessageCircle, Puzzle } from "lucide-react";
 import { PLUGIN_LAUNCHER_BOUNDS } from "@paperclipai/shared";
 import type {
   PluginLauncherBounds,
@@ -733,6 +734,13 @@ export function usePluginLauncherRuntime(): PluginLauncherRuntimeContextValue {
   return value;
 }
 
+function pickLauncherIcon(launcher: ResolvedPluginLauncher) {
+  // Map known plugin launchers to a friendly icon. Unknown launchers fall back
+  // to a neutral puzzle-piece so they still line up with native nav items.
+  if (launcher.pluginKey === "paperclip-chat" || launcher.id === "chat-nav") return MessageCircle;
+  return Puzzle;
+}
+
 function DefaultLauncherTrigger({
   launcher,
   placementZone,
@@ -742,6 +750,8 @@ function DefaultLauncherTrigger({
   placementZone: PluginLauncherPlacementZone;
   onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
 }) {
+  const Icon = pickLauncherIcon(launcher);
+  const isSidebar = placementZone === "sidebar" || placementZone === "sidebarPanel";
   return (
     <Button
       type="button"
@@ -750,7 +760,14 @@ function DefaultLauncherTrigger({
       className={launcherTriggerClassName(placementZone)}
       onClick={onClick}
     >
-      {launcher.displayName}
+      {isSidebar ? (
+        <span className="flex items-center gap-2.5 w-full">
+          <Icon className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate text-left">{launcher.displayName}</span>
+        </span>
+      ) : (
+        launcher.displayName
+      )}
     </Button>
   );
 }
