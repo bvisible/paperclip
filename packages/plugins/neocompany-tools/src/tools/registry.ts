@@ -182,6 +182,15 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     connectionTrigger: "google",
     allowedRoles: ["seo", "main"],
   },
+  seoTrendAnalysis: {
+    name: "seoTrendAnalysis",
+    label: "SEO trend analysis",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["seo", "main"],
+  },
   seoGa4Traffic: {
     name: "seoGa4Traffic",
     label: "GA4 traffic snapshot",

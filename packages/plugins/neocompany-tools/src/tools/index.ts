@@ -11,6 +11,7 @@ import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams } from "./seo/gsc-keywords.js";
 import { runSeoGscTopPages, seoGscTopPagesDeclaration, type SeoGscTopPagesParams } from "./seo/gsc-top-pages.js";
 import { runSeoQuickWins, seoQuickWinsDeclaration, type SeoQuickWinsParams } from "./seo/quick-wins.js";
+import { runSeoTrendAnalysis, seoTrendAnalysisDeclaration, type SeoTrendAnalysisParams } from "./seo/trend-analysis.js";
 import { runSeoGa4Traffic, seoGa4TrafficDeclaration, type SeoGa4TrafficParams } from "./seo/ga4-traffic.js";
 import { runSeoGa4TopPages, seoGa4TopPagesDeclaration, type SeoGa4TopPagesParams } from "./seo/ga4-top-pages.js";
 import type { GscConfig } from "../adapters/gsc.js";
@@ -173,6 +174,14 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const config = await ctxAccess.getGscConfig(runCtx.companyId);
       return runSeoQuickWins(params as SeoQuickWinsParams, config, runCtx);
+    },
+  },
+  {
+    name: "seoTrendAnalysis",
+    declaration: seoTrendAnalysisDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGscConfig(runCtx.companyId);
+      return runSeoTrendAnalysis(params as SeoTrendAnalysisParams, config, runCtx);
     },
   },
   {
