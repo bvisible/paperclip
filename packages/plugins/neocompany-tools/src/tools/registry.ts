@@ -155,6 +155,24 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     connectionTrigger: "google",
     allowedRoles: ["seo", "main"],
   },
+  seoGscTopPages: {
+    name: "seoGscTopPages",
+    label: "GSC top pages",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["seo", "main"],
+  },
+  seoQuickWins: {
+    name: "seoQuickWins",
+    label: "SEO quick wins",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["seo", "main"],
+  },
   // ─── Email ───────────────────────────────────────────────────────────
   emailSendMessage: {
     name: "emailSendMessage",

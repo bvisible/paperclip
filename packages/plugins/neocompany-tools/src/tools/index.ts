@@ -8,7 +8,10 @@
  */
 
 import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
-import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams, type GscConfig } from "./seo/gsc-keywords.js";
+import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams } from "./seo/gsc-keywords.js";
+import { runSeoGscTopPages, seoGscTopPagesDeclaration, type SeoGscTopPagesParams } from "./seo/gsc-top-pages.js";
+import { runSeoQuickWins, seoQuickWinsDeclaration, type SeoQuickWinsParams } from "./seo/quick-wins.js";
+import type { GscConfig } from "../adapters/gsc.js";
 import { runSeoRobotsCheck, seoRobotsCheckDeclaration, type SeoRobotsCheckParams } from "./seo/robots-check.js";
 import { runSeoSitemapCheck, seoSitemapCheckDeclaration, type SeoSitemapCheckParams } from "./seo/sitemap-check.js";
 import { runSeoPageSpeed, seoPageSpeedDeclaration, type SeoPageSpeedParams, type PageSpeedConfig } from "./seo/pagespeed.js";
@@ -141,6 +144,22 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const config = await ctxAccess.getGscConfig(runCtx.companyId);
       return runSeoGscKeywords(params as SeoGscKeywordsParams, config, runCtx);
+    },
+  },
+  {
+    name: "seoGscTopPages",
+    declaration: seoGscTopPagesDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGscConfig(runCtx.companyId);
+      return runSeoGscTopPages(params as SeoGscTopPagesParams, config, runCtx);
+    },
+  },
+  {
+    name: "seoQuickWins",
+    declaration: seoQuickWinsDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGscConfig(runCtx.companyId);
+      return runSeoQuickWins(params as SeoQuickWinsParams, config, runCtx);
     },
   },
   // ─── Email (provider secret required) ────────────────────────────────
