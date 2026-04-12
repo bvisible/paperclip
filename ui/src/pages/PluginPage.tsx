@@ -53,7 +53,10 @@ export function PluginPage() {
   const pageSlot = useMemo(() => {
     if (!contributions) return null;
     if (pluginId) {
-      const contribution = contributions.find((c) => c.pluginId === pluginId);
+      // Match by plugin key first (URL-friendly), then by UUID as fallback
+      const contribution =
+        contributions.find((c) => c.pluginKey === pluginId) ??
+        contributions.find((c) => c.pluginId === pluginId);
       if (!contribution) return null;
       const slot = contribution.slots.find((s) => s.type === "page");
       if (!slot) return null;
