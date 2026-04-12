@@ -160,9 +160,8 @@ export async function runImapPollJob(
     // Emit a plugin event so other plugins (e.g. paperclip-chat) can react.
     if (result.messages.length > 0) {
       try {
-        await ctx.events.emit("email.received", {
+        await ctx.events.emit("email.received", accountRecord.scopeId, {
           accountId: accountRecord.id,
-          companyId: accountRecord.scopeId,
           count: result.messages.length,
         });
       } catch { /* best-effort — capability may be missing */ }
