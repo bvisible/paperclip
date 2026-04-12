@@ -12,7 +12,7 @@ const manifest: PaperclipPluginManifestV1 = {
   description:
     "Business tools for NeoCompany agents: SEO (Google Search Console, GA4, PageSpeed), WordPress, social media, email, designer, and ad campaigns. Ported from the legacy Postiz stack.",
   author: "NeoCompany",
-  categories: ["integrations", "automation"],
+  categories: ["automation", "connector"],
   capabilities: [
     // Tools declared below + runtime handlers registered by the worker
     "agent.tools.register",

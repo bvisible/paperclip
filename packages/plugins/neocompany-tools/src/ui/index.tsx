@@ -1,17 +1,15 @@
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
-import { useHostContext } from "@paperclipai/plugin-sdk/ui";
 
 // Phase 1 scaffold: minimal placeholder page. The full Settings UI
 // (per-tool toggles, agent × tool matrix, secrets config) ships in Phase 3.
 
 export function SettingsPage(_props: PluginPageProps) {
-  const host = useHostContext();
   return (
     <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 840 }}>
       <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>NeoCompany Tools</h1>
       <p style={{ color: "#6b7280", marginBottom: 24 }}>
-        Tools available to {host?.company?.name ?? "your company"} agents. Configure global
-        category toggles, per-agent allowlists, and provider credentials here.
+        Tools available to your company's agents. Configure global category toggles,
+        per-agent allowlists, and provider credentials here.
       </p>
       <div
         style={{
