@@ -1,13 +1,11 @@
 import { useEffect, useMemo } from "react";
-import { Link, Navigate, useParams } from "@/lib/router";
+import { Navigate, useParams } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
 import { PluginSlotMount } from "@/plugins/slots";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
 import { NotFoundPage } from "./NotFound";
 
 /**
@@ -139,19 +137,11 @@ export function PluginPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" asChild>
-          <Link to={companyPrefix ? `/${companyPrefix}/dashboard` : "/dashboard"}>
-            <ArrowLeft className="h-4 w-4 mr-1" />
-            Back
-          </Link>
-        </Button>
-      </div>
+    <div className="h-full flex flex-col -m-6">
       <PluginSlotMount
         slot={pageSlot}
         context={context}
-        className="min-h-[200px]"
+        className="flex-1 min-h-0"
         missingBehavior="placeholder"
       />
     </div>

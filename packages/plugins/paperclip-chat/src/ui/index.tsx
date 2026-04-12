@@ -50,15 +50,6 @@ function IconPlus({ size = 16, color = "currentColor" }: { size?: number; color?
   );
 }
 
-function IconUser({ size = 16, color = "currentColor" }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
 function IconStop({ size = 16, color = "currentColor" }: { size?: number; color?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
@@ -445,13 +436,26 @@ function MessageRow({ msg, agentName }: { msg: ChatMessage; agentName?: string |
   const isUser = msg.role === "user";
   const storedSegments = msg.metadata?.segments;
   const hasSegments = storedSegments && storedSegments.length > 0;
-  const displayName = isUser ? "You" : (agentName ?? "Agent");
+
+  if (isUser) {
+    // User messages: right-aligned bubble, no avatar, no name — own side of the conversation.
+    return (
+      <div className="chat-msg-enter flex justify-end py-2">
+        <div className="max-w-[75%] rounded-2xl bg-primary text-primary-foreground px-4 py-2.5 text-sm leading-relaxed shadow-sm">
+          <p className="m-0 whitespace-pre-wrap break-words"><IssueLinkedText text={msg.content} /></p>
+          <div className="text-[10px] opacity-60 mt-1 text-right">{formatTime(msg.createdAt)}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const displayName = agentName ?? "Agent";
   const avatarInitial = (agentName ?? "A").trim().charAt(0).toUpperCase() || "A";
 
   return (
     <div className="chat-msg-enter flex gap-3 py-4">
-      <div className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-px ${isUser ? "bg-muted-foreground text-white" : "bg-primary/10 text-primary"}`}>
-        {isUser ? <IconUser size={15} /> : <span className="text-[13px] font-bold">{avatarInitial}</span>}
+      <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-px bg-primary/10 text-primary">
+        <span className="text-[13px] font-bold">{avatarInitial}</span>
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 mb-1">
@@ -463,9 +467,7 @@ function MessageRow({ msg, agentName }: { msg: ChatMessage; agentName?: string |
           </span>
         </div>
         <div className="text-sm text-foreground leading-relaxed">
-          {isUser ? (
-            <p className="m-0 whitespace-pre-wrap"><IssueLinkedText text={msg.content} /></p>
-          ) : hasSegments ? (
+          {hasSegments ? (
             groupSegments(storedSegments).map((group, i) => {
               if (group.type === "text") {
                 return (
@@ -1338,7 +1340,7 @@ export function ChatPage(_props: PluginPageProps) {
           <div className="border-t border-border py-3 px-8 bg-card">
             <ChatInput
               {...inputProps}
-              placeholder="Ask Paperclip anything..."
+              placeholder={`Ask ${selectedThread?.agentName ?? "your agent"} anything...`}
             />
           </div>
         )}
