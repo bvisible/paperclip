@@ -99,6 +99,15 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["writer", "community", "main"],
   },
+  contentTopicIdeas: {
+    name: "contentTopicIdeas",
+    label: "Content topic ideas",
+    category: ToolCategory.CONTENT,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["writer", "community", "main"],
+  },
   // ─── WordPress ───────────────────────────────────────────────────────
   wpListPosts: {
     name: "wpListPosts",

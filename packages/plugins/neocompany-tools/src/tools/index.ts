@@ -18,6 +18,7 @@ import { runSeoPageSpeed, seoPageSpeedDeclaration, type SeoPageSpeedParams, type
 import { runSeoContentAudit, seoContentAuditDeclaration, type SeoContentAuditParams } from "./seo/content-audit.js";
 import { runSeoCompetitorPageRank, seoCompetitorPageRankDeclaration, type SeoCompetitorPageRankParams, type OpenPageRankConfig } from "./seo/competitor-pagerank.js";
 import { runContentGenerateSocialPosts, contentGenerateSocialPostsDeclaration, type ContentGenerateSocialPostsParams } from "./content/generate-social-posts.js";
+import { runContentTopicIdeas, contentTopicIdeasDeclaration, type ContentTopicIdeasParams } from "./content/topic-ideas.js";
 import { runWpListPosts, wpListPostsDeclaration, type WpListPostsParams } from "./wordpress/list-posts.js";
 import { runWpCreatePost, wpCreatePostDeclaration, type WpCreatePostParams } from "./wordpress/create-post.js";
 import { runWpUpdatePost, wpUpdatePostDeclaration, type WpUpdatePostParams } from "./wordpress/update-post.js";
@@ -95,6 +96,14 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: contentGenerateSocialPostsDeclaration,
     run: async (params, runCtx, _ctxAccess) =>
       runContentGenerateSocialPosts(params as ContentGenerateSocialPostsParams, runCtx),
+  },
+  {
+    name: "contentTopicIdeas",
+    declaration: contentTopicIdeasDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGscConfig(runCtx.companyId);
+      return runContentTopicIdeas(params as ContentTopicIdeasParams, config, runCtx);
+    },
   },
   // ─── WordPress (Application Password required) ──────────────────────
   {
