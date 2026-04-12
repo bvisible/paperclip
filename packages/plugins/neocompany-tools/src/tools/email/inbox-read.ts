@@ -30,7 +30,7 @@ export async function runEmailReadMessage(
   const record = candidates.find((r) => r.id === params.id);
   if (!record) return { error: `incoming_email "${params.id}" not found in this company` };
 
-  const data = record.data as IncomingEmailData;
+  const data = record.data as unknown as IncomingEmailData;
   const body = data.bodyText ?? data.bodyHtml ?? "(empty body)";
 
   const summary =

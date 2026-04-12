@@ -36,7 +36,7 @@ export async function runImapPollJob(
   let polled = 0;
   let skipped = 0;
   for (const accountRecord of accounts) {
-    const data = (accountRecord.data ?? {}) as EmailAccountData;
+    const data = (accountRecord.data ?? {}) as unknown as EmailAccountData;
     if (!data.pollingEnabled) {
       skipped++;
       continue;

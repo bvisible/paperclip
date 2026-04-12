@@ -34,7 +34,7 @@ export async function runEmailListMessages(
 
   const messages = records
     .map((r) => {
-      const data = r.data as IncomingEmailData;
+      const data = r.data as unknown as IncomingEmailData;
       return {
         id: r.id,
         accountId: data.accountId,
