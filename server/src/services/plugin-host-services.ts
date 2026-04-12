@@ -1023,6 +1023,12 @@ export function buildHostServices(
             taskKey: session.taskKey,
             wakeSource: "automation",
             wakeTriggerDetail: "system",
+            // Expose the chat prompt to the adapter via ctx.context.chatPrompt.
+            // Chat-capable adapters (e.g. openclaw_gateway) use this instead
+            // of building a task-oriented wake prompt, so the LLM actually
+            // responds to the user message rather than the wake procedure.
+            chatPrompt: params.prompt,
+            chatPluginId: pluginId,
           },
           requestedByActorType: "system",
           requestedByActorId: pluginId,

@@ -1121,8 +1121,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     issueId: wakePayload.issueId,
   });
 
+  // Chat sessions (e.g. paperclip-chat plugin) inject the user prompt via
+  // ctx.context.chatPrompt. In that mode we send ONLY the user's message to
+  // the model and skip the task-oriented wake text, so the agent replies
+  // conversationally instead of running the heartbeat procedure.
+  const chatPrompt = nonEmpty(ctx.context.chatPrompt);
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
-  const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
+  const message = chatPrompt
+    ? (templateMessage ? `${templateMessage}\n\n${chatPrompt}` : chatPrompt)
+    : (templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText);
   const paperclipPayload = buildStandardPaperclipPayload(ctx, wakePayload, paperclipEnv, payloadTemplate);
 
   const agentParams: Record<string, unknown> = {
