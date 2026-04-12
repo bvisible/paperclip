@@ -64,7 +64,7 @@ export async function runSeoContentAudit(
 
   const h1Matches = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/gi) ?? [];
   const h1Count = h1Matches.length;
-  const h1 = h1Count > 0 ? h1Matches[0].replace(/<[^>]*>/g, "").trim() : "";
+  const h1 = h1Matches[0]?.replace(/<[^>]*>/g, "").trim() ?? "";
   if (h1Count === 0) {
     issues.push("Missing H1 tag");
     recommendations.push("Add a single H1 heading");
