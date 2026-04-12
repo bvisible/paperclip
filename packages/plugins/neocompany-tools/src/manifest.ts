@@ -68,6 +68,13 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "Secret reference to a long-lived refresh token scoped for GSC + GA4.",
         format: "secret-ref",
       },
+      googlePsiApiKeyRef: {
+        type: "string",
+        title: "Google PageSpeed Insights API Key (optional)",
+        description:
+          "Optional secret reference to a Google PSI API key. If unset, the public quota is used (fine for low volume).",
+        format: "secret-ref",
+      },
       resendApiKeyRef: {
         type: "string",
         title: "Resend API Key",

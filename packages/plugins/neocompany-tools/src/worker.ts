@@ -20,6 +20,7 @@ interface InstanceConfig {
   googleClientId?: string;
   googleClientSecretRef?: string;
   googleRefreshTokenRef?: string;
+  googlePsiApiKeyRef?: string;
   resendApiKeyRef?: string;
   defaultFromAddress?: string;
 }
@@ -49,6 +50,17 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
         clientSecret,
         refreshToken,
       };
+    },
+
+    async getPageSpeedConfig(_companyId: string) {
+      const cfg = await readInstanceConfig(ctx);
+      if (!cfg.googlePsiApiKeyRef) {
+        // The Google PSI API has a public quota — calling without a key
+        // still works at low volume. Only surface the key when configured.
+        return {};
+      }
+      const apiKey = await ctx.secrets.resolve(cfg.googlePsiApiKeyRef);
+      return { apiKey };
     },
 
     async getEmailSendConfig(companyId: string, agentId: string) {

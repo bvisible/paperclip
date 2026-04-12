@@ -67,6 +67,22 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["seo", "main"],
   },
+  seoPageSpeed: {
+    name: "seoPageSpeed",
+    label: "PageSpeed audit",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["seo", "main"],
+  },
+  seoContentAudit: {
+    name: "seoContentAudit",
+    label: "On-page SEO audit",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["seo", "main"],
+  },
   // ─── SEO — Google OAuth required ────────────────────────────────────
   seoGscKeywords: {
     name: "seoGscKeywords",

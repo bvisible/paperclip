@@ -11,6 +11,8 @@ import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams, type GscConfig } from "./seo/gsc-keywords.js";
 import { runSeoRobotsCheck, seoRobotsCheckDeclaration, type SeoRobotsCheckParams } from "./seo/robots-check.js";
 import { runSeoSitemapCheck, seoSitemapCheckDeclaration, type SeoSitemapCheckParams } from "./seo/sitemap-check.js";
+import { runSeoPageSpeed, seoPageSpeedDeclaration, type SeoPageSpeedParams, type PageSpeedConfig } from "./seo/pagespeed.js";
+import { runSeoContentAudit, seoContentAuditDeclaration, type SeoContentAuditParams } from "./seo/content-audit.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 
 export interface RegisteredToolEntry {
@@ -35,6 +37,7 @@ export interface RegisteredToolEntry {
 export interface ToolContextAccess {
   getGscConfig(companyId: string): Promise<GscConfig>;
   getEmailSendConfig(companyId: string, agentId: string): Promise<EmailSendConfig>;
+  getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
 }
 
 export const ALL_TOOLS: RegisteredToolEntry[] = [
@@ -50,6 +53,20 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: seoSitemapCheckDeclaration,
     run: async (params, runCtx, _ctxAccess) =>
       runSeoSitemapCheck(params as SeoSitemapCheckParams, runCtx),
+  },
+  {
+    name: "seoPageSpeed",
+    declaration: seoPageSpeedDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getPageSpeedConfig(runCtx.companyId);
+      return runSeoPageSpeed(params as SeoPageSpeedParams, config, runCtx);
+    },
+  },
+  {
+    name: "seoContentAudit",
+    declaration: seoContentAuditDeclaration,
+    run: async (params, runCtx, _ctxAccess) =>
+      runSeoContentAudit(params as SeoContentAuditParams, runCtx),
   },
   // ─── SEO tools that need Google OAuth ────────────────────────────────
   {
