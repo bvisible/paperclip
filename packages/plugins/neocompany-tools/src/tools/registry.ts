@@ -118,6 +118,33 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     connectionTrigger: "wordpress",
     allowedRoles: ["writer", "main"],
   },
+  wpUpdatePost: {
+    name: "wpUpdatePost",
+    label: "Update WordPress post",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: false,
+    internal: false,
+    connectionTrigger: "wordpress",
+    allowedRoles: ["writer", "main"],
+  },
+  wpListCategories: {
+    name: "wpListCategories",
+    label: "List WordPress categories / tags",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: false,
+    internal: false,
+    connectionTrigger: "wordpress",
+    allowedRoles: ["writer", "main"],
+  },
+  wpSiteHealth: {
+    name: "wpSiteHealth",
+    label: "WordPress site health",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: false,
+    internal: false,
+    connectionTrigger: "wordpress",
+    allowedRoles: ["writer", "main"],
+  },
   // ─── SEO — Google OAuth required ────────────────────────────────────
   seoGscKeywords: {
     name: "seoGscKeywords",

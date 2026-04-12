@@ -17,6 +17,9 @@ import { runSeoCompetitorPageRank, seoCompetitorPageRankDeclaration, type SeoCom
 import { runContentGenerateSocialPosts, contentGenerateSocialPostsDeclaration, type ContentGenerateSocialPostsParams } from "./content/generate-social-posts.js";
 import { runWpListPosts, wpListPostsDeclaration, type WpListPostsParams } from "./wordpress/list-posts.js";
 import { runWpCreatePost, wpCreatePostDeclaration, type WpCreatePostParams } from "./wordpress/create-post.js";
+import { runWpUpdatePost, wpUpdatePostDeclaration, type WpUpdatePostParams } from "./wordpress/update-post.js";
+import { runWpListCategories, wpListCategoriesDeclaration, type WpListCategoriesParams } from "./wordpress/list-categories.js";
+import { runWpSiteHealth, wpSiteHealthDeclaration, type WpSiteHealthParams } from "./wordpress/site-health.js";
 import type { WordPressConfig } from "../adapters/wordpress.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 
@@ -105,6 +108,30 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
       return runWpCreatePost(params as WpCreatePostParams, config, runCtx);
+    },
+  },
+  {
+    name: "wpUpdatePost",
+    declaration: wpUpdatePostDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
+      return runWpUpdatePost(params as WpUpdatePostParams, config, runCtx);
+    },
+  },
+  {
+    name: "wpListCategories",
+    declaration: wpListCategoriesDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
+      return runWpListCategories(params as WpListCategoriesParams, config, runCtx);
+    },
+  },
+  {
+    name: "wpSiteHealth",
+    declaration: wpSiteHealthDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
+      return runWpSiteHealth(params as WpSiteHealthParams, config, runCtx);
     },
   },
   // ─── SEO tools that need Google OAuth ────────────────────────────────
