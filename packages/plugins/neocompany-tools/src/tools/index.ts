@@ -12,6 +12,7 @@ import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams
 import { runSeoGscTopPages, seoGscTopPagesDeclaration, type SeoGscTopPagesParams } from "./seo/gsc-top-pages.js";
 import { runSeoQuickWins, seoQuickWinsDeclaration, type SeoQuickWinsParams } from "./seo/quick-wins.js";
 import { runSeoTrendAnalysis, seoTrendAnalysisDeclaration, type SeoTrendAnalysisParams } from "./seo/trend-analysis.js";
+import { runGeoVisibilityCheck, geoVisibilityCheckDeclaration, type GeoVisibilityCheckParams } from "./seo/geo-visibility-check.js";
 import { runSeoGa4Traffic, seoGa4TrafficDeclaration, type SeoGa4TrafficParams } from "./seo/ga4-traffic.js";
 import { runSeoGa4TopPages, seoGa4TopPagesDeclaration, type SeoGa4TopPagesParams } from "./seo/ga4-top-pages.js";
 import type { GscConfig } from "../adapters/gsc.js";
@@ -94,6 +95,12 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
       const config = await ctxAccess.getOpenPageRankConfig(runCtx.companyId);
       return runSeoCompetitorPageRank(params as SeoCompetitorPageRankParams, config, runCtx);
     },
+  },
+  {
+    name: "geoVisibilityCheck",
+    declaration: geoVisibilityCheckDeclaration,
+    run: async (params, runCtx, _ctxAccess) =>
+      runGeoVisibilityCheck(params as GeoVisibilityCheckParams, runCtx),
   },
   // ─── Content (stateless) ─────────────────────────────────────────────
   {

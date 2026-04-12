@@ -91,6 +91,14 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["seo", "main"],
   },
+  geoVisibilityCheck: {
+    name: "geoVisibilityCheck",
+    label: "GEO visibility check",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["seo", "main"],
+  },
   contentGenerateSocialPosts: {
     name: "contentGenerateSocialPosts",
     label: "Social formatting guidelines",
