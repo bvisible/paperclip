@@ -33,6 +33,26 @@ interface ConfigSummary {
   defaultFromAddress: string;
 }
 
+interface EmailAccountView {
+  id: string;
+  address: string;
+  label: string | null;
+  imapHost: string;
+  imapPort: number;
+  imapUser: string;
+  pollingEnabled: boolean;
+  pollIntervalMin: number;
+  lastSeenUid: number;
+  status: "active" | "paused" | "error";
+  lastError: string | null;
+  allowedAgents: string[];
+}
+
+interface EmailAccountsResponse {
+  companyId?: string;
+  accounts: EmailAccountView[];
+}
+
 // ---------------------------------------------------------------------------
 // Layout tokens — use inline styles so the plugin stays self-contained and
 // doesn't ship any CSS-in-JS runtime. These values follow the Paperclip UI
@@ -168,18 +188,37 @@ export function SettingsPage(_props: PluginPageProps) {
   const catalogResp = usePluginData<ToolCatalog>("toolCatalog", {});
   const accessResp = usePluginData<AccessState>("accessState", { companyId });
   const configResp = usePluginData<ConfigSummary>("configSummary", {});
+  const emailAccountsResp = usePluginData<EmailAccountsResponse>("emailAccounts", { companyId });
   const setCategoryEnabled = usePluginAction("setCategoryEnabled");
+  const emailAccountUpsert = usePluginAction("emailAccountUpsert");
+  const emailAccountDelete = usePluginAction("emailAccountDelete");
+  const emailAccountTest = usePluginAction("emailAccountTest");
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
+  const [pendingAccountAction, setPendingAccountAction] = useState<string | null>(null);
+  const [accountTestResult, setAccountTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [draft, setDraft] = useState({
+    address: "",
+    label: "",
+    imapHost: "",
+    imapPort: 993,
+    imapUser: "",
+    imapPassRef: "",
+    pollIntervalMin: 5,
+    pollingEnabled: true,
+  });
 
   const refreshAll = useCallback(() => {
     catalogResp.refresh();
     accessResp.refresh();
     configResp.refresh();
-  }, [catalogResp, accessResp, configResp]);
+    emailAccountsResp.refresh();
+  }, [catalogResp, accessResp, configResp, emailAccountsResp]);
 
   const catalog = catalogResp.data;
   const access = accessResp.data;
   const config = configResp.data;
+  const emailAccounts = emailAccountsResp.data?.accounts ?? [];
 
   const onToggleCategory = useCallback(
     async (category: string, enabled: boolean) => {
@@ -193,6 +232,73 @@ export function SettingsPage(_props: PluginPageProps) {
       }
     },
     [companyId, setCategoryEnabled, accessResp],
+  );
+
+  const onAddAccount = useCallback(async () => {
+    if (!companyId || !draft.address || !draft.imapHost) return;
+    setPendingAccountAction("add");
+    try {
+      await emailAccountUpsert({
+        companyId,
+        address: draft.address,
+        label: draft.label || undefined,
+        imapHost: draft.imapHost,
+        imapPort: Number(draft.imapPort),
+        imapUser: draft.imapUser || draft.address,
+        imapPassRef: draft.imapPassRef,
+        pollIntervalMin: Number(draft.pollIntervalMin),
+        pollingEnabled: draft.pollingEnabled,
+      });
+      setShowAddForm(false);
+      setDraft({
+        address: "",
+        label: "",
+        imapHost: "",
+        imapPort: 993,
+        imapUser: "",
+        imapPassRef: "",
+        pollIntervalMin: 5,
+        pollingEnabled: true,
+      });
+      emailAccountsResp.refresh();
+    } finally {
+      setPendingAccountAction(null);
+    }
+  }, [companyId, draft, emailAccountUpsert, emailAccountsResp]);
+
+  const onDeleteAccount = useCallback(
+    async (id: string) => {
+      if (!companyId) return;
+      setPendingAccountAction(id);
+      try {
+        await emailAccountDelete({ companyId, id });
+        emailAccountsResp.refresh();
+      } finally {
+        setPendingAccountAction(null);
+      }
+    },
+    [companyId, emailAccountDelete, emailAccountsResp],
+  );
+
+  const onTestAccount = useCallback(
+    async (id: string) => {
+      if (!companyId) return;
+      setPendingAccountAction(id);
+      setAccountTestResult(null);
+      try {
+        const result = (await emailAccountTest({ companyId, id })) as
+          | { ok: true; message: string }
+          | { ok: false; error: string };
+        setAccountTestResult({
+          id,
+          ok: result.ok,
+          message: result.ok ? result.message : result.error,
+        });
+      } finally {
+        setPendingAccountAction(null);
+      }
+    },
+    [companyId, emailAccountTest],
   );
 
   return (
@@ -352,6 +458,223 @@ export function SettingsPage(_props: PluginPageProps) {
                       </li>
                     ))}
                   </ul>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section style={{ marginTop: 24 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, color: tokens.mutedText, margin: 0 }}>
+            Email accounts {emailAccounts.length > 0 ? `· ${emailAccounts.length}` : ""}
+          </h2>
+          <button
+            onClick={() => setShowAddForm((v) => !v)}
+            style={{
+              background: showAddForm ? "rgba(100, 116, 139, 0.14)" : tokens.primary,
+              color: showAddForm ? "var(--foreground, #111)" : "#fff",
+              border: tokens.cardBorder,
+              borderRadius: 6,
+              padding: "4px 10px",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {showAddForm ? "Cancel" : "Add account"}
+          </button>
+        </div>
+
+        {showAddForm && (
+          <Card style={{ marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, fontSize: 13 }}>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Address</span>
+                <input
+                  type="email"
+                  value={draft.address}
+                  onChange={(e) => setDraft({ ...draft, address: e.target.value })}
+                  placeholder="melvyn@neocompany.ch"
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Label (optional)</span>
+                <input
+                  type="text"
+                  value={draft.label}
+                  onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                  placeholder="Melvyn inbox"
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>IMAP host</span>
+                <input
+                  type="text"
+                  value={draft.imapHost}
+                  onChange={(e) => setDraft({ ...draft, imapHost: e.target.value })}
+                  placeholder="imap.gmail.com"
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>IMAP port</span>
+                <input
+                  type="number"
+                  value={draft.imapPort}
+                  onChange={(e) => setDraft({ ...draft, imapPort: Number(e.target.value) })}
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>IMAP user (defaults to address)</span>
+                <input
+                  type="text"
+                  value={draft.imapUser}
+                  onChange={(e) => setDraft({ ...draft, imapUser: e.target.value })}
+                  placeholder={draft.address || "username"}
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>IMAP password — secret ref</span>
+                <input
+                  type="text"
+                  value={draft.imapPassRef}
+                  onChange={(e) => setDraft({ ...draft, imapPassRef: e.target.value })}
+                  placeholder="secret_ref_uuid"
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Poll interval (minutes)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.pollIntervalMin}
+                  onChange={(e) => setDraft({ ...draft, pollIntervalMin: Number(e.target.value) })}
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <Toggle
+                  checked={draft.pollingEnabled}
+                  onChange={(v) => setDraft({ ...draft, pollingEnabled: v })}
+                  label="Polling enabled"
+                />
+              </div>
+            </div>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={onAddAccount}
+                disabled={!draft.address || !draft.imapHost || !draft.imapPassRef || pendingAccountAction === "add"}
+                style={{
+                  background: tokens.primary,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "6px 14px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  opacity: !draft.address || !draft.imapHost || !draft.imapPassRef ? 0.5 : 1,
+                }}
+              >
+                {pendingAccountAction === "add" ? "Saving…" : "Save account"}
+              </button>
+            </div>
+            <p style={{ marginTop: 10, color: tokens.mutedText, fontSize: 11 }}>
+              The IMAP password must already exist as a Paperclip secret. Paste its
+              reference UUID here. The poller resolves it on every cycle and never
+              caches the value.
+            </p>
+          </Card>
+        )}
+
+        {emailAccounts.length === 0 ? (
+          <Card>
+            <p style={{ color: tokens.mutedText, fontSize: 13, margin: 0 }}>
+              No email accounts configured. Click <strong>Add account</strong> to register one. The
+              poller (cron <code>*/5 * * * *</code>) will pick it up on the next cycle.
+            </p>
+          </Card>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {emailAccounts.map((acc) => {
+              const tone = acc.status === "active" ? "ok" : acc.status === "error" ? "warn" : "muted";
+              const isPending = pendingAccountAction === acc.id;
+              const testFor = accountTestResult?.id === acc.id ? accountTestResult : null;
+              return (
+                <Card key={acc.id}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>
+                        {acc.label || acc.address}
+                      </div>
+                      <div style={{ color: tokens.mutedText, fontSize: 12, marginTop: 2 }}>
+                        {acc.address} · {acc.imapHost}:{acc.imapPort} · poll every {acc.pollIntervalMin} min · UID floor {acc.lastSeenUid}
+                      </div>
+                      {acc.lastError && (
+                        <div style={{ color: tokens.danger, fontSize: 12, marginTop: 4 }}>
+                          ⚠ {acc.lastError}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                      <Pill tone={tone}>
+                        {acc.status}
+                        {!acc.pollingEnabled && " · paused"}
+                      </Pill>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => onTestAccount(acc.id)}
+                          disabled={isPending}
+                          style={{
+                            background: "transparent",
+                            border: tokens.cardBorder,
+                            borderRadius: 6,
+                            padding: "3px 8px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                            color: "var(--foreground, #111)",
+                          }}
+                        >
+                          {isPending && !testFor ? "Testing…" : "Test"}
+                        </button>
+                        <button
+                          onClick={() => onDeleteAccount(acc.id)}
+                          disabled={isPending}
+                          style={{
+                            background: "transparent",
+                            border: `1px solid ${tokens.danger}`,
+                            color: tokens.danger,
+                            borderRadius: 6,
+                            padding: "3px 8px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Pause
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  {testFor && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 8,
+                        borderRadius: 6,
+                        background: testFor.ok ? "rgba(22, 163, 74, 0.1)" : "rgba(220, 38, 38, 0.1)",
+                        color: testFor.ok ? tokens.success : tokens.danger,
+                        fontSize: 12,
+                      }}
+                    >
+                      {testFor.ok ? "✓ " : "✗ "}
+                      {testFor.message}
+                    </div>
+                  )}
                 </Card>
               );
             })}
