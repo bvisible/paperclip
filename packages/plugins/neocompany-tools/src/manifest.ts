@@ -75,6 +75,13 @@ const manifest: PaperclipPluginManifestV1 = {
           "Optional secret reference to a Google PSI API key. If unset, the public quota is used (fine for low volume).",
         format: "secret-ref",
       },
+      ga4PropertyId: {
+        type: "string",
+        title: "GA4 Property ID",
+        description:
+          "Numeric Google Analytics 4 property ID (e.g. 367221234). Required by seoGa4Traffic and seoGa4TopPages.",
+        default: "",
+      },
       openPageRankApiKeyRef: {
         type: "string",
         title: "Open PageRank API Key (optional)",

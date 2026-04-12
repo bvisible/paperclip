@@ -11,7 +11,10 @@ import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { runSeoGscKeywords, seoGscKeywordsDeclaration, type SeoGscKeywordsParams } from "./seo/gsc-keywords.js";
 import { runSeoGscTopPages, seoGscTopPagesDeclaration, type SeoGscTopPagesParams } from "./seo/gsc-top-pages.js";
 import { runSeoQuickWins, seoQuickWinsDeclaration, type SeoQuickWinsParams } from "./seo/quick-wins.js";
+import { runSeoGa4Traffic, seoGa4TrafficDeclaration, type SeoGa4TrafficParams } from "./seo/ga4-traffic.js";
+import { runSeoGa4TopPages, seoGa4TopPagesDeclaration, type SeoGa4TopPagesParams } from "./seo/ga4-top-pages.js";
 import type { GscConfig } from "../adapters/gsc.js";
+import type { Ga4Config } from "../adapters/ga4.js";
 import { runSeoRobotsCheck, seoRobotsCheckDeclaration, type SeoRobotsCheckParams } from "./seo/robots-check.js";
 import { runSeoSitemapCheck, seoSitemapCheckDeclaration, type SeoSitemapCheckParams } from "./seo/sitemap-check.js";
 import { runSeoPageSpeed, seoPageSpeedDeclaration, type SeoPageSpeedParams, type PageSpeedConfig } from "./seo/pagespeed.js";
@@ -48,6 +51,7 @@ export interface RegisteredToolEntry {
  */
 export interface ToolContextAccess {
   getGscConfig(companyId: string): Promise<GscConfig>;
+  getGa4Config(companyId: string): Promise<Ga4Config>;
   getEmailSendConfig(companyId: string, agentId: string): Promise<EmailSendConfig>;
   getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
   getOpenPageRankConfig(companyId: string): Promise<OpenPageRankConfig>;
@@ -169,6 +173,22 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const config = await ctxAccess.getGscConfig(runCtx.companyId);
       return runSeoQuickWins(params as SeoQuickWinsParams, config, runCtx);
+    },
+  },
+  {
+    name: "seoGa4Traffic",
+    declaration: seoGa4TrafficDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGa4Config(runCtx.companyId);
+      return runSeoGa4Traffic(params as SeoGa4TrafficParams, config, runCtx);
+    },
+  },
+  {
+    name: "seoGa4TopPages",
+    declaration: seoGa4TopPagesDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGa4Config(runCtx.companyId);
+      return runSeoGa4TopPages(params as SeoGa4TopPagesParams, config, runCtx);
     },
   },
   // ─── Email (provider secret required) ────────────────────────────────

@@ -21,6 +21,7 @@ interface InstanceConfig {
   googleClientSecretRef?: string;
   googleRefreshTokenRef?: string;
   googlePsiApiKeyRef?: string;
+  ga4PropertyId?: string;
   openPageRankApiKeyRef?: string;
   wordpressSiteUrl?: string;
   wordpressUsername?: string;
@@ -53,6 +54,24 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
         clientId: cfg.googleClientId,
         clientSecret,
         refreshToken,
+      };
+    },
+
+    async getGa4Config(_companyId: string) {
+      const cfg = await readInstanceConfig(ctx);
+      if (!cfg.googleClientId) throw new Error("Google OAuth client ID is not configured");
+      if (!cfg.googleClientSecretRef) throw new Error("Google OAuth client secret is not configured");
+      if (!cfg.googleRefreshTokenRef) throw new Error("Google OAuth refresh token is not configured");
+      if (!cfg.ga4PropertyId) throw new Error("GA4 property ID is not configured");
+      const [clientSecret, refreshToken] = await Promise.all([
+        ctx.secrets.resolve(cfg.googleClientSecretRef),
+        ctx.secrets.resolve(cfg.googleRefreshTokenRef),
+      ]);
+      return {
+        clientId: cfg.googleClientId,
+        clientSecret,
+        refreshToken,
+        propertyId: cfg.ga4PropertyId,
       };
     },
 

@@ -182,6 +182,24 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     connectionTrigger: "google",
     allowedRoles: ["seo", "main"],
   },
+  seoGa4Traffic: {
+    name: "seoGa4Traffic",
+    label: "GA4 traffic snapshot",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["seo", "main"],
+  },
+  seoGa4TopPages: {
+    name: "seoGa4TopPages",
+    label: "GA4 top pages",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["seo", "main"],
+  },
   // ─── Email ───────────────────────────────────────────────────────────
   emailSendMessage: {
     name: "emailSendMessage",
