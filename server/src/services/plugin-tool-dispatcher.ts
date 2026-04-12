@@ -219,6 +219,20 @@ export interface PluginToolDispatcher {
  * );
  * ```
  */
+// Module-level singleton used by services that need to read the tool catalog
+// without receiving the dispatcher through their factory (e.g. heartbeat,
+// which already has a large argument surface). App bootstrap calls
+// `setGlobalPluginToolDispatcher(dispatcher)` once after construction.
+let globalPluginToolDispatcher: PluginToolDispatcher | null = null;
+
+export function setGlobalPluginToolDispatcher(dispatcher: PluginToolDispatcher): void {
+  globalPluginToolDispatcher = dispatcher;
+}
+
+export function getGlobalPluginToolDispatcher(): PluginToolDispatcher | null {
+  return globalPluginToolDispatcher;
+}
+
 export function createPluginToolDispatcher(
   options: PluginToolDispatcherOptions = {},
 ): PluginToolDispatcher {

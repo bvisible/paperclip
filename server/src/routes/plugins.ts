@@ -48,6 +48,7 @@ import type { PluginToolDispatcher } from "../services/plugin-tool-dispatcher.js
 import type { ToolRunContext } from "@paperclipai/plugin-sdk";
 import { JsonRpcCallError, PLUGIN_RPC_ERROR_CODES } from "@paperclipai/plugin-sdk";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import { forbidden } from "../errors.js";
 import { validateInstanceConfig } from "../services/plugin-config-validator.js";
 
 /** UI slot declaration extracted from plugin manifest */
@@ -251,8 +252,12 @@ interface PluginToolExecuteRequest {
   tool: string;
   /** Parameters matching the tool's declared JSON Schema. */
   parameters?: unknown;
-  /** Agent run context. */
-  runContext: ToolRunContext;
+  /**
+   * Agent run context. Required for board-authenticated callers. When the
+   * request is authenticated with an agent key, agentId/companyId/runId are
+   * derived from the actor and only projectId needs to be supplied.
+   */
+  runContext?: Partial<ToolRunContext>;
 }
 
 /**
@@ -517,7 +522,20 @@ export function pluginRoutes(
    * - 502 if the plugin worker is unavailable or the RPC call fails
    */
   router.post("/plugins/tools/execute", async (req, res) => {
-    assertBoard(req);
+    // This endpoint is callable by two kinds of actors:
+    //
+    //  - **Board users** (operators, CLI scripts, heartbeat) — runContext must
+    //    be passed in full and the board key needs access to the target company.
+    //  - **Agent keys** (OpenClaw callbacks, local agent JWTs) — we derive
+    //    agentId + companyId + runId from the authenticated actor instead of
+    //    trusting the body, so an agent can only ever call tools on its own
+    //    behalf. The body only needs to supply projectId (or we fall back to
+    //    the agent's default project). This is what lets the OpenClaw gateway
+    //    agent (Melvyn et al.) invoke plugin tools during a run without a
+    //    board-scoped token.
+    if (req.actor.type !== "board" && req.actor.type !== "agent") {
+      throw forbidden("Board or agent access required");
+    }
 
     if (!toolDeps) {
       res.status(501).json({ error: "Plugin tool dispatch is not enabled" });
@@ -530,7 +548,7 @@ export function pluginRoutes(
       return;
     }
 
-    const { tool, parameters, runContext } = body;
+    const { tool, parameters } = body;
 
     // Validate required fields
     if (!tool || typeof tool !== "string") {
@@ -538,16 +556,40 @@ export function pluginRoutes(
       return;
     }
 
-    if (!runContext || typeof runContext !== "object") {
-      res.status(400).json({ error: '"runContext" is required and must be an object' });
-      return;
-    }
-
-    if (!runContext.agentId || !runContext.runId || !runContext.companyId || !runContext.projectId) {
-      res.status(400).json({
-        error: '"runContext" must include agentId, runId, companyId, and projectId',
-      });
-      return;
+    let runContext: { agentId: string; runId: string; companyId: string; projectId: string };
+    if (req.actor.type === "agent") {
+      const agentId = req.actor.agentId;
+      const companyId = req.actor.companyId;
+      const runId = req.actor.runId ?? (body.runContext as { runId?: string } | undefined)?.runId;
+      // projectId is an optional scoping field — when an agent calls from a
+      // run that isn't tied to a specific project (e.g. plugin chat sessions),
+      // we fall back to the companyId. The tool dispatcher only uses
+      // projectId opaquely so this keeps the contract well-formed without
+      // forcing the agent to discover a value it doesn't have.
+      const projectId =
+        (body.runContext as { projectId?: string } | undefined)?.projectId ?? companyId ?? undefined;
+      if (!agentId || !companyId || !runId || !projectId) {
+        res.status(400).json({
+          error:
+            "Agent-authenticated calls require agentId/companyId/runId from the session token (set X-Paperclip-Run-Id if the actor lacks a run)",
+        });
+        return;
+      }
+      runContext = { agentId, companyId, runId, projectId };
+    } else {
+      const bodyRunContext = body.runContext;
+      if (!bodyRunContext || typeof bodyRunContext !== "object") {
+        res.status(400).json({ error: '"runContext" is required and must be an object' });
+        return;
+      }
+      const { agentId, runId, companyId, projectId } = bodyRunContext;
+      if (!agentId || !runId || !companyId || !projectId) {
+        res.status(400).json({
+          error: '"runContext" must include agentId, runId, companyId, and projectId',
+        });
+        return;
+      }
+      runContext = { agentId, runId, companyId, projectId };
     }
 
     assertCompanyAccess(req, runContext.companyId);

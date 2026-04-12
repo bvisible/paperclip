@@ -31,6 +31,7 @@ import { getTelemetryClient } from "../telemetry.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
+import { getGlobalPluginToolDispatcher } from "./plugin-tool-dispatcher.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { buildHeartbeatRunIssueComment, summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import {
@@ -3159,6 +3160,24 @@ export function heartbeatService(db: Db) {
       const authToken = adapter.supportsLocalAgentJwt
         ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
         : null;
+      // Inject plugin-contributed tool catalog into the adapter context so
+      // adapters like openclaw-gateway can expose tools to the agent via
+      // their system prompt. The dispatcher may be unset during tests —
+      // keep it optional.
+      try {
+        const dispatcher = getGlobalPluginToolDispatcher();
+        if (dispatcher) {
+          const availableTools = dispatcher.listToolsForAgent();
+          if (availableTools.length > 0) {
+            context.availableTools = availableTools;
+          }
+        }
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err), runId: run.id },
+          "failed to load plugin tool catalog for adapter context",
+        );
+      }
       if (adapter.supportsLocalAgentJwt && !authToken) {
         logger.warn(
           {

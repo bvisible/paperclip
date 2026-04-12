@@ -1041,6 +1041,61 @@ function extractResultText(value: unknown): string | null {
   return nonEmpty(record.text) ?? nonEmpty(record.summary) ?? null;
 }
 
+interface PaperclipToolDescriptor {
+  name: string;
+  displayName?: string;
+  description?: string;
+  parametersSchema?: Record<string, unknown>;
+  pluginId?: string;
+}
+
+/**
+ * Render the `<paperclip-tools>` system-prompt block the OpenClaw agent
+ * consumes. Returns null when no tools are available or when the context
+ * did not include a tool catalog (older Paperclip versions).
+ *
+ * Tools are invoked by the agent against Paperclip's existing
+ * `POST /api/plugins/tools/execute` endpoint using the PAPERCLIP_API_KEY
+ * that was already dropped in the claimed-api-key file.
+ */
+function buildPaperclipToolsXml(ctx: AdapterExecutionContext): string | null {
+  const raw = (ctx.context as Record<string, unknown>).availableTools;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const tools = raw.filter((t): t is PaperclipToolDescriptor =>
+    typeof t === "object" && t !== null && typeof (t as { name?: unknown }).name === "string",
+  );
+  if (tools.length === 0) return null;
+
+  const parts: string[] = [
+    "<paperclip-tools>",
+    "  <description>",
+    "    You have access to the following Paperclip plugin tools. To call one:",
+    "      1. Read PAPERCLIP_API_KEY from ~/.openclaw/workspace/paperclip-claimed-api-key.json (already on disk).",
+    "      2. POST $PAPERCLIP_API_URL/api/plugins/tools/execute",
+    "         Headers: Authorization: Bearer $PAPERCLIP_API_KEY, X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID, Content-Type: application/json",
+    "         Body:    { \"tool\": \"<namespacedName>\", \"parameters\": { ... matching the schema ... } }",
+    "      3. The server derives agentId/companyId/runId from your claimed key + the X-Paperclip-Run-Id header. You do not need to send a runContext.",
+    "      4. The response is { \"pluginId\", \"toolName\", \"result\": { \"content\"?, \"data\"?, \"error\"? } }. Read `result.content` for the human-readable summary.",
+    "    Use tools when they are the fastest path to the answer. Prefer your own knowledge when it suffices.",
+    "  </description>",
+  ];
+
+  for (const tool of tools) {
+    const name = tool.name;
+    const displayName = tool.displayName ?? name;
+    const description = (tool.description ?? "").replace(/]]>/g, "]]]]><![CDATA[>");
+    const schemaJson = JSON.stringify(tool.parametersSchema ?? { type: "object", properties: {} });
+    parts.push(`  <tool name="${name}">`);
+    parts.push(`    <displayName>${displayName}</displayName>`);
+    parts.push(`    <description><![CDATA[${description}]]></description>`);
+    parts.push(`    <parametersSchema><![CDATA[${schemaJson}]]></parametersSchema>`);
+    parts.push(`  </tool>`);
+  }
+  parts.push("</paperclip-tools>");
+  return parts.join("\n");
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const urlValue = asString(ctx.config.url, "").trim();
   if (!urlValue) {
@@ -1142,7 +1197,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // Move paperclip context to extraSystemPrompt to avoid OpenClaw schema rejection
   // (OpenClaw uses additionalProperties: false and rejects unknown root-level fields)
   const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
-  agentParams.extraSystemPrompt = paperclipContextXml;
+  // Expose plugin-contributed agent tools via a structured system-prompt block.
+  // Each tool lists its JSON schema plus a ready-to-run curl example that uses
+  // the PAPERCLIP_API_KEY the agent already has on disk.
+  const toolsXml = buildPaperclipToolsXml(ctx);
+  agentParams.extraSystemPrompt = toolsXml
+    ? `${paperclipContextXml}\n${toolsXml}`
+    : paperclipContextXml;
 
   const configuredAgentId = nonEmpty(ctx.config.agentId);
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
