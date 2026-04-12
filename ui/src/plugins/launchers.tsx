@@ -650,15 +650,24 @@ export function PluginLauncherProvider({ children }: { children: ReactNode }) {
       contribution: PluginUiContribution,
       sourceEl?: HTMLElement | null,
     ) => {
+      // Resolve relative navigation targets against the current company prefix
+      // so plugin launchers can use simple paths like "plugins/paperclip-chat"
+      const resolveNavTarget = (target: string): string => {
+        if (target.startsWith("/") || /^https?:\/\//.test(target)) return target;
+        const prefix = hostContext.companyPrefix;
+        if (prefix) return `/${prefix}/${target}`;
+        return `/${target}`;
+      };
+
       switch (launcher.action.type) {
         case "navigate":
-          navigate(launcher.action.target);
+          navigate(resolveNavTarget(launcher.action.target));
           return;
         case "deepLink":
           if (/^https?:\/\//.test(launcher.action.target)) {
             window.open(launcher.action.target, "_blank", "noopener,noreferrer");
           } else {
-            navigate(launcher.action.target);
+            navigate(resolveNavTarget(launcher.action.target));
           }
           return;
         case "performAction":
