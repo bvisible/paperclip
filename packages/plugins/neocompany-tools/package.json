@@ -19,10 +19,13 @@
     "typecheck": "pnpm --filter @paperclipai/plugin-sdk build && tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "workspace:*"
+    "@paperclipai/plugin-sdk": "workspace:*",
+    "imapflow": "^1.0.196",
+    "mailparser": "^3.7.4"
   },
   "devDependencies": {
     "esbuild": "^0.27.3",
+    "@types/mailparser": "^3.4.5",
     "@types/node": "^24.6.0",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",

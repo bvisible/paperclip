@@ -28,8 +28,10 @@ const manifest: PaperclipPluginManifestV1 = {
     // Settings UI + sidebar launcher
     "ui.page.register",
     "ui.sidebar.register",
-    // Email subsystem: IMAP polling + plugin-owned entity store
+    // Email subsystem: IMAP polling + plugin-owned entity store + event
+    // emission so paperclip-chat can wake on email.received
     "jobs.schedule",
+    "events.emit",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
