@@ -195,7 +195,7 @@ function launcherTriggerClassName(placementZone: PluginLauncherPlacementZone): s
       return "justify-start h-7 w-full px-2 text-xs font-normal";
     case "sidebar":
     case "sidebarPanel":
-      return "justify-start h-8 w-full";
+      return "justify-start w-full h-auto px-3 py-2 text-[13px] font-medium text-foreground/80 hover:bg-accent/50 hover:text-foreground border-0 rounded-none";
     case "toolbarButton":
     case "globalToolbarButton":
       return "h-8";

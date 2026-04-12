@@ -54,8 +54,9 @@ import { logger } from "../middleware/logger.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Default timeout for RPC calls in milliseconds. */
-const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+/** Default timeout for RPC calls in milliseconds. Raised to 5 min so long-running
+ *  chat/agent actions don't hit the default 30s budget (NeoCompany). */
+const DEFAULT_RPC_TIMEOUT_MS = 5 * 60 * 1_000;
 
 /** Hard upper bound for any RPC timeout (5 minutes). Prevents unbounded waits. */
 const MAX_RPC_TIMEOUT_MS = 5 * 60 * 1_000;
