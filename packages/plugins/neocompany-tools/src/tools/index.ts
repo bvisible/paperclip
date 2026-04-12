@@ -13,6 +13,7 @@ import { runSeoGscTopPages, seoGscTopPagesDeclaration, type SeoGscTopPagesParams
 import { runSeoQuickWins, seoQuickWinsDeclaration, type SeoQuickWinsParams } from "./seo/quick-wins.js";
 import { runSeoTrendAnalysis, seoTrendAnalysisDeclaration, type SeoTrendAnalysisParams } from "./seo/trend-analysis.js";
 import { runGeoVisibilityCheck, geoVisibilityCheckDeclaration, type GeoVisibilityCheckParams } from "./seo/geo-visibility-check.js";
+import { runGeoAITraffic, geoAITrafficDeclaration, type GeoAITrafficParams } from "./seo/geo-ai-traffic.js";
 import { runSeoGa4Traffic, seoGa4TrafficDeclaration, type SeoGa4TrafficParams } from "./seo/ga4-traffic.js";
 import { runSeoGa4TopPages, seoGa4TopPagesDeclaration, type SeoGa4TopPagesParams } from "./seo/ga4-top-pages.js";
 import type { GscConfig } from "../adapters/gsc.js";
@@ -205,6 +206,14 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const config = await ctxAccess.getGa4Config(runCtx.companyId);
       return runSeoGa4TopPages(params as SeoGa4TopPagesParams, config, runCtx);
+    },
+  },
+  {
+    name: "geoAITraffic",
+    declaration: geoAITrafficDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getGa4Config(runCtx.companyId);
+      return runGeoAITraffic(params as GeoAITrafficParams, config, runCtx);
     },
   },
   // ─── Email (provider secret required) ────────────────────────────────

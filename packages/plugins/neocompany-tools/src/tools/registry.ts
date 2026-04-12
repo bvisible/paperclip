@@ -99,6 +99,15 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["seo", "main"],
   },
+  geoAITraffic: {
+    name: "geoAITraffic",
+    label: "AI search engine traffic",
+    category: ToolCategory.SEO,
+    defaultEnabled: true,
+    internal: false,
+    connectionTrigger: "google",
+    allowedRoles: ["seo", "main"],
+  },
   contentGenerateSocialPosts: {
     name: "contentGenerateSocialPosts",
     label: "Social formatting guidelines",
