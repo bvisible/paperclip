@@ -28,6 +28,8 @@ const manifest: PaperclipPluginManifestV1 = {
     // Settings UI + sidebar launcher
     "ui.page.register",
     "ui.sidebar.register",
+    // Email subsystem: IMAP polling + plugin-owned entity store
+    "jobs.schedule",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -43,6 +45,18 @@ const manifest: PaperclipPluginManifestV1 = {
     description: t.declaration.description,
     parametersSchema: t.declaration.parametersSchema,
   })),
+
+  // Scheduled jobs declared by the plugin. The worker registers handlers
+  // via `ctx.jobs.register("imap-poll", ...)` in `worker.ts`.
+  jobs: [
+    {
+      jobKey: "imap-poll",
+      displayName: "IMAP inbox poller",
+      description:
+        "Walks every enabled email_account entity and pulls new messages via IMAP. Runs every 5 minutes.",
+      schedule: "*/5 * * * *",
+    },
+  ],
 
   // Operator-level config. Secrets are stored as `secret-ref` strings that
   // the worker resolves at runtime via `ctx.secrets.resolve`.

@@ -32,6 +32,9 @@ import { runWpListCategories, wpListCategoriesDeclaration, type WpListCategories
 import { runWpSiteHealth, wpSiteHealthDeclaration, type WpSiteHealthParams } from "./wordpress/site-health.js";
 import type { WordPressConfig } from "../adapters/wordpress.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
+import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessagesParams } from "./email/inbox-list.js";
+import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
+import type { PluginContext } from "@paperclipai/plugin-sdk";
 
 export interface RegisteredToolEntry {
   name: string;
@@ -59,6 +62,12 @@ export interface ToolContextAccess {
   getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
   getOpenPageRankConfig(companyId: string): Promise<OpenPageRankConfig>;
   getWordPressConfig(companyId: string): Promise<WordPressConfig>;
+  /**
+   * Plugin context — exposed for the email inbox tools that need
+   * `ctx.entities.list` directly. Other tools should keep using the
+   * specialised `getXxxConfig` helpers.
+   */
+  getPluginContext(): PluginContext;
 }
 
 export const ALL_TOOLS: RegisteredToolEntry[] = [
@@ -223,6 +232,22 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const config = await ctxAccess.getEmailSendConfig(runCtx.companyId, runCtx.agentId);
       return runEmailSendMessage(params as EmailSendParams, config, runCtx);
+    },
+  },
+  {
+    name: "emailListMessages",
+    declaration: emailListMessagesDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const ctx = ctxAccess.getPluginContext();
+      return runEmailListMessages(ctx, params as EmailListMessagesParams, runCtx);
+    },
+  },
+  {
+    name: "emailReadMessage",
+    declaration: emailReadMessageDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const ctx = ctxAccess.getPluginContext();
+      return runEmailReadMessage(ctx, params as EmailReadMessageParams, runCtx);
     },
   },
 ];

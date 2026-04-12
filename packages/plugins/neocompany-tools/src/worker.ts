@@ -13,6 +13,7 @@ import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import type { PluginContext, ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS, type ToolContextAccess } from "./tools/index.js";
 import { TOOL_REGISTRY, CATEGORY_LABELS, type ToolMetadata } from "./tools/registry.js";
+import { runImapPollJob } from "./email/poller.js";
 
 const PLUGIN_NAME = "neocompany-tools";
 
@@ -41,6 +42,10 @@ async function readInstanceConfig(ctx: PluginContext): Promise<InstanceConfig> {
  */
 function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
   return {
+    getPluginContext() {
+      return ctx;
+    },
+
     async getGscConfig(_companyId: string) {
       const cfg = await readInstanceConfig(ctx);
       if (!cfg.googleClientId) throw new Error("Google OAuth client ID is not configured");
@@ -261,6 +266,17 @@ const plugin = definePlugin({
         resendConfigured: Boolean(cfg.resendApiKeyRef),
         defaultFromAddress: cfg.defaultFromAddress ?? "",
       };
+    });
+
+    // ── Job: IMAP poll (declared in manifest as "imap-poll") ─────────
+    ctx.jobs.register("imap-poll", async (job) => {
+      try {
+        await runImapPollJob(ctx, job);
+      } catch (err) {
+        ctx.logger.error("imap-poll: unexpected error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     });
 
     // ── Action: enable/disable a category toggle for a company ───────

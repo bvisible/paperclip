@@ -235,6 +235,22 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: true,
     allowedRoles: ["support", "commercial", "main"],
   },
+  emailListMessages: {
+    name: "emailListMessages",
+    label: "List incoming emails",
+    category: ToolCategory.EMAIL,
+    defaultEnabled: false,
+    internal: true,
+    allowedRoles: ["support", "commercial", "main"],
+  },
+  emailReadMessage: {
+    name: "emailReadMessage",
+    label: "Read incoming email",
+    category: ToolCategory.EMAIL,
+    defaultEnabled: false,
+    internal: true,
+    allowedRoles: ["support", "commercial", "main"],
+  },
 };
 
 export type ToolName = keyof typeof TOOL_REGISTRY;
