@@ -14,6 +14,8 @@ import type { PluginContext, ToolResult, ToolRunContext } from "@paperclipai/plu
 import { ALL_TOOLS, type ToolContextAccess } from "./tools/index.js";
 import { TOOL_REGISTRY, CATEGORY_LABELS, type ToolMetadata } from "./tools/registry.js";
 import { runImapPollJob } from "./email/poller.js";
+import { pollImapAccount } from "./email/imap-client.js";
+import type { EmailAccountData } from "./email/types.js";
 
 const PLUGIN_NAME = "neocompany-tools";
 
@@ -300,6 +302,143 @@ const plugin = definePlugin({
       return { ok: true, category, enabled };
     });
 
+    // ── Data: list email accounts for a company ──────────────────────
+    ctx.data.register("emailAccounts", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { accounts: [] };
+      const records = await ctx.entities.list({
+        entityType: "email_account",
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 100,
+      });
+      const accounts = records.map((r) => {
+        const data = (r.data ?? {}) as unknown as EmailAccountData;
+        return {
+          id: r.id,
+          address: data.address,
+          label: data.label ?? null,
+          imapHost: data.imapHost,
+          imapPort: data.imapPort,
+          imapUser: data.imapUser,
+          pollingEnabled: data.pollingEnabled,
+          pollIntervalMin: data.pollIntervalMin ?? 5,
+          lastSeenUid: data.lastSeenUid ?? 0,
+          status: data.status ?? "active",
+          lastError: data.lastError ?? null,
+          allowedAgents: data.allowedAgents ?? [],
+        };
+      });
+      return { companyId, accounts };
+    });
+
+    // ── Action: upsert an email account ──────────────────────────────
+    ctx.actions.register("emailAccountUpsert", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const address = params.address as string;
+      if (!companyId || !address) {
+        throw new Error("emailAccountUpsert requires companyId and address");
+      }
+      const data: EmailAccountData = {
+        address,
+        label: (params.label as string | undefined) ?? undefined,
+        imapHost: (params.imapHost as string | undefined) ?? "",
+        imapPort: Number(params.imapPort ?? 993),
+        imapUser: (params.imapUser as string | undefined) ?? address,
+        imapPassRef: (params.imapPassRef as string | undefined) ?? "",
+        pollingEnabled: Boolean(params.pollingEnabled ?? false),
+        pollIntervalMin: Number(params.pollIntervalMin ?? 5),
+        allowedAgents: Array.isArray(params.allowedAgents)
+          ? (params.allowedAgents as string[])
+          : undefined,
+        status: "active",
+        lastError: null,
+      };
+      const record = await ctx.entities.upsert({
+        entityType: "email_account",
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: address,
+        title: data.label ?? address,
+        status: "active",
+        data: data as unknown as Record<string, unknown>,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: `Email account "${address}" upserted (polling=${data.pollingEnabled})`,
+        entityType: "email_account",
+        entityId: record.id,
+      });
+      return { ok: true, id: record.id, address };
+    });
+
+    // ── Action: delete an email account ──────────────────────────────
+    ctx.actions.register("emailAccountDelete", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const id = params.id as string;
+      if (!companyId || !id) throw new Error("emailAccountDelete requires companyId and id");
+      // The plugin entities API does not yet have a `delete` method — we
+      // mark the account as paused with pollingEnabled=false instead so it
+      // stops being picked up by the poller without losing audit history.
+      const candidates = await ctx.entities.list({
+        entityType: "email_account",
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 200,
+      });
+      const target = candidates.find((r) => r.id === id);
+      if (!target) throw new Error(`email_account "${id}" not found in company ${companyId}`);
+      const data = (target.data ?? {}) as unknown as EmailAccountData;
+      await ctx.entities.upsert({
+        entityType: "email_account",
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: target.externalId ?? data.address,
+        title: target.title ?? data.address,
+        status: "paused",
+        data: { ...data, pollingEnabled: false, status: "paused" } as unknown as Record<string, unknown>,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: `Email account "${data.address}" paused (soft delete)`,
+        entityType: "email_account",
+        entityId: id,
+      });
+      return { ok: true, id };
+    });
+
+    // ── Action: test an email account's IMAP connection ──────────────
+    ctx.actions.register("emailAccountTest", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const id = params.id as string;
+      if (!companyId || !id) throw new Error("emailAccountTest requires companyId and id");
+      const candidates = await ctx.entities.list({
+        entityType: "email_account",
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 200,
+      });
+      const target = candidates.find((r) => r.id === id);
+      if (!target) throw new Error(`email_account "${id}" not found`);
+      const data = (target.data ?? {}) as unknown as EmailAccountData;
+      if (!data.imapPassRef) throw new Error("Account has no IMAP password ref configured");
+      const password = await ctx.secrets.resolve(data.imapPassRef);
+      try {
+        const result = await pollImapAccount({
+          host: data.imapHost,
+          port: data.imapPort,
+          user: data.imapUser,
+          password,
+          // Test only — don't actually drain the inbox
+          lastSeenUid: Number.MAX_SAFE_INTEGER - 1,
+          maxMessages: 0,
+        });
+        return { ok: true, message: `Connected to ${data.imapHost}:${data.imapPort}`, latestUid: result.newLastSeenUid };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: message };
+      }
+    });
 
     for (const tool of ALL_TOOLS) {
       ctx.tools.register(
