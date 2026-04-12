@@ -15,6 +15,9 @@ import { runSeoPageSpeed, seoPageSpeedDeclaration, type SeoPageSpeedParams, type
 import { runSeoContentAudit, seoContentAuditDeclaration, type SeoContentAuditParams } from "./seo/content-audit.js";
 import { runSeoCompetitorPageRank, seoCompetitorPageRankDeclaration, type SeoCompetitorPageRankParams, type OpenPageRankConfig } from "./seo/competitor-pagerank.js";
 import { runContentGenerateSocialPosts, contentGenerateSocialPostsDeclaration, type ContentGenerateSocialPostsParams } from "./content/generate-social-posts.js";
+import { runWpListPosts, wpListPostsDeclaration, type WpListPostsParams } from "./wordpress/list-posts.js";
+import { runWpCreatePost, wpCreatePostDeclaration, type WpCreatePostParams } from "./wordpress/create-post.js";
+import type { WordPressConfig } from "../adapters/wordpress.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 
 export interface RegisteredToolEntry {
@@ -41,6 +44,7 @@ export interface ToolContextAccess {
   getEmailSendConfig(companyId: string, agentId: string): Promise<EmailSendConfig>;
   getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
   getOpenPageRankConfig(companyId: string): Promise<OpenPageRankConfig>;
+  getWordPressConfig(companyId: string): Promise<WordPressConfig>;
 }
 
 export const ALL_TOOLS: RegisteredToolEntry[] = [
@@ -85,6 +89,23 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: contentGenerateSocialPostsDeclaration,
     run: async (params, runCtx, _ctxAccess) =>
       runContentGenerateSocialPosts(params as ContentGenerateSocialPostsParams, runCtx),
+  },
+  // ─── WordPress (Application Password required) ──────────────────────
+  {
+    name: "wpListPosts",
+    declaration: wpListPostsDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
+      return runWpListPosts(params as WpListPostsParams, config, runCtx);
+    },
+  },
+  {
+    name: "wpCreatePost",
+    declaration: wpCreatePostDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
+      return runWpCreatePost(params as WpCreatePostParams, config, runCtx);
+    },
   },
   // ─── SEO tools that need Google OAuth ────────────────────────────────
   {

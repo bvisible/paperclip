@@ -82,6 +82,24 @@ const manifest: PaperclipPluginManifestV1 = {
           "Optional secret reference to an Open PageRank API key. The API also answers anonymous calls at low volume.",
         format: "secret-ref",
       },
+      wordpressSiteUrl: {
+        type: "string",
+        title: "WordPress site URL",
+        description: "Base URL of the WordPress site (no trailing /wp-json), e.g. https://blog.neoservice.ai.",
+        default: "",
+      },
+      wordpressUsername: {
+        type: "string",
+        title: "WordPress username",
+        description: "Username with REST write access.",
+        default: "",
+      },
+      wordpressAppPasswordRef: {
+        type: "string",
+        title: "WordPress Application Password",
+        description: "Secret reference to a WordPress Application Password (see Users → Profile → Application Passwords).",
+        format: "secret-ref",
+      },
       resendApiKeyRef: {
         type: "string",
         title: "Resend API Key",

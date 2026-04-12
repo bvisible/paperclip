@@ -22,6 +22,9 @@ interface InstanceConfig {
   googleRefreshTokenRef?: string;
   googlePsiApiKeyRef?: string;
   openPageRankApiKeyRef?: string;
+  wordpressSiteUrl?: string;
+  wordpressUsername?: string;
+  wordpressAppPasswordRef?: string;
   resendApiKeyRef?: string;
   defaultFromAddress?: string;
 }
@@ -62,6 +65,19 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
       }
       const apiKey = await ctx.secrets.resolve(cfg.googlePsiApiKeyRef);
       return { apiKey };
+    },
+
+    async getWordPressConfig(_companyId: string) {
+      const cfg = await readInstanceConfig(ctx);
+      if (!cfg.wordpressSiteUrl) throw new Error("WordPress site URL is not configured");
+      if (!cfg.wordpressUsername) throw new Error("WordPress username is not configured");
+      if (!cfg.wordpressAppPasswordRef) throw new Error("WordPress Application Password is not configured");
+      const appPassword = await ctx.secrets.resolve(cfg.wordpressAppPasswordRef);
+      return {
+        siteUrl: cfg.wordpressSiteUrl,
+        username: cfg.wordpressUsername,
+        appPassword,
+      };
     },
 
     async getOpenPageRankConfig(_companyId: string) {

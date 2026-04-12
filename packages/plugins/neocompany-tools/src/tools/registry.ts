@@ -99,6 +99,25 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["writer", "community", "main"],
   },
+  // ─── WordPress ───────────────────────────────────────────────────────
+  wpListPosts: {
+    name: "wpListPosts",
+    label: "List WordPress posts",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: false,
+    internal: false,
+    connectionTrigger: "wordpress",
+    allowedRoles: ["writer", "main"],
+  },
+  wpCreatePost: {
+    name: "wpCreatePost",
+    label: "Create WordPress post",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: false,
+    internal: false,
+    connectionTrigger: "wordpress",
+    allowedRoles: ["writer", "main"],
+  },
   // ─── SEO — Google OAuth required ────────────────────────────────────
   seoGscKeywords: {
     name: "seoGscKeywords",
