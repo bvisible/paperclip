@@ -25,8 +25,9 @@ const manifest: PaperclipPluginManifestV1 = {
     "activity.log.write",
     // Read agents to resolve per-agent email identity, allow-lists, etc.
     "agents.read",
-    // Settings UI
+    // Settings UI + sidebar launcher
     "ui.page.register",
+    "ui.sidebar.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
