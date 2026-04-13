@@ -19,6 +19,7 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { pluginRegistryService } from "../services/plugin-registry.js";
 import { pluginStateStore } from "../services/plugin-state-store.js";
+import { invalidateNeocompanyAllowlistCache } from "../services/plugin-tool-dispatcher.js";
 import { assertInstanceAdmin, assertBoard } from "./authz.js";
 import { notFound } from "../errors.js";
 
@@ -192,6 +193,9 @@ function createPlatformConfigRoutes(db: Db): Router {
         stateKey: PLATFORM_KEYS.enabledTools,
         value: enabled as unknown,
       });
+      // Drop the dispatcher's in-memory allowlist cache so the new
+      // values take effect immediately instead of after the TTL window.
+      invalidateNeocompanyAllowlistCache();
       res.json({ ok: true, enabled });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

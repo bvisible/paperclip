@@ -38,7 +38,63 @@ import {
   type ToolExecutionResult,
 } from "./plugin-tool-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
+import { pluginStateStore } from "./plugin-state-store.js";
 import { logger } from "../middleware/logger.js";
+
+// ---------------------------------------------------------------------------
+// neocompany-tools super-admin gate
+// ---------------------------------------------------------------------------
+//
+// When `neocompany-tools` is installed, the super-admin controls a
+// platform-wide whitelist of tool names stored in `plugin_state` scope=instance
+// at key `platform:enabled-tools`. If the key is absent the gate is
+// permissive (backwards-compat — new installs and legacy tests still work).
+// If the key is an empty array, every neocompany-tools call is blocked.
+// If the key is a non-empty array, only the listed bare tool names are
+// allowed through to the worker.
+//
+// We cache the current allowlist for a short TTL so the DB isn't hit on
+// every single tool call, and invalidate on write via the bridge route.
+
+const NEOCOMPANY_PLUGIN_KEY = "neocompany-tools";
+const ENABLED_TOOLS_STATE_KEY = "platform:enabled-tools";
+const ENABLED_CACHE_TTL_MS = 5_000;
+
+interface AllowlistCacheEntry {
+  value: string[] | null; // null = "not configured, allow all"
+  fetchedAt: number;
+}
+
+let allowlistCache: AllowlistCacheEntry | null = null;
+
+/** Force the next allowlist read to hit the DB. Called by the bridge route
+ *  after a successful POST /enabled-tools so UI changes apply immediately. */
+export function invalidateNeocompanyAllowlistCache(): void {
+  allowlistCache = null;
+}
+
+async function readNeocompanyAllowlist(db: Db): Promise<string[] | null> {
+  const now = Date.now();
+  if (allowlistCache && now - allowlistCache.fetchedAt < ENABLED_CACHE_TTL_MS) {
+    return allowlistCache.value;
+  }
+  try {
+    const plugin = await pluginRegistryService(db).getByKey(NEOCOMPANY_PLUGIN_KEY);
+    if (!plugin) {
+      // Plugin not installed — no gate to enforce.
+      allowlistCache = { value: null, fetchedAt: now };
+      return null;
+    }
+    const raw = await pluginStateStore(db).get(plugin.id, "instance", ENABLED_TOOLS_STATE_KEY);
+    const value = Array.isArray(raw) ? (raw as string[]) : null;
+    allowlistCache = { value, fetchedAt: now };
+    return value;
+  } catch {
+    // Defensive fallback: on any read error, treat as unconfigured.
+    allowlistCache = { value: null, fetchedAt: now };
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -421,6 +477,23 @@ export function createPluginToolDispatcher(
         },
         "dispatching tool execution",
       );
+
+      // Super-admin platform gate: for any `neocompany-tools:*` call we
+      // consult the platform-wide allowlist stored in plugin_state scope
+      // instance. A missing key means "allow all" (permissive default so
+      // a fresh install or pre-D deployment keeps working). An empty array
+      // means "block everything". Otherwise only explicitly-listed bare
+      // tool names are dispatched.
+      if (db && namespacedName.startsWith(`${NEOCOMPANY_PLUGIN_KEY}:`)) {
+        const bareName = namespacedName.slice(NEOCOMPANY_PLUGIN_KEY.length + 1);
+        const allowlist = await readNeocompanyAllowlist(db);
+        if (allowlist !== null && !allowlist.includes(bareName)) {
+          throw new Error(
+            `Tool "${namespacedName}" is not enabled on this platform. ` +
+              `Ask the super-admin to enable it from the NeoCompany Tools settings.`,
+          );
+        }
+      }
 
       const result = await registry.executeTool(
         namespacedName,
