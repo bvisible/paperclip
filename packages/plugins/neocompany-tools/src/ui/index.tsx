@@ -1,6 +1,6 @@
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { usePluginData, usePluginAction, useHostContext } from "@paperclipai/plugin-sdk/ui";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types — mirror the shape returned by the worker's data handlers
@@ -72,6 +72,32 @@ interface EmailAccountView {
 interface EmailAccountsResponse {
   companyId?: string;
   accounts: EmailAccountView[];
+}
+
+interface CompanyConfigView {
+  gscSiteUrl?: string;
+  ga4PropertyId?: string;
+  wordpressSiteUrl?: string;
+  wordpressUsername?: string;
+  wordpressAppPasswordRef?: string;
+}
+
+interface CompanyConfigResponse {
+  config: CompanyConfigView;
+}
+
+interface PlatformConfigView {
+  googleClientId: string;
+  googleClientSecretRef: string | null;
+  googleRefreshTokenRef: string | null;
+  googlePsiApiKeyRef: string | null;
+  openPageRankApiKeyRef: string | null;
+  resendApiKeyRef: string | null;
+  resendDefaultFrom: string;
+}
+
+interface EnabledToolsView {
+  enabled: string[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,11 +236,55 @@ export function SettingsPage(_props: PluginPageProps) {
   const accessResp = usePluginData<AccessState>("accessState", { companyId });
   const configResp = usePluginData<ConfigSummary>("configSummary", {});
   const emailAccountsResp = usePluginData<EmailAccountsResponse>("emailAccounts", { companyId });
+  const companyConfigResp = usePluginData<CompanyConfigResponse>("companyConfig", { companyId });
   const setCategoryEnabled = usePluginAction("setCategoryEnabled");
   const emailAccountUpsert = usePluginAction("emailAccountUpsert");
   const emailAccountDelete = usePluginAction("emailAccountDelete");
   const emailAccountTest = usePluginAction("emailAccountTest");
   const setToolConfig = usePluginAction("setToolConfig");
+  const setCompanyConfigAction = usePluginAction("setCompanyConfig");
+
+  // ── Admin bridge (server-side gate) ──────────────────────────────
+  // These fetch calls go DIRECTLY to the Paperclip HTTP API with the
+  // user's session cookie — they bypass the plugin worker on purpose.
+  // The server routes use `assertInstanceAdmin` for writes so a non-admin
+  // can never toggle the platform allowlist even by poking curl.
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [platformCfg, setPlatformCfg] = useState<PlatformConfigView | null>(null);
+  const [enabledTools, setEnabledTools] = useState<string[] | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [adminRes, platformRes, enabledRes] = await Promise.all([
+          fetch("/api/plugins/neocompany-tools/bridge/am-i-admin", { credentials: "include" }),
+          fetch("/api/plugins/neocompany-tools/bridge/platform", { credentials: "include" }),
+          fetch("/api/plugins/neocompany-tools/bridge/enabled-tools", { credentials: "include" }),
+        ]);
+        if (cancelled) return;
+        if (adminRes.ok) {
+          const json = (await adminRes.json()) as { isAdmin: boolean };
+          setIsAdmin(Boolean(json.isAdmin));
+        } else {
+          setIsAdmin(false);
+        }
+        if (platformRes.ok) {
+          setPlatformCfg((await platformRes.json()) as PlatformConfigView);
+        }
+        if (enabledRes.ok) {
+          const json = (await enabledRes.json()) as EnabledToolsView;
+          setEnabledTools(json.enabled);
+        }
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [configDrawer, setConfigDrawer] = useState<ToolMetadataView | null>(null);
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [pendingAccountAction, setPendingAccountAction] = useState<string | null>(null);
@@ -303,6 +373,46 @@ export function SettingsPage(_props: PluginPageProps) {
     [companyId, emailAccountDelete, emailAccountsResp],
   );
 
+  const savePlatformConfig = useCallback(
+    async (patch: Partial<PlatformConfigView>) => {
+      const res = await fetch("/api/plugins/neocompany-tools/bridge/platform", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        // Re-read from server to avoid optimistic-UI drift
+        const next = await fetch("/api/plugins/neocompany-tools/bridge/platform", { credentials: "include" });
+        if (next.ok) setPlatformCfg((await next.json()) as PlatformConfigView);
+      }
+    },
+    [],
+  );
+
+  const saveEnabledTools = useCallback(async (next: string[]) => {
+    const res = await fetch("/api/plugins/neocompany-tools/bridge/enabled-tools", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: next }),
+    });
+    if (res.ok) {
+      setEnabledTools(next);
+      catalogResp.refresh();
+    }
+  }, [catalogResp]);
+
+  const saveCompanyConfig = useCallback(
+    async (patch: Partial<CompanyConfigView>) => {
+      if (!companyId) return;
+      await setCompanyConfigAction({ companyId, patch });
+      companyConfigResp.refresh();
+      configResp.refresh();
+    },
+    [companyId, setCompanyConfigAction, companyConfigResp, configResp],
+  );
+
   const onTestAccount = useCallback(
     async (id: string) => {
       if (!companyId) return;
@@ -341,45 +451,30 @@ export function SettingsPage(_props: PluginPageProps) {
         </p>
       </header>
 
+      {isAdmin === true && (
+        <section style={{ marginBottom: 24 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, color: tokens.mutedText, marginBottom: 8 }}>
+            Platform settings · super-admin only
+          </h2>
+          <PlatformSection
+            cfg={platformCfg}
+            catalog={catalog}
+            enabledTools={enabledTools}
+            onSaveCfg={savePlatformConfig}
+            onSaveEnabled={saveEnabledTools}
+          />
+        </section>
+      )}
+
       <section style={{ marginBottom: 24 }}>
         <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, color: tokens.mutedText, marginBottom: 8 }}>
-          Provider configuration
+          Company configuration
         </h2>
-        <Card>
-          {!config ? (
-            <p style={{ color: tokens.mutedText, fontSize: 13 }}>Loading…</p>
-          ) : (
-            <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Google OAuth (GSC, GA4)</span>
-                <Pill tone={config.googleOAuthConfigured ? "ok" : "warn"}>
-                  {config.googleOAuthConfigured ? "configured" : "missing"}
-                </Pill>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Google PageSpeed Insights API key</span>
-                <Pill tone={config.googlePsiKeyConfigured ? "ok" : "muted"}>
-                  {config.googlePsiKeyConfigured ? "configured" : "optional"}
-                </Pill>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Resend API key (email.send)</span>
-                <Pill tone={config.resendConfigured ? "ok" : "warn"}>
-                  {config.resendConfigured ? "configured" : "missing"}
-                </Pill>
-              </div>
-              {config.defaultFromAddress && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>Default From address</span>
-                  <span style={{ color: tokens.mutedText, fontSize: 12 }}>{config.defaultFromAddress}</span>
-                </div>
-              )}
-            </div>
-          )}
-          <p style={{ color: tokens.mutedText, fontSize: 12, marginTop: 12 }}>
-            Secret references are edited from the core Paperclip plugin config panel.
-          </p>
-        </Card>
+        <CompanySection
+          cfg={companyConfigResp.data?.config ?? null}
+          configSummary={config}
+          onSave={saveCompanyConfig}
+        />
       </section>
 
       <section>
@@ -745,6 +840,388 @@ export function SettingsPage(_props: PluginPageProps) {
 // usePluginData('toolConfig', { companyId, toolName }) and writes them back
 // via the setToolConfig action.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// PlatformSection — super-admin only. Edits the platform-wide provider
+// credentials (Google OAuth, PSI, Resend, Open PageRank, default From) and
+// the platform-wide enabled-tools allowlist. Writes go through the
+// bridge routes (`PUT /bridge/platform` + `POST /bridge/enabled-tools`)
+// which enforce `assertInstanceAdmin`.
+// ---------------------------------------------------------------------------
+
+function PlatformSection({
+  cfg,
+  catalog,
+  enabledTools,
+  onSaveCfg,
+  onSaveEnabled,
+}: {
+  cfg: PlatformConfigView | null;
+  catalog: ToolCatalog | null;
+  enabledTools: string[] | null | undefined;
+  onSaveCfg: (patch: Partial<PlatformConfigView>) => Promise<void>;
+  onSaveEnabled: (next: string[]) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<Partial<PlatformConfigView> | null>(null);
+  const [savingCfg, setSavingCfg] = useState(false);
+  const [savingEnabled, setSavingEnabled] = useState(false);
+  const [localEnabled, setLocalEnabled] = useState<string[] | null>(null);
+
+  // Hydrate the draft from the server response once.
+  if (!draft && cfg) {
+    setDraft({
+      googleClientId: cfg.googleClientId,
+      googleClientSecretRef: cfg.googleClientSecretRef ?? "",
+      googleRefreshTokenRef: cfg.googleRefreshTokenRef ?? "",
+      googlePsiApiKeyRef: cfg.googlePsiApiKeyRef ?? "",
+      openPageRankApiKeyRef: cfg.openPageRankApiKeyRef ?? "",
+      resendApiKeyRef: cfg.resendApiKeyRef ?? "",
+      resendDefaultFrom: cfg.resendDefaultFrom,
+    });
+  }
+
+  // Collect all tools from the catalog into a flat list for the allowlist toggle
+  const allTools: Array<{ name: string; label: string; category: string }> = [];
+  if (catalog) {
+    for (const entry of Object.values(catalog.categories)) {
+      for (const t of entry.tools) {
+        allTools.push({ name: t.name, label: t.label, category: entry.label });
+      }
+    }
+  }
+  const currentEnabled =
+    localEnabled !== null
+      ? localEnabled
+      : enabledTools === null || enabledTools === undefined
+        ? allTools.map((t) => t.name) // unconfigured == all enabled
+        : enabledTools;
+
+  const toggleTool = (name: string) => {
+    const next = currentEnabled.includes(name)
+      ? currentEnabled.filter((n) => n !== name)
+      : [...currentEnabled, name];
+    setLocalEnabled(next);
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <Card>
+        <div style={{ marginBottom: 10, display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+          <strong style={{ fontSize: 14 }}>Platform provider credentials</strong>
+          <span style={{ fontSize: 11, color: tokens.mutedText }}>shared across every company</span>
+        </div>
+        {!draft ? (
+          <p style={{ color: tokens.mutedText, fontSize: 13 }}>Loading…</p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 13 }}>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>Google OAuth Client ID</span>
+              <input
+                type="text"
+                value={String(draft.googleClientId ?? "")}
+                onChange={(e) => setDraft({ ...draft, googleClientId: e.target.value })}
+                placeholder="1234...apps.googleusercontent.com"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>Google OAuth Client Secret (secret ref)</span>
+              <input
+                type="text"
+                value={String(draft.googleClientSecretRef ?? "")}
+                onChange={(e) => setDraft({ ...draft, googleClientSecretRef: e.target.value })}
+                placeholder="secret_ref_uuid"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>Google OAuth Refresh Token (secret ref)</span>
+              <input
+                type="text"
+                value={String(draft.googleRefreshTokenRef ?? "")}
+                onChange={(e) => setDraft({ ...draft, googleRefreshTokenRef: e.target.value })}
+                placeholder="secret_ref_uuid"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>PageSpeed Insights key (secret ref, optional)</span>
+              <input
+                type="text"
+                value={String(draft.googlePsiApiKeyRef ?? "")}
+                onChange={(e) => setDraft({ ...draft, googlePsiApiKeyRef: e.target.value })}
+                placeholder="secret_ref_uuid"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>Open PageRank key (secret ref, optional)</span>
+              <input
+                type="text"
+                value={String(draft.openPageRankApiKeyRef ?? "")}
+                onChange={(e) => setDraft({ ...draft, openPageRankApiKeyRef: e.target.value })}
+                placeholder="secret_ref_uuid"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>Resend API Key (secret ref)</span>
+              <input
+                type="text"
+                value={String(draft.resendApiKeyRef ?? "")}
+                onChange={(e) => setDraft({ ...draft, resendApiKeyRef: e.target.value })}
+                placeholder="secret_ref_uuid"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+              <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>Resend Default From</span>
+              <input
+                type="text"
+                value={String(draft.resendDefaultFrom ?? "")}
+                onChange={(e) => setDraft({ ...draft, resendDefaultFrom: e.target.value })}
+                placeholder={`Melvyn <melvyn@neocompany.ch>`}
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+              />
+            </label>
+          </div>
+        )}
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            disabled={savingCfg || !draft}
+            onClick={async () => {
+              if (!draft) return;
+              setSavingCfg(true);
+              try {
+                await onSaveCfg(draft);
+              } finally {
+                setSavingCfg(false);
+              }
+            }}
+            style={{
+              background: tokens.primary,
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 14px",
+              fontSize: 13,
+              cursor: "pointer",
+              opacity: savingCfg ? 0.6 : 1,
+            }}
+          >
+            {savingCfg ? "Saving…" : "Save platform credentials"}
+          </button>
+        </div>
+      </Card>
+
+      <Card>
+        <div style={{ marginBottom: 10 }}>
+          <strong style={{ fontSize: 14 }}>Enabled tools allowlist</strong>
+          <div style={{ fontSize: 12, color: tokens.mutedText, marginTop: 2 }}>
+            Only tools checked here can be called by any agent, on any company.
+            {enabledTools === null && " Currently unconfigured → every tool is implicitly enabled."}
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6, fontSize: 13, marginBottom: 12 }}>
+          {allTools.map((t) => {
+            const checked = currentEnabled.includes(t.name);
+            return (
+              <label key={t.name} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "3px 0" }}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleTool(t.name)}
+                />
+                <code style={{ fontSize: 11, color: tokens.mutedText }}>{t.name}</code>
+              </label>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            disabled={savingEnabled || localEnabled === null}
+            onClick={() => setLocalEnabled(null)}
+            style={{
+              background: "transparent",
+              border: tokens.cardBorder,
+              borderRadius: 6,
+              padding: "6px 14px",
+              fontSize: 13,
+              cursor: "pointer",
+              color: "var(--foreground, #111)",
+            }}
+          >
+            Reset
+          </button>
+          <button
+            disabled={savingEnabled || localEnabled === null}
+            onClick={async () => {
+              if (localEnabled === null) return;
+              setSavingEnabled(true);
+              try {
+                await onSaveEnabled(localEnabled);
+                setLocalEnabled(null);
+              } finally {
+                setSavingEnabled(false);
+              }
+            }}
+            style={{
+              background: tokens.primary,
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 14px",
+              fontSize: 13,
+              cursor: "pointer",
+              opacity: savingEnabled ? 0.6 : 1,
+            }}
+          >
+            {savingEnabled ? "Saving…" : "Save allowlist"}
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CompanySection — editable by any user with access to the current company.
+// Stores gscSiteUrl / ga4PropertyId / wordpressSiteUrl / wordpressUsername /
+// wordpressAppPasswordRef in plugin_state scope=company.
+// ---------------------------------------------------------------------------
+
+function CompanySection({
+  cfg,
+  configSummary,
+  onSave,
+}: {
+  cfg: CompanyConfigView | null;
+  configSummary: ConfigSummary | null;
+  onSave: (patch: Partial<CompanyConfigView>) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<Partial<CompanyConfigView> | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  if (!draft && cfg) {
+    setDraft({
+      gscSiteUrl: cfg.gscSiteUrl ?? "",
+      ga4PropertyId: cfg.ga4PropertyId ?? "",
+      wordpressSiteUrl: cfg.wordpressSiteUrl ?? "",
+      wordpressUsername: cfg.wordpressUsername ?? "",
+      wordpressAppPasswordRef: cfg.wordpressAppPasswordRef ?? "",
+    });
+  }
+
+  return (
+    <Card>
+      {configSummary && (
+        <div style={{ display: "grid", gap: 6, fontSize: 13, marginBottom: 16, paddingBottom: 12, borderBottom: tokens.cardBorder }}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span>Platform Google OAuth</span>
+            <Pill tone={configSummary.googleOAuthConfigured ? "ok" : "warn"}>
+              {configSummary.googleOAuthConfigured ? "configured" : "missing"}
+            </Pill>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span>Platform PSI key</span>
+            <Pill tone={configSummary.googlePsiKeyConfigured ? "ok" : "muted"}>
+              {configSummary.googlePsiKeyConfigured ? "configured" : "optional"}
+            </Pill>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span>Platform Resend key</span>
+            <Pill tone={configSummary.resendConfigured ? "ok" : "warn"}>
+              {configSummary.resendConfigured ? "configured" : "missing"}
+            </Pill>
+          </div>
+        </div>
+      )}
+
+      {!draft ? (
+        <p style={{ color: tokens.mutedText, fontSize: 13 }}>Loading…</p>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 13 }}>
+          <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+            <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>GSC property URL (this company)</span>
+            <input
+              type="text"
+              value={String(draft.gscSiteUrl ?? "")}
+              onChange={(e) => setDraft({ ...draft, gscSiteUrl: e.target.value })}
+              placeholder="https://neoservice.ai/ or sc-domain:neoservice.ai"
+              style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+            <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>GA4 property ID (this company)</span>
+            <input
+              type="text"
+              value={String(draft.ga4PropertyId ?? "")}
+              onChange={(e) => setDraft({ ...draft, ga4PropertyId: e.target.value })}
+              placeholder="367221234"
+              style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4, gridColumn: "1 / -1" }}>
+            <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>WordPress site URL</span>
+            <input
+              type="text"
+              value={String(draft.wordpressSiteUrl ?? "")}
+              onChange={(e) => setDraft({ ...draft, wordpressSiteUrl: e.target.value })}
+              placeholder="https://blog.neoservice.ai"
+              style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>WordPress username</span>
+            <input
+              type="text"
+              value={String(draft.wordpressUsername ?? "")}
+              onChange={(e) => setDraft({ ...draft, wordpressUsername: e.target.value })}
+              placeholder="admin"
+              style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4 }}>
+            <span style={{ fontSize: 11, color: tokens.mutedText, fontWeight: 600 }}>WP app password (secret ref)</span>
+            <input
+              type="text"
+              value={String(draft.wordpressAppPasswordRef ?? "")}
+              onChange={(e) => setDraft({ ...draft, wordpressAppPasswordRef: e.target.value })}
+              placeholder="secret_ref_uuid"
+              style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+            />
+          </label>
+        </div>
+      )}
+      <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+        <button
+          disabled={saving || !draft}
+          onClick={async () => {
+            if (!draft) return;
+            setSaving(true);
+            try {
+              await onSave(draft);
+            } finally {
+              setSaving(false);
+            }
+          }}
+          style={{
+            background: tokens.primary,
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            padding: "6px 14px",
+            fontSize: 13,
+            cursor: "pointer",
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saving ? "Saving…" : "Save company configuration"}
+        </button>
+      </div>
+    </Card>
+  );
+}
 
 function ToolConfigDrawer({
   tool,

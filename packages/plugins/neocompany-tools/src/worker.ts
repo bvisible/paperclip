@@ -468,6 +468,40 @@ const plugin = definePlugin({
       return { companyId, categoryToggles };
     });
 
+    // ── Data: per-company config (GSC site, GA4 property, WordPress) ─
+    ctx.data.register("companyConfig", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { config: {} };
+      const cfg = await readCompanyConfig(ctx, companyId);
+      return { config: cfg };
+    });
+
+    // ── Action: save per-company config ──────────────────────────────
+    ctx.actions.register("setCompanyConfig", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const patch = (params.patch ?? {}) as Partial<CompanyConfig>;
+      if (!companyId) throw new Error("setCompanyConfig requires companyId");
+      const writeKey = async (key: string, value: string | undefined) => {
+        if (value === undefined) return;
+        await ctx.state.set(
+          { scopeKind: "company", scopeId: companyId, stateKey: key },
+          value as unknown,
+        );
+      };
+      await writeKey(COMPANY_KEYS.gscSiteUrl, patch.gscSiteUrl);
+      await writeKey(COMPANY_KEYS.ga4PropertyId, patch.ga4PropertyId);
+      await writeKey(COMPANY_KEYS.wordpressSiteUrl, patch.wordpressSiteUrl);
+      await writeKey(COMPANY_KEYS.wordpressUsername, patch.wordpressUsername);
+      await writeKey(COMPANY_KEYS.wordpressAppPasswordRef, patch.wordpressAppPasswordRef);
+      await ctx.activity.log({
+        companyId,
+        message: `Company config updated (${Object.keys(patch).join(", ")})`,
+        entityType: "plugin-company-config",
+        entityId: companyId,
+      });
+      return { ok: true };
+    });
+
     // ── Data: plugin instance config summary (which secrets are set) ─
     ctx.data.register("configSummary", async () => {
       const platform = await readPlatformConfig(ctx);
