@@ -146,7 +146,7 @@ const manifest: PaperclipPluginManifestV1 = {
   launchers: [
     {
       id: "neocompany-tools-settings",
-      displayName: "NeoCompany Tools",
+      displayName: "Tools",
       description: "Configure and toggle NeoCompany tools",
       placementZone: "sidebar",
       action: {
