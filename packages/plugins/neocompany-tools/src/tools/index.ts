@@ -36,6 +36,37 @@ import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessa
 import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 
+/**
+ * Optional per-tool configuration schema — subset of JSON Schema we render
+ * as a form in the Settings UI. Only tools that expose a `configSchema`
+ * get a cogwheel next to their entry.
+ *
+ * The config values live in `plugin_state` scope=company, key
+ * `tool-config:<toolName>`. The tool handler reads them via
+ * `ctxAccess.getToolConfig(companyId, toolName, defaults)` and merges
+ * them with any explicit call parameters (call params always win).
+ */
+export interface ToolConfigField {
+  name: string;
+  /** Free-form label rendered above the input. */
+  label: string;
+  /** Field type — drives the input widget. */
+  type: "string" | "url" | "number" | "boolean" | "enum";
+  description?: string;
+  /** Default value shown when the company hasn't saved anything. */
+  default?: string | number | boolean;
+  /** Enum options — only used when `type === "enum"`. */
+  options?: Array<{ value: string; label: string }>;
+  /** Marks the field as required (UI hint; the worker tolerates absence). */
+  required?: boolean;
+}
+
+export interface ToolConfigSchema {
+  title: string;
+  description?: string;
+  fields: ToolConfigField[];
+}
+
 export interface RegisteredToolEntry {
   name: string;
   declaration: {
@@ -43,6 +74,11 @@ export interface RegisteredToolEntry {
     description: string;
     parametersSchema: Record<string, unknown>;
   };
+  /**
+   * Optional per-company configuration schema. Tools without one don't
+   * get a cogwheel in the Settings UI.
+   */
+  configSchema?: ToolConfigSchema;
   /**
    * Raw runtime handler. The worker wraps this with config resolution
    * (secret refs, per-agent identity) before registering it on
@@ -62,6 +98,16 @@ export interface ToolContextAccess {
   getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
   getOpenPageRankConfig(companyId: string): Promise<OpenPageRankConfig>;
   getWordPressConfig(companyId: string): Promise<WordPressConfig>;
+  /**
+   * Resolve the per-company tool config for a given tool name. Returns
+   * the user-provided values merged on top of `defaults`. Call params
+   * take precedence over this config in the tool handler.
+   */
+  getToolConfig<T extends Record<string, unknown>>(
+    companyId: string,
+    toolName: string,
+    defaults: T,
+  ): Promise<T>;
   /**
    * Plugin context — exposed for the email inbox tools that need
    * `ctx.entities.list` directly. Other tools should keep using the
@@ -87,16 +133,60 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   {
     name: "seoPageSpeed",
     declaration: seoPageSpeedDeclaration,
+    configSchema: {
+      title: "PageSpeed defaults",
+      description: "Fallbacks used when the agent calls seoPageSpeed without those params.",
+      fields: [
+        {
+          name: "defaultStrategy",
+          label: "Default audit strategy",
+          type: "enum",
+          options: [
+            { value: "mobile", label: "Mobile" },
+            { value: "desktop", label: "Desktop" },
+          ],
+          default: "mobile",
+        },
+      ],
+    },
     run: async (params, runCtx, ctxAccess) => {
-      const config = await ctxAccess.getPageSpeedConfig(runCtx.companyId);
-      return runSeoPageSpeed(params as SeoPageSpeedParams, config, runCtx);
+      const [config, toolCfg] = await Promise.all([
+        ctxAccess.getPageSpeedConfig(runCtx.companyId),
+        ctxAccess.getToolConfig(runCtx.companyId, "seoPageSpeed", {
+          defaultStrategy: "mobile" as "mobile" | "desktop",
+        }),
+      ]);
+      const merged = {
+        ...(params as SeoPageSpeedParams),
+        strategy: (params as SeoPageSpeedParams).strategy ?? toolCfg.defaultStrategy,
+      };
+      return runSeoPageSpeed(merged, config, runCtx);
     },
   },
   {
     name: "seoContentAudit",
     declaration: seoContentAuditDeclaration,
-    run: async (params, runCtx, _ctxAccess) =>
-      runSeoContentAudit(params as SeoContentAuditParams, runCtx),
+    configSchema: {
+      title: "Content audit defaults",
+      fields: [
+        {
+          name: "defaultUrl",
+          label: "Default URL to audit",
+          type: "url",
+          description: "Used when the agent calls seoContentAudit without a url.",
+        },
+      ],
+    },
+    run: async (params, runCtx, ctxAccess) => {
+      const toolCfg = await ctxAccess.getToolConfig(runCtx.companyId, "seoContentAudit", {
+        defaultUrl: "",
+      });
+      const merged = {
+        ...(params as SeoContentAuditParams),
+        url: (params as SeoContentAuditParams).url || toolCfg.defaultUrl,
+      };
+      return runSeoContentAudit(merged, runCtx);
+    },
   },
   {
     name: "seoCompetitorPageRank",
@@ -131,9 +221,43 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   {
     name: "wpListPosts",
     declaration: wpListPostsDeclaration,
+    configSchema: {
+      title: "List WordPress posts defaults",
+      fields: [
+        {
+          name: "defaultStatus",
+          label: "Default status filter",
+          type: "enum",
+          options: [
+            { value: "any", label: "Any" },
+            { value: "publish", label: "Published" },
+            { value: "draft", label: "Draft" },
+            { value: "pending", label: "Pending" },
+          ],
+          default: "any",
+        },
+        {
+          name: "defaultPerPage",
+          label: "Default page size",
+          type: "number",
+          default: 10,
+        },
+      ],
+    },
     run: async (params, runCtx, ctxAccess) => {
-      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
-      return runWpListPosts(params as WpListPostsParams, config, runCtx);
+      const [config, toolCfg] = await Promise.all([
+        ctxAccess.getWordPressConfig(runCtx.companyId),
+        ctxAccess.getToolConfig(runCtx.companyId, "wpListPosts", {
+          defaultStatus: "any" as "any" | "publish" | "draft" | "pending",
+          defaultPerPage: 10,
+        }),
+      ]);
+      const merged = {
+        ...(params as WpListPostsParams),
+        status: (params as WpListPostsParams).status ?? toolCfg.defaultStatus,
+        perPage: (params as WpListPostsParams).perPage ?? toolCfg.defaultPerPage,
+      };
+      return runWpListPosts(merged, config, runCtx);
     },
   },
   {
@@ -172,9 +296,38 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   {
     name: "seoGscKeywords",
     declaration: seoGscKeywordsDeclaration,
+    configSchema: {
+      title: "GSC keywords defaults",
+      description: "Defaults applied when the agent doesn't pass siteUrl/limit explicitly.",
+      fields: [
+        {
+          name: "defaultSiteUrl",
+          label: "Default GSC property URL",
+          type: "url",
+          description: "e.g. https://neoservice.ai/ or sc-domain:neoservice.ai",
+        },
+        {
+          name: "defaultLimit",
+          label: "Default number of keywords",
+          type: "number",
+          default: 25,
+        },
+      ],
+    },
     run: async (params, runCtx, ctxAccess) => {
-      const config = await ctxAccess.getGscConfig(runCtx.companyId);
-      return runSeoGscKeywords(params as SeoGscKeywordsParams, config, runCtx);
+      const [config, toolCfg] = await Promise.all([
+        ctxAccess.getGscConfig(runCtx.companyId),
+        ctxAccess.getToolConfig(runCtx.companyId, "seoGscKeywords", {
+          defaultSiteUrl: "",
+          defaultLimit: 25,
+        }),
+      ]);
+      const merged = {
+        ...(params as SeoGscKeywordsParams),
+        siteUrl: (params as SeoGscKeywordsParams).siteUrl || toolCfg.defaultSiteUrl,
+        limit: (params as SeoGscKeywordsParams).limit ?? toolCfg.defaultLimit,
+      };
+      return runSeoGscKeywords(merged, config, runCtx);
     },
   },
   {

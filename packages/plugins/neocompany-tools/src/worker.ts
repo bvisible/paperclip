@@ -48,6 +48,20 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
       return ctx;
     },
 
+    async getToolConfig(companyId, toolName, defaults) {
+      try {
+        const raw = await ctx.state.get({
+          scopeKind: "company",
+          scopeId: companyId,
+          stateKey: `tool-config:${toolName}`,
+        });
+        if (!raw || typeof raw !== "object") return defaults;
+        return { ...defaults, ...(raw as Record<string, unknown>) } as typeof defaults;
+      } catch {
+        return defaults;
+      }
+    },
+
     async getGscConfig(_companyId: string) {
       const cfg = await readInstanceConfig(ctx);
       if (!cfg.googleClientId) throw new Error("Google OAuth client ID is not configured");
@@ -231,7 +245,13 @@ const plugin = definePlugin({
 
     // ── Data: full tool catalog grouped by category ──────────────────
     ctx.data.register("toolCatalog", async () => {
-      const byCategory: Record<string, { label: string; tools: ToolMetadata[] }> = {};
+      // Build a map: toolName → configSchema (for tools that expose one)
+      const configSchemaByName: Record<string, unknown> = {};
+      for (const entry of ALL_TOOLS) {
+        if (entry.configSchema) configSchemaByName[entry.name] = entry.configSchema;
+      }
+
+      const byCategory: Record<string, { label: string; tools: Array<ToolMetadata & { configSchema?: unknown }> }> = {};
       for (const meta of Object.values(TOOL_REGISTRY)) {
         const key = meta.category as string;
         if (!byCategory[key]) {
@@ -240,12 +260,54 @@ const plugin = definePlugin({
             tools: [],
           };
         }
-        byCategory[key].tools.push(meta);
+        byCategory[key].tools.push({
+          ...meta,
+          configSchema: configSchemaByName[meta.name],
+        });
       }
       return {
         toolCount: Object.keys(TOOL_REGISTRY).length,
         categories: byCategory,
       };
+    });
+
+    // ── Data: per-company tool config ────────────────────────────────
+    ctx.data.register("toolConfig", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const toolName = params.toolName as string;
+      if (!companyId || !toolName) return { config: {} };
+      const raw = await ctx.state.get({
+        scopeKind: "company",
+        scopeId: companyId,
+        stateKey: `tool-config:${toolName}`,
+      });
+      return { config: raw ?? {} };
+    });
+
+    // ── Action: save per-company tool config ─────────────────────────
+    ctx.actions.register("setToolConfig", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const toolName = params.toolName as string;
+      const config = (params.config as Record<string, unknown>) ?? {};
+      if (!companyId || !toolName) {
+        throw new Error("setToolConfig requires companyId and toolName");
+      }
+      await ctx.state.set(
+        {
+          scopeKind: "company",
+          scopeId: companyId,
+          stateKey: `tool-config:${toolName}`,
+        },
+        config as unknown,
+      );
+      await ctx.activity.log({
+        companyId,
+        message: `Tool config updated for "${toolName}"`,
+        entityType: "plugin-tool-config",
+        entityId: toolName,
+        metadata: { toolName, fields: Object.keys(config) },
+      });
+      return { ok: true, toolName };
     });
 
     // ── Data: current access state for a company (category toggles) ──

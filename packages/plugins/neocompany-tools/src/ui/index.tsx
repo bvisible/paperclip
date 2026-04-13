@@ -6,6 +6,22 @@ import { useCallback, useState } from "react";
 // Types — mirror the shape returned by the worker's data handlers
 // ---------------------------------------------------------------------------
 
+interface ToolConfigField {
+  name: string;
+  label: string;
+  type: "string" | "url" | "number" | "boolean" | "enum";
+  description?: string;
+  default?: string | number | boolean;
+  options?: Array<{ value: string; label: string }>;
+  required?: boolean;
+}
+
+interface ToolConfigSchemaView {
+  title: string;
+  description?: string;
+  fields: ToolConfigField[];
+}
+
 interface ToolMetadataView {
   name: string;
   label: string;
@@ -14,11 +30,16 @@ interface ToolMetadataView {
   internal: boolean;
   connectionTrigger?: "wordpress" | "google" | null;
   allowedRoles?: string[];
+  configSchema?: ToolConfigSchemaView | null;
 }
 
 interface ToolCatalog {
   toolCount: number;
   categories: Record<string, { label: string; tools: ToolMetadataView[] }>;
+}
+
+interface ToolConfigResponse {
+  config: Record<string, unknown>;
 }
 
 interface AccessState {
@@ -193,6 +214,8 @@ export function SettingsPage(_props: PluginPageProps) {
   const emailAccountUpsert = usePluginAction("emailAccountUpsert");
   const emailAccountDelete = usePluginAction("emailAccountDelete");
   const emailAccountTest = usePluginAction("emailAccountTest");
+  const setToolConfig = usePluginAction("setToolConfig");
+  const [configDrawer, setConfigDrawer] = useState<ToolMetadataView | null>(null);
   const [pendingToggle, setPendingToggle] = useState<string | null>(null);
   const [pendingAccountAction, setPendingAccountAction] = useState<string | null>(null);
   const [accountTestResult, setAccountTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
@@ -446,13 +469,32 @@ export function SettingsPage(_props: PluginPageProps) {
                           </code>
                           <span style={{ color: tokens.mutedText }}>{tool.label}</span>
                         </div>
-                        <div style={{ display: "flex", gap: 6 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           {tool.internal && <Pill tone="warn">internal</Pill>}
                           {tool.connectionTrigger && (
                             <Pill tone="muted">needs {tool.connectionTrigger}</Pill>
                           )}
                           {tool.allowedRoles && tool.allowedRoles.length > 0 && (
                             <Pill tone="muted">{tool.allowedRoles.join(", ")}</Pill>
+                          )}
+                          {tool.configSchema && (
+                            <button
+                              onClick={() => setConfigDrawer(tool)}
+                              title={`Configure ${tool.label}`}
+                              aria-label={`Configure ${tool.label}`}
+                              style={{
+                                background: "transparent",
+                                border: tokens.cardBorder,
+                                borderRadius: 6,
+                                padding: "2px 6px",
+                                cursor: "pointer",
+                                fontSize: 12,
+                                color: tokens.mutedText,
+                                lineHeight: 1,
+                              }}
+                            >
+                              ⚙
+                            </button>
                           )}
                         </div>
                       </li>
@@ -681,6 +723,250 @@ export function SettingsPage(_props: PluginPageProps) {
           </div>
         )}
       </section>
+
+      {configDrawer && (
+        <ToolConfigDrawer
+          tool={configDrawer}
+          companyId={companyId}
+          onClose={() => setConfigDrawer(null)}
+          onSave={async (config) => {
+            await setToolConfig({ companyId, toolName: configDrawer.name, config });
+            setConfigDrawer(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ToolConfigDrawer — modal-like drawer rendered over the Settings page for
+// editing a tool's per-company config. Loads the current values via
+// usePluginData('toolConfig', { companyId, toolName }) and writes them back
+// via the setToolConfig action.
+// ---------------------------------------------------------------------------
+
+function ToolConfigDrawer({
+  tool,
+  companyId,
+  onClose,
+  onSave,
+}: {
+  tool: ToolMetadataView;
+  companyId: string;
+  onClose: () => void;
+  onSave: (config: Record<string, unknown>) => Promise<void>;
+}) {
+  const configResp = usePluginData<ToolConfigResponse>("toolConfig", {
+    companyId,
+    toolName: tool.name,
+  });
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+  const [initialised, setInitialised] = useState(false);
+
+  // Initialise the draft once the data has loaded
+  if (!initialised && configResp.data) {
+    const loaded = configResp.data.config ?? {};
+    const seeded: Record<string, unknown> = {};
+    for (const field of tool.configSchema?.fields ?? []) {
+      seeded[field.name] = loaded[field.name] ?? field.default ?? "";
+    }
+    setDraft(seeded);
+    setInitialised(true);
+  }
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // Strip empty strings so we don't pollute the stored config
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(draft)) {
+        if (v === "" || v === undefined || v === null) continue;
+        cleaned[k] = v;
+      }
+      await onSave(cleaned);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const schema = tool.configSchema;
+  if (!schema) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        justifyContent: "flex-end",
+        zIndex: 9999,
+        fontFamily: tokens.fontFamily,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 480,
+          maxWidth: "100%",
+          background: "var(--background, #fff)",
+          height: "100%",
+          padding: 24,
+          overflowY: "auto",
+          borderLeft: tokens.cardBorder,
+          boxShadow: "-10px 0 30px rgba(0,0,0,0.15)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, color: tokens.mutedText, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Configure tool
+            </div>
+            <h2 style={{ margin: "2px 0 4px 0", fontSize: 18, fontWeight: 700 }}>{tool.label}</h2>
+            <code style={{ fontSize: 11, color: tokens.mutedText }}>{tool.name}</code>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 20,
+              color: tokens.mutedText,
+              lineHeight: 1,
+              padding: 4,
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{schema.title}</h3>
+          {schema.description && (
+            <p style={{ margin: "4px 0 0 0", fontSize: 12, color: tokens.mutedText }}>
+              {schema.description}
+            </p>
+          )}
+        </div>
+
+        {!configResp.data ? (
+          <p style={{ color: tokens.mutedText, fontSize: 13 }}>Loading…</p>
+        ) : (
+          <div style={{ display: "grid", gap: 14 }}>
+            {schema.fields.map((field) => (
+              <label key={field.name} style={{ display: "grid", gap: 4 }}>
+                <span style={{ fontSize: 12, color: tokens.mutedText, fontWeight: 600 }}>
+                  {field.label}
+                  {field.required && <span style={{ color: tokens.danger, marginLeft: 4 }}>*</span>}
+                </span>
+                {field.type === "enum" && field.options ? (
+                  <select
+                    value={String(draft[field.name] ?? "")}
+                    onChange={(e) => setDraft({ ...draft, [field.name]: e.target.value })}
+                    style={{
+                      padding: "6px 8px",
+                      border: tokens.cardBorder,
+                      borderRadius: 6,
+                      background: "transparent",
+                      color: "var(--foreground, #111)",
+                      fontSize: 13,
+                    }}
+                  >
+                    <option value="">(default)</option>
+                    {field.options.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                ) : field.type === "boolean" ? (
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(draft[field.name])}
+                      onChange={(e) => setDraft({ ...draft, [field.name]: e.target.checked })}
+                    />
+                    <span style={{ fontSize: 12, color: tokens.mutedText }}>
+                      {Boolean(draft[field.name]) ? "Enabled" : "Disabled"}
+                    </span>
+                  </label>
+                ) : field.type === "number" ? (
+                  <input
+                    type="number"
+                    value={String(draft[field.name] ?? "")}
+                    onChange={(e) => setDraft({ ...draft, [field.name]: e.target.value === "" ? "" : Number(e.target.value) })}
+                    style={{
+                      padding: "6px 8px",
+                      border: tokens.cardBorder,
+                      borderRadius: 6,
+                      background: "transparent",
+                      color: "var(--foreground, #111)",
+                      fontSize: 13,
+                    }}
+                  />
+                ) : (
+                  <input
+                    type={field.type === "url" ? "url" : "text"}
+                    value={String(draft[field.name] ?? "")}
+                    onChange={(e) => setDraft({ ...draft, [field.name]: e.target.value })}
+                    placeholder={field.default ? String(field.default) : ""}
+                    style={{
+                      padding: "6px 8px",
+                      border: tokens.cardBorder,
+                      borderRadius: 6,
+                      background: "transparent",
+                      color: "var(--foreground, #111)",
+                      fontSize: 13,
+                    }}
+                  />
+                )}
+                {field.description && (
+                  <span style={{ fontSize: 11, color: tokens.mutedText }}>{field.description}</span>
+                )}
+              </label>
+            ))}
+          </div>
+        )}
+
+        <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            style={{
+              background: "transparent",
+              border: tokens.cardBorder,
+              borderRadius: 6,
+              padding: "6px 14px",
+              fontSize: 13,
+              cursor: "pointer",
+              color: "var(--foreground, #111)",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !initialised}
+            style={{
+              background: tokens.primary,
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 14px",
+              fontSize: 13,
+              cursor: "pointer",
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
