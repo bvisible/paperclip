@@ -20,9 +20,16 @@ import type { EmailAccountData } from "./email/types.js";
 const PLUGIN_NAME = "neocompany-tools";
 
 /**
- * Platform config — written by the super-admin through the bridge routes
- * into `plugin_state` scope=instance. The worker reads it at invocation
- * time; it NEVER writes (writes go through the protected server routes).
+ * Platform config — read from `plugin_config` via `ctx.config.get()`.
+ *
+ * The admin bridge routes (`PUT /api/plugins/neocompany-tools/bridge/platform`)
+ * write these fields via `pluginRegistryService.patchConfig` behind
+ * `assertInstanceAdmin`. Regular company users never see the write form
+ * in the Settings UI.
+ *
+ * We keep the fields declared in `manifest.instanceConfigSchema` so the
+ * plugin-secrets-handler (see plugin-secrets-handler.ts line 288-309)
+ * accepts the referenced secret UUIDs when the worker resolves them.
  */
 interface PlatformConfig {
   googleClientId?: string;
@@ -31,6 +38,9 @@ interface PlatformConfig {
   googlePsiApiKeyRef?: string;
   openPageRankApiKeyRef?: string;
   resendApiKeyRef?: string;
+  /** Legacy key name (kept for backwards-compat with migrated installs). */
+  defaultFromAddress?: string;
+  /** New key name used by the bridge routes. */
   resendDefaultFrom?: string;
 }
 
@@ -47,17 +57,6 @@ interface CompanyConfig {
   agentEmailIdentities?: Record<string, { address: string; fromName?: string; signature?: string }>;
 }
 
-const PLATFORM_KEYS = {
-  enabledTools: "platform:enabled-tools",
-  googleClientId: "platform:google:clientId",
-  googleClientSecretRef: "platform:google:clientSecretRef",
-  googleRefreshTokenRef: "platform:google:refreshTokenRef",
-  googlePsiApiKeyRef: "platform:google:psiApiKeyRef",
-  openPageRankApiKeyRef: "platform:openPageRank:apiKeyRef",
-  resendApiKeyRef: "platform:resend:apiKeyRef",
-  resendDefaultFrom: "platform:resend:defaultFrom",
-} as const;
-
 const COMPANY_KEYS = {
   gscSiteUrl: "company:gsc:siteUrl",
   ga4PropertyId: "company:ga4:propertyId",
@@ -66,46 +65,9 @@ const COMPANY_KEYS = {
   wordpressAppPasswordRef: "company:wordpress:appPasswordRef",
 } as const;
 
-async function readPlatformString(ctx: PluginContext, key: string): Promise<string | undefined> {
-  // Do NOT pass a `scopeId` here — the bridge routes write instance-scoped
-  // values with `scopeId: undefined` (which maps to SQL `scope_id IS NULL`).
-  // Passing "global" would miss those writes entirely.
-  try {
-    const raw = await ctx.state.get({ scopeKind: "instance", stateKey: key });
-    if (typeof raw === "string") return raw;
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 async function readPlatformConfig(ctx: PluginContext): Promise<PlatformConfig> {
-  const [
-    googleClientId,
-    googleClientSecretRef,
-    googleRefreshTokenRef,
-    googlePsiApiKeyRef,
-    openPageRankApiKeyRef,
-    resendApiKeyRef,
-    resendDefaultFrom,
-  ] = await Promise.all([
-    readPlatformString(ctx, PLATFORM_KEYS.googleClientId),
-    readPlatformString(ctx, PLATFORM_KEYS.googleClientSecretRef),
-    readPlatformString(ctx, PLATFORM_KEYS.googleRefreshTokenRef),
-    readPlatformString(ctx, PLATFORM_KEYS.googlePsiApiKeyRef),
-    readPlatformString(ctx, PLATFORM_KEYS.openPageRankApiKeyRef),
-    readPlatformString(ctx, PLATFORM_KEYS.resendApiKeyRef),
-    readPlatformString(ctx, PLATFORM_KEYS.resendDefaultFrom),
-  ]);
-  return {
-    googleClientId,
-    googleClientSecretRef,
-    googleRefreshTokenRef,
-    googlePsiApiKeyRef,
-    openPageRankApiKeyRef,
-    resendApiKeyRef,
-    resendDefaultFrom,
-  };
+  const raw = (await ctx.config.get()) as PlatformConfig | null;
+  return raw ?? {};
 }
 
 async function readCompanyConfig(ctx: PluginContext, companyId: string): Promise<CompanyConfig> {
@@ -139,44 +101,10 @@ async function readCompanyConfig(ctx: PluginContext, companyId: string): Promise
   };
 }
 
-/**
- * One-shot migration from the legacy `instanceConfigSchema`-backed plugin
- * config to the new `plugin_state` scope=instance model. We only need this
- * because existing installs have operator-supplied values in
- * `plugin_config.config_json` that would otherwise be lost when we drop
- * the fields from the manifest.
- *
- * Runs on every worker boot but is a no-op if the new keys are already
- * set. Safe to re-run.
- */
-async function migratePlatformConfigIfNeeded(ctx: PluginContext): Promise<void> {
-  // If the google clientId is already set in the new location, skip.
-  const existing = await readPlatformString(ctx, PLATFORM_KEYS.googleClientId);
-  if (existing !== undefined) return;
-
-  const legacyRaw = (await ctx.config.get()) as Record<string, unknown> | null;
-  if (!legacyRaw || typeof legacyRaw !== "object") return;
-
-  const copy = async (legacyKey: string, targetKey: string) => {
-    const value = legacyRaw[legacyKey];
-    if (typeof value === "string" && value.length > 0) {
-      await ctx.state.set(
-        { scopeKind: "instance", stateKey: targetKey },
-        value as unknown,
-      );
-    }
-  };
-
-  await copy("googleClientId", PLATFORM_KEYS.googleClientId);
-  await copy("googleClientSecretRef", PLATFORM_KEYS.googleClientSecretRef);
-  await copy("googleRefreshTokenRef", PLATFORM_KEYS.googleRefreshTokenRef);
-  await copy("googlePsiApiKeyRef", PLATFORM_KEYS.googlePsiApiKeyRef);
-  await copy("openPageRankApiKeyRef", PLATFORM_KEYS.openPageRankApiKeyRef);
-  await copy("resendApiKeyRef", PLATFORM_KEYS.resendApiKeyRef);
-  await copy("defaultFromAddress", PLATFORM_KEYS.resendDefaultFrom);
-
-  ctx.logger.info("Migrated legacy instanceConfig → plugin_state scope=instance");
-}
+// (Phase D3 migration removed — we now keep platform config in plugin_config
+// where the plugin-secrets-handler's allowlist extractor can find it. The
+// bridge routes in server/src/routes/plugin-neocompany-bridge.ts write
+// through pluginRegistryService.patchConfig behind assertInstanceAdmin.)
 
 /**
  * Build the `ToolContextAccess` helper bound to the current worker context.
@@ -277,7 +205,7 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
 
       // Prefer the agent's own email identity if set on metadata,
       // fall back to the platform default From address.
-      let defaultFrom = platform.resendDefaultFrom ?? "";
+      let defaultFrom = platform.resendDefaultFrom ?? platform.defaultFromAddress ?? "";
       try {
         const agent = await ctx.agents.get(agentId, companyId);
         const metadata = (agent?.metadata ?? {}) as Record<string, unknown>;
@@ -383,16 +311,6 @@ async function setCategoryToggles(
 const plugin = definePlugin({
   async setup(ctx) {
     ctx.logger.info(`${PLUGIN_NAME} plugin setup — registering ${ALL_TOOLS.length} tool(s)`);
-
-    // One-shot migration from legacy instanceConfigSchema to plugin_state
-    // scope=instance. No-op if already migrated. Non-fatal on error.
-    try {
-      await migratePlatformConfigIfNeeded(ctx);
-    } catch (err) {
-      ctx.logger.warn("platform config migration skipped", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
 
     const ctxAccess = makeCtxAccess(ctx);
 
@@ -515,7 +433,7 @@ const plugin = definePlugin({
           Boolean(platform.googleRefreshTokenRef),
         googlePsiKeyConfigured: Boolean(platform.googlePsiApiKeyRef),
         resendConfigured: Boolean(platform.resendApiKeyRef),
-        defaultFromAddress: platform.resendDefaultFrom ?? "",
+        defaultFromAddress: platform.resendDefaultFrom ?? platform.defaultFromAddress ?? "",
       };
     });
 

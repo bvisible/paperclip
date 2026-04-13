@@ -25,17 +25,10 @@ import { notFound } from "../errors.js";
 
 const PLUGIN_KEY = "neocompany-tools";
 
-/** Keys we manage in plugin_state scope=instance. */
-const PLATFORM_KEYS = {
-  enabledTools: "platform:enabled-tools",
-  googleClientId: "platform:google:clientId",
-  googleClientSecretRef: "platform:google:clientSecretRef",
-  googleRefreshTokenRef: "platform:google:refreshTokenRef",
-  googlePsiApiKeyRef: "platform:google:psiApiKeyRef",
-  openPageRankApiKeyRef: "platform:openPageRank:apiKeyRef",
-  resendApiKeyRef: "platform:resend:apiKeyRef",
-  resendDefaultFrom: "platform:resend:defaultFrom",
-} as const;
+/** Only the platform-enabled-tools allowlist lives in plugin_state. The
+ *  secret refs + googleClientId + defaultFrom all live in plugin_config
+ *  so the plugin-secrets-handler's allowlist extractor picks them up. */
+const ENABLED_TOOLS_STATE_KEY = "platform:enabled-tools";
 
 /** Shape the UI + worker expect when reading platform config. */
 interface PlatformConfigView {
@@ -51,9 +44,10 @@ interface PlatformConfigView {
 function createPlatformConfigRoutes(db: Db): Router {
   const router = Router();
   const stateStore = pluginStateStore(db);
+  const registry = pluginRegistryService(db);
 
   async function resolvePluginId(): Promise<string> {
-    const plugin = await pluginRegistryService(db).getByKey(PLUGIN_KEY);
+    const plugin = await registry.getByKey(PLUGIN_KEY);
     if (!plugin) throw notFound(`Plugin "${PLUGIN_KEY}" not installed`);
     return plugin.id;
   }
@@ -84,31 +78,17 @@ function createPlatformConfigRoutes(db: Db): Router {
     assertBoard(req);
     try {
       const pluginId = await resolvePluginId();
-      const [
-        googleClientId,
-        googleClientSecretRef,
-        googleRefreshTokenRef,
-        googlePsiApiKeyRef,
-        openPageRankApiKeyRef,
-        resendApiKeyRef,
-        resendDefaultFrom,
-      ] = await Promise.all([
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.googleClientId),
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.googleClientSecretRef),
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.googleRefreshTokenRef),
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.googlePsiApiKeyRef),
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.openPageRankApiKeyRef),
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.resendApiKeyRef),
-        stateStore.get(pluginId, "instance", PLATFORM_KEYS.resendDefaultFrom),
-      ]);
+      const row = await registry.getConfig(pluginId);
+      const cfg = (row?.configJson ?? {}) as Record<string, unknown>;
       const view: PlatformConfigView = {
-        googleClientId: (googleClientId as string) ?? "",
-        googleClientSecretRef: (googleClientSecretRef as string) ?? null,
-        googleRefreshTokenRef: (googleRefreshTokenRef as string) ?? null,
-        googlePsiApiKeyRef: (googlePsiApiKeyRef as string) ?? null,
-        openPageRankApiKeyRef: (openPageRankApiKeyRef as string) ?? null,
-        resendApiKeyRef: (resendApiKeyRef as string) ?? null,
-        resendDefaultFrom: (resendDefaultFrom as string) ?? "",
+        googleClientId: (cfg.googleClientId as string) ?? "",
+        googleClientSecretRef: (cfg.googleClientSecretRef as string) ?? null,
+        googleRefreshTokenRef: (cfg.googleRefreshTokenRef as string) ?? null,
+        googlePsiApiKeyRef: (cfg.googlePsiApiKeyRef as string) ?? null,
+        openPageRankApiKeyRef: (cfg.openPageRankApiKeyRef as string) ?? null,
+        resendApiKeyRef: (cfg.resendApiKeyRef as string) ?? null,
+        resendDefaultFrom:
+          ((cfg.resendDefaultFrom as string) ?? (cfg.defaultFromAddress as string)) ?? "",
       };
       res.json(view);
     } catch (err) {
@@ -126,18 +106,13 @@ function createPlatformConfigRoutes(db: Db): Router {
     const body = (req.body ?? {}) as Partial<PlatformConfigView>;
     try {
       const pluginId = await resolvePluginId();
-      // Only persist fields that the caller explicitly sent. `null` clears
-      // a ref; `""` clears a text field. Absent fields are ignored.
-      const updates: Array<Promise<void>> = [];
-      const writeIfProvided = (key: keyof typeof PLATFORM_KEYS, value: unknown) => {
+      // Only persist fields the caller explicitly sent. The patchConfig
+      // helper does a shallow merge so unrelated fields are preserved.
+      // null clears a ref; "" clears a text field; absent fields ignored.
+      const patch: Record<string, unknown> = {};
+      const writeIfProvided = (key: keyof PlatformConfigView, value: unknown) => {
         if (value === undefined) return;
-        updates.push(
-          stateStore.set(pluginId, {
-            scopeKind: "instance",
-            stateKey: PLATFORM_KEYS[key],
-            value: value as unknown,
-          }),
-        );
+        patch[key as string] = value;
       };
       writeIfProvided("googleClientId", body.googleClientId);
       writeIfProvided("googleClientSecretRef", body.googleClientSecretRef);
@@ -146,7 +121,9 @@ function createPlatformConfigRoutes(db: Db): Router {
       writeIfProvided("openPageRankApiKeyRef", body.openPageRankApiKeyRef);
       writeIfProvided("resendApiKeyRef", body.resendApiKeyRef);
       writeIfProvided("resendDefaultFrom", body.resendDefaultFrom);
-      await Promise.all(updates);
+      if (Object.keys(patch).length > 0) {
+        await registry.patchConfig(pluginId, { configJson: patch });
+      }
       res.json({ ok: true, updatedFields: Object.keys(body) });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -162,7 +139,7 @@ function createPlatformConfigRoutes(db: Db): Router {
     assertBoard(req);
     try {
       const pluginId = await resolvePluginId();
-      const raw = await stateStore.get(pluginId, "instance", PLATFORM_KEYS.enabledTools);
+      const raw = await stateStore.get(pluginId, "instance", ENABLED_TOOLS_STATE_KEY);
       const enabled = Array.isArray(raw) ? (raw as string[]) : null;
       // `null` is the "unconfigured" state → the dispatcher treats it as
       // "allow all" for backwards-compatibility. The UI knows to show an
@@ -190,7 +167,7 @@ function createPlatformConfigRoutes(db: Db): Router {
       const pluginId = await resolvePluginId();
       await stateStore.set(pluginId, {
         scopeKind: "instance",
-        stateKey: PLATFORM_KEYS.enabledTools,
+        stateKey: ENABLED_TOOLS_STATE_KEY,
         value: enabled as unknown,
       });
       // Drop the dispatcher's in-memory allowlist cache so the new

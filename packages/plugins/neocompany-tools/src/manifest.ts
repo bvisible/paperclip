@@ -64,18 +64,64 @@ const manifest: PaperclipPluginManifestV1 = {
     },
   ],
 
-  // Platform-wide config (Google OAuth, PSI key, Resend key, Open PageRank)
-  // has moved to `plugin_state` scope=instance and is written ONLY by the
-  // super-admin bridge routes (`/api/plugins/neocompany-tools/bridge/*`).
-  // Per-company config (GSC site URL, GA4 property, WordPress creds) lives
-  // in `plugin_state` scope=company and is editable by any company user.
+  // Platform-wide config. These fields are declared here so the
+  // plugin-secrets-handler knows which refs to allow the worker to
+  // resolve via ctx.secrets.resolve(). BUT writes to this config are
+  // super-admin only — gated by the `/api/plugins/neocompany-tools/
+  // bridge/platform` route which calls assertInstanceAdmin before
+  // patching plugin_config. Regular company users never see this
+  // schema in any writable form; the plugin's Settings UI hides the
+  // provider credentials section unless isInstanceAdmin.
   //
-  // Existing installs that had values in the legacy `instanceConfigSchema`
-  // are migrated once at worker startup — see `migratePlatformConfigIfNeeded`
-  // in `worker.ts`.
+  // Per-company config (GSC site URL, GA4 property, WordPress creds)
+  // lives in `plugin_state` scope=company and is editable by any
+  // company user via the regular Settings UI.
   instanceConfigSchema: {
     type: "object",
-    properties: {},
+    properties: {
+      googleClientId: {
+        type: "string",
+        title: "Google OAuth Client ID",
+        description: "OAuth 2.0 client ID used for Google Search Console + GA4.",
+        default: "",
+      },
+      googleClientSecretRef: {
+        type: "string",
+        title: "Google OAuth Client Secret",
+        description: "Secret reference to the Google OAuth client secret.",
+        format: "secret-ref",
+      },
+      googleRefreshTokenRef: {
+        type: "string",
+        title: "Google OAuth Refresh Token",
+        description: "Secret reference to a long-lived refresh token (GSC + GA4 scopes).",
+        format: "secret-ref",
+      },
+      googlePsiApiKeyRef: {
+        type: "string",
+        title: "Google PageSpeed Insights API Key (optional)",
+        description: "Optional secret reference — lifts the public quota.",
+        format: "secret-ref",
+      },
+      openPageRankApiKeyRef: {
+        type: "string",
+        title: "Open PageRank API Key (optional)",
+        description: "Optional secret reference for Open PageRank.",
+        format: "secret-ref",
+      },
+      resendApiKeyRef: {
+        type: "string",
+        title: "Resend API Key",
+        description: "Secret reference to the Resend API key for emailSendMessage.",
+        format: "secret-ref",
+      },
+      defaultFromAddress: {
+        type: "string",
+        title: "Default From address",
+        description: "Fallback From address when an agent has no email identity.",
+        default: "",
+      },
+    },
   },
 
   launchers: [
