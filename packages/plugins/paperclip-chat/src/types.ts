@@ -36,7 +36,17 @@ export interface ChatMessageMetadata {
 export type ChatSegment =
   | { kind: "text"; content: string }
   | { kind: "thinking"; content: string }
-  | { kind: "tool"; name: string; input: unknown; result?: string; isError?: boolean };
+  | {
+      kind: "tool";
+      name: string;
+      input: unknown;
+      result?: string;
+      isError?: boolean;
+      /** Millisecond timestamp when the `tool_use` block was emitted. */
+      startedAt?: number;
+      /** Millisecond timestamp when the matching `tool_result` arrived. */
+      finishedAt?: number;
+    };
 
 /** Available adapter info returned to the UI */
 export interface ChatAdapterInfo {

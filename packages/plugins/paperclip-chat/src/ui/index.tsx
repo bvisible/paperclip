@@ -262,31 +262,38 @@ const CHAT_STYLES = `
 type GroupedSegment =
   | { type: "text"; content: string; index: number }
   | { type: "error"; content: string; index: number }
+  | { type: "tool"; segment: Extract<ChatSegment, { kind: "tool" }>; index: number }
   | { type: "activity"; segments: ChatSegment[]; startIndex: number };
 
 function groupSegments(segments: ChatSegment[]): GroupedSegment[] {
   const groups: GroupedSegment[] = [];
-  let activityBuf: ChatSegment[] = [];
-  let activityStart = 0;
+  let thinkingBuf: ChatSegment[] = [];
+  let thinkingStart = 0;
 
-  const flushActivity = () => {
-    if (activityBuf.length > 0) {
-      groups.push({ type: "activity", segments: [...activityBuf], startIndex: activityStart });
-      activityBuf = [];
+  const flushThinking = () => {
+    if (thinkingBuf.length > 0) {
+      groups.push({ type: "activity", segments: [...thinkingBuf], startIndex: thinkingStart });
+      thinkingBuf = [];
     }
   };
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
-    if (seg.kind === "tool" || seg.kind === "thinking") {
-      if (activityBuf.length === 0) activityStart = i;
-      activityBuf.push(seg);
+    if (seg.kind === "thinking") {
+      if (thinkingBuf.length === 0) thinkingStart = i;
+      thinkingBuf.push(seg);
+    } else if (seg.kind === "tool") {
+      // Tool calls get their own top-level group so they render as
+      // prominent cards in the chat timeline, not hidden inside an
+      // activity group.
+      flushThinking();
+      groups.push({ type: "tool", segment: seg, index: i });
     } else if (seg.kind === "text") {
-      flushActivity();
+      flushThinking();
       groups.push({ type: "text", content: seg.content, index: i });
     }
   }
-  flushActivity();
+  flushThinking();
   return groups;
 }
 
@@ -329,31 +336,240 @@ function ThinkingBlock({ content, isLive }: { content: string; isLive: boolean }
   );
 }
 
+// ---------------------------------------------------------------------------
+// Tool call colours — stable hash → HSL for unknown tools, fixed palette for
+// the well-known neocompany-tools namespaces. Inspired by pinchchat's
+// `toolRGBs` table (MIT) — adapted to our inline-style tokens.
+// ---------------------------------------------------------------------------
+
+const TOOL_CATEGORY_COLORS: Record<string, { hue: number; label: string }> = {
+  seo: { hue: 210, label: "SEO" },
+  geo: { hue: 280, label: "GEO" },
+  content: { hue: 145, label: "Content" },
+  wp: { hue: 185, label: "WordPress" },
+  email: { hue: 25, label: "Email" },
+};
+
+function toolCategory(name: string): { hue: number; label: string } {
+  const lower = name.toLowerCase();
+  if (lower.startsWith("seo") && !lower.startsWith("seog")) return TOOL_CATEGORY_COLORS.seo;
+  if (lower.startsWith("seog")) return TOOL_CATEGORY_COLORS.seo;
+  if (lower.startsWith("geo")) return TOOL_CATEGORY_COLORS.geo;
+  if (lower.startsWith("content")) return TOOL_CATEGORY_COLORS.content;
+  if (lower.startsWith("wp")) return TOOL_CATEGORY_COLORS.wp;
+  if (lower.startsWith("email")) return TOOL_CATEGORY_COLORS.email;
+  // Fallback — hash the name to a stable hue
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return { hue: Math.abs(h) % 360, label: "Tool" };
+}
+
+function stripNamespace(name: string): string {
+  const sep = name.lastIndexOf(":");
+  return sep >= 0 ? name.slice(sep + 1) : name;
+}
+
+function formatDuration(startedAt?: number, finishedAt?: number): string | null {
+  if (!startedAt || !finishedAt) return null;
+  const ms = Math.max(0, finishedAt - startedAt);
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function ToolCallDetail({ seg, isLive }: { seg: Extract<ChatSegment, { kind: "tool" }>; isLive: boolean }) {
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState<"none" | "input" | "result">("none");
   const hasResult = seg.result !== undefined;
+  const bareName = stripNamespace(seg.name);
+  const category = toolCategory(bareName);
+  const duration = formatDuration(seg.startedAt, seg.finishedAt);
+
+  const badgeStyle: React.CSSProperties = {
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: 4,
+    fontSize: 10,
+    fontWeight: 600,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    background: `hsla(${category.hue}, 80%, 50%, 0.14)`,
+    color: `hsl(${category.hue}, 70%, 45%)`,
+  };
+
+  const cardStyle: React.CSSProperties = {
+    margin: "6px 0",
+    border: "1px solid var(--border, rgba(0,0,0,0.1))",
+    borderLeft: `3px solid hsl(${category.hue}, 70%, 50%)`,
+    borderRadius: 8,
+    background: "var(--card, rgba(0,0,0,0.02))",
+    overflow: "hidden",
+  };
+
+  const statusPill = (() => {
+    if (!hasResult && isLive) {
+      return <span className="chat-tool-pulse" style={{ color: "#f59e0b", fontSize: 10 }}>● running…</span>;
+    }
+    if (hasResult && seg.isError) {
+      return <span style={{ color: "#ef4444", fontSize: 10, fontWeight: 600 }}>✕ error</span>;
+    }
+    if (hasResult) {
+      return <span style={{ color: "#16a34a", fontSize: 10, fontWeight: 600 }}>✓ ok</span>;
+    }
+    return null;
+  })();
+
+  const inputJson = seg.input != null
+    ? typeof seg.input === "string"
+      ? seg.input
+      : JSON.stringify(seg.input, null, 2)
+    : null;
+
+  const copyText = async (text: string, kind: "input" | "result") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      setTimeout(() => setCopied("none"), 1500);
+    } catch {
+      // clipboard may be unavailable in some contexts
+    }
+  };
+
   return (
-    <div className="my-0.5">
+    <div className="chat-msg-enter" style={cardStyle}>
+      {/* Header — always visible */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-[11px] text-muted-foreground bg-transparent border-none cursor-pointer py-0.5 px-0 font-mono opacity-70"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          width: "100%",
+          padding: "8px 12px",
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+          color: "inherit",
+          textAlign: "left",
+        }}
       >
-        <span className="text-[9px]">{expanded ? "\u25BC" : "\u25B6"}</span>
-        <span>{seg.name}</span>
-        {!hasResult && isLive && <span className="chat-tool-pulse text-[#f59e0b] text-[8px]">{"\u25CF"}</span>}
-        {hasResult && seg.isError && <span className="text-[#ef4444] text-[10px]">{"\u2715"}</span>}
-        {hasResult && !seg.isError && <span className="text-[#22c55e] text-[10px]">{"\u2713"}</span>}
+        <span style={{ fontSize: 10, color: "var(--muted-foreground, #64748b)" }}>
+          {expanded ? "▼" : "▶"}
+        </span>
+        <span style={badgeStyle}>{category.label}</span>
+        <span style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 13, fontWeight: 600 }}>
+          {bareName}
+        </span>
+        <span style={{ flex: 1 }} />
+        {duration && (
+          <span style={{ fontSize: 11, color: "var(--muted-foreground, #64748b)", fontFamily: "ui-monospace, Menlo, monospace" }}>
+            {duration}
+          </span>
+        )}
+        {statusPill}
       </button>
+
+      {/* Body — collapsible */}
       {expanded && (
-        <div className="ml-4 text-[11px] font-mono">
-          {seg.input != null && (
-            <div className="p-1 px-2 bg-[rgba(0,0,0,0.06)] rounded-sm mb-1 max-h-[100px] overflow-auto text-muted-foreground">
-              {typeof seg.input === "string" ? seg.input : JSON.stringify(seg.input, null, 2)}
+        <div style={{ padding: "0 12px 12px 12px", fontSize: 12 }}>
+          {inputJson && (
+            <div style={{ marginTop: 4 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 4,
+                }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--muted-foreground, #64748b)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Parameters
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void copyText(inputJson, "input");
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--border, rgba(0,0,0,0.1))",
+                    borderRadius: 4,
+                    padding: "1px 8px",
+                    fontSize: 10,
+                    cursor: "pointer",
+                    color: "var(--muted-foreground, #64748b)",
+                  }}
+                >
+                  {copied === "input" ? "✓ copied" : "Copy"}
+                </button>
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "6px 10px",
+                  background: "rgba(0,0,0,0.06)",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  maxHeight: 160,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  color: "var(--foreground, #111)",
+                }}
+              >
+                {inputJson}
+              </pre>
             </div>
           )}
+
           {seg.result && (
-            <div className={`p-1 px-2 rounded-sm max-h-[120px] overflow-auto ${seg.isError ? "bg-[rgba(239,68,68,0.08)] text-[#ef4444]" : "bg-[rgba(0,0,0,0.04)] text-muted-foreground"}`}>
-              {seg.result}
+            <div style={{ marginTop: 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 4,
+                }}
+              >
+                <span style={{ fontSize: 10, fontWeight: 600, color: "var(--muted-foreground, #64748b)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  {seg.isError ? "Error" : "Result"}
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void copyText(seg.result ?? "", "result");
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--border, rgba(0,0,0,0.1))",
+                    borderRadius: 4,
+                    padding: "1px 8px",
+                    fontSize: 10,
+                    cursor: "pointer",
+                    color: "var(--muted-foreground, #64748b)",
+                  }}
+                >
+                  {copied === "result" ? "✓ copied" : "Copy"}
+                </button>
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  padding: "6px 10px",
+                  background: seg.isError ? "rgba(239,68,68,0.08)" : "rgba(0,0,0,0.04)",
+                  color: seg.isError ? "#ef4444" : "var(--foreground, #111)",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  maxHeight: 260,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                }}
+              >
+                {seg.result}
+              </pre>
             </div>
           )}
         </div>
@@ -476,6 +692,9 @@ function MessageRow({ msg, agentName }: { msg: ChatMessage; agentName?: string |
                   </div>
                 );
               }
+              if (group.type === "tool") {
+                return <ToolCallDetail key={i} seg={group.segment} isLive={false} />;
+              }
               if (group.type === "activity") {
                 return <ActivityGroup key={i} segments={group.segments} isLive={false} />;
               }
@@ -563,6 +782,9 @@ function StreamingMessage({
                   <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{linkifyIssues(group.content)}</Markdown>
                 </div>
               );
+            }
+            if (group.type === "tool") {
+              return <ToolCallDetail key={gi} seg={group.segment} isLive={isActive} />;
             }
             if (group.type === "activity") {
               return <ActivityGroup key={gi} segments={group.segments} isLive={isActive} />;

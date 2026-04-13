@@ -505,6 +505,7 @@ const plugin = definePlugin({
               kind: "tool",
               name: chatEvent.name ?? "tool",
               input: chatEvent.input,
+              startedAt: Date.now(),
             });
           }
           if (chatEvent.type === "tool_result") {
@@ -513,6 +514,7 @@ const plugin = definePlugin({
               if (seg && seg.kind === "tool" && seg.result === undefined) {
                 seg.result = chatEvent.content ?? "";
                 seg.isError = chatEvent.isError ?? false;
+                seg.finishedAt = Date.now();
                 break;
               }
             }
