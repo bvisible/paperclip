@@ -29,9 +29,13 @@ const manifest: PaperclipPluginManifestV1 = {
     "ui.page.register",
     "ui.sidebar.register",
     // Email subsystem: IMAP polling + plugin-owned entity store + event
-    // emission so paperclip-chat can wake on email.received
+    // emission so paperclip-chat can wake on email.received. Also
+    // agent.sessions.create so the poller can open a chat session with
+    // the assigned agent directly (wake-on-mail).
     "jobs.schedule",
     "events.emit",
+    "agent.sessions.create",
+    "agent.sessions.send",
   ],
   entrypoints: {
     worker: "./dist/worker.js",

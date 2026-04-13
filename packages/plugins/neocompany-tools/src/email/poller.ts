@@ -110,12 +110,13 @@ export async function runImapPollJob(
       continue;
     }
 
-    // Persist each new message
+    // Persist each new message, then wake the assigned agent if set
     for (const partial of result.messages) {
+      const assignedAgentId = data.allowedAgents?.[0];
       const incoming: IncomingEmailData = {
         ...partial,
         accountId: accountRecord.id,
-        assignedAgentId: data.allowedAgents?.[0],
+        assignedAgentId,
       };
       try {
         await ctx.entities.upsert({
@@ -132,6 +133,48 @@ export async function runImapPollJob(
         ctx.logger.warn("imap-poll: failed to persist incoming_email", {
           accountId: accountRecord.id,
           uid: incoming.uid,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+
+      // Wake-on-mail: open a chat session with the assigned agent and
+      // hand them the new message so they can decide what to do. The
+      // session is best-effort — if the plugin lacks the capability or
+      // the agent is paused, we just skip and keep the entity in pending.
+      if (!assignedAgentId) continue;
+      try {
+        const session = await ctx.agents.sessions.create(
+          assignedAgentId,
+          accountRecord.scopeId,
+          {
+            taskKey: `email-wake:${accountRecord.id}:${incoming.uid}`,
+            reason: `New email from ${incoming.fromAddress}: ${incoming.subject}`,
+          },
+        );
+        const promptBody = incoming.bodyText ?? incoming.bodyHtml ?? "(empty body)";
+        const prompt =
+          `You have a new email assigned to you.\n\n` +
+          `From: ${incoming.fromName ? `${incoming.fromName} <${incoming.fromAddress}>` : incoming.fromAddress}\n` +
+          `Subject: ${incoming.subject}\n` +
+          `Received: ${incoming.receivedAt}\n\n` +
+          `Body:\n${promptBody}\n\n` +
+          `Decide what to do: ignore, triage, respond, or escalate. ` +
+          `Use emailSendMessage to reply. When done, mark the email as processed.`;
+        await ctx.agents.sessions.sendMessage(session.sessionId, accountRecord.scopeId, {
+          prompt,
+          reason: "wake-on-mail",
+        });
+        ctx.logger.info("imap-poll: woke agent on new mail", {
+          accountId: accountRecord.id,
+          agentId: assignedAgentId,
+          sessionId: session.sessionId,
+          subject: incoming.subject,
+        });
+      } catch (err) {
+        ctx.logger.warn("imap-poll: wake-on-mail failed (non-fatal)", {
+          accountId: accountRecord.id,
+          agentId: assignedAgentId,
           error: err instanceof Error ? err.message : String(err),
         });
       }
