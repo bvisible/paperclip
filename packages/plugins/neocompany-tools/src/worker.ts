@@ -67,8 +67,11 @@ const COMPANY_KEYS = {
 } as const;
 
 async function readPlatformString(ctx: PluginContext, key: string): Promise<string | undefined> {
+  // Do NOT pass a `scopeId` here — the bridge routes write instance-scoped
+  // values with `scopeId: undefined` (which maps to SQL `scope_id IS NULL`).
+  // Passing "global" would miss those writes entirely.
   try {
-    const raw = await ctx.state.get({ scopeKind: "instance", scopeId: "global", stateKey: key });
+    const raw = await ctx.state.get({ scopeKind: "instance", stateKey: key });
     if (typeof raw === "string") return raw;
     return undefined;
   } catch {
@@ -158,7 +161,7 @@ async function migratePlatformConfigIfNeeded(ctx: PluginContext): Promise<void> 
     const value = legacyRaw[legacyKey];
     if (typeof value === "string" && value.length > 0) {
       await ctx.state.set(
-        { scopeKind: "instance", scopeId: "global", stateKey: targetKey },
+        { scopeKind: "instance", stateKey: targetKey },
         value as unknown,
       );
     }
