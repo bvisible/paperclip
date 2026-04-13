@@ -64,83 +64,18 @@ const manifest: PaperclipPluginManifestV1 = {
     },
   ],
 
-  // Operator-level config. Secrets are stored as `secret-ref` strings that
-  // the worker resolves at runtime via `ctx.secrets.resolve`.
+  // Platform-wide config (Google OAuth, PSI key, Resend key, Open PageRank)
+  // has moved to `plugin_state` scope=instance and is written ONLY by the
+  // super-admin bridge routes (`/api/plugins/neocompany-tools/bridge/*`).
+  // Per-company config (GSC site URL, GA4 property, WordPress creds) lives
+  // in `plugin_state` scope=company and is editable by any company user.
+  //
+  // Existing installs that had values in the legacy `instanceConfigSchema`
+  // are migrated once at worker startup — see `migratePlatformConfigIfNeeded`
+  // in `worker.ts`.
   instanceConfigSchema: {
     type: "object",
-    properties: {
-      googleClientId: {
-        type: "string",
-        title: "Google OAuth Client ID",
-        description:
-          "OAuth 2.0 client ID used for Google Search Console and GA4 calls. Create it in the Google Cloud console.",
-        default: "",
-      },
-      googleClientSecretRef: {
-        type: "string",
-        title: "Google OAuth Client Secret",
-        description: "Secret reference to the Google OAuth client secret.",
-        format: "secret-ref",
-      },
-      googleRefreshTokenRef: {
-        type: "string",
-        title: "Google OAuth Refresh Token",
-        description: "Secret reference to a long-lived refresh token scoped for GSC + GA4.",
-        format: "secret-ref",
-      },
-      googlePsiApiKeyRef: {
-        type: "string",
-        title: "Google PageSpeed Insights API Key (optional)",
-        description:
-          "Optional secret reference to a Google PSI API key. If unset, the public quota is used (fine for low volume).",
-        format: "secret-ref",
-      },
-      ga4PropertyId: {
-        type: "string",
-        title: "GA4 Property ID",
-        description:
-          "Numeric Google Analytics 4 property ID (e.g. 367221234). Required by seoGa4Traffic and seoGa4TopPages.",
-        default: "",
-      },
-      openPageRankApiKeyRef: {
-        type: "string",
-        title: "Open PageRank API Key (optional)",
-        description:
-          "Optional secret reference to an Open PageRank API key. The API also answers anonymous calls at low volume.",
-        format: "secret-ref",
-      },
-      wordpressSiteUrl: {
-        type: "string",
-        title: "WordPress site URL",
-        description: "Base URL of the WordPress site (no trailing /wp-json), e.g. https://blog.neoservice.ai.",
-        default: "",
-      },
-      wordpressUsername: {
-        type: "string",
-        title: "WordPress username",
-        description: "Username with REST write access.",
-        default: "",
-      },
-      wordpressAppPasswordRef: {
-        type: "string",
-        title: "WordPress Application Password",
-        description: "Secret reference to a WordPress Application Password (see Users → Profile → Application Passwords).",
-        format: "secret-ref",
-      },
-      resendApiKeyRef: {
-        type: "string",
-        title: "Resend API Key",
-        description: "Secret reference to the Resend API key used by the email.send tool.",
-        format: "secret-ref",
-      },
-      defaultFromAddress: {
-        type: "string",
-        title: "Default From address",
-        description:
-          "Fallback From address used when an agent has no email identity configured. Example: \"Melvyn <melvyn@neocompany.ch>\".",
-        default: "",
-      },
-    },
+    properties: {},
   },
 
   launchers: [
