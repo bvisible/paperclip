@@ -22,6 +22,9 @@ server/check-*.mjs
 server/seed-*.mjs
 packages/db/seed-*.mjs
 
+# One-shot migration reports (contain environment-specific secret IDs)
+scripts/migration-*-report.json
+
 # npm publish build artifacts
 cli/package.dev.json
 
