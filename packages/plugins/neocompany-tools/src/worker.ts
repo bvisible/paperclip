@@ -48,6 +48,13 @@ interface PlatformConfig {
  * Company-scoped config — written by any user with access to a company
  * through the regular Settings UI flow (data handlers + actions below).
  */
+interface BrandConfig {
+  tagline?: string;
+  website?: string;
+  primaryFont?: string;
+  secondaryFont?: string;
+}
+
 interface CompanyConfig {
   gscSiteUrl?: string;
   ga4PropertyId?: string;
@@ -55,6 +62,7 @@ interface CompanyConfig {
   wordpressUsername?: string;
   wordpressAppPasswordRef?: string;
   agentEmailIdentities?: Record<string, { address: string; fromName?: string; signature?: string }>;
+  brand?: BrandConfig;
 }
 
 const COMPANY_KEYS = {
@@ -63,6 +71,7 @@ const COMPANY_KEYS = {
   wordpressSiteUrl: "company:wordpress:siteUrl",
   wordpressUsername: "company:wordpress:username",
   wordpressAppPasswordRef: "company:wordpress:appPasswordRef",
+  brand: "company:brand",
 } as const;
 
 async function readPlatformConfig(ctx: PluginContext): Promise<PlatformConfig> {
@@ -79,18 +88,28 @@ async function readCompanyConfig(ctx: PluginContext, companyId: string): Promise
       return undefined;
     }
   };
+  const readJson = async (key: string) => {
+    try {
+      const raw = await ctx.state.get({ scopeKind: "company", scopeId: companyId, stateKey: key });
+      return raw ?? undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const [
     gscSiteUrl,
     ga4PropertyId,
     wordpressSiteUrl,
     wordpressUsername,
     wordpressAppPasswordRef,
+    brand,
   ] = await Promise.all([
     readKey(COMPANY_KEYS.gscSiteUrl),
     readKey(COMPANY_KEYS.ga4PropertyId),
     readKey(COMPANY_KEYS.wordpressSiteUrl),
     readKey(COMPANY_KEYS.wordpressUsername),
     readKey(COMPANY_KEYS.wordpressAppPasswordRef),
+    readJson(COMPANY_KEYS.brand),
   ]);
   return {
     gscSiteUrl,
@@ -98,6 +117,7 @@ async function readCompanyConfig(ctx: PluginContext, companyId: string): Promise
     wordpressSiteUrl,
     wordpressUsername,
     wordpressAppPasswordRef,
+    brand,
   };
 }
 
@@ -414,6 +434,13 @@ const plugin = definePlugin({
       await writeKey(COMPANY_KEYS.wordpressSiteUrl, patch.wordpressSiteUrl);
       await writeKey(COMPANY_KEYS.wordpressUsername, patch.wordpressUsername);
       await writeKey(COMPANY_KEYS.wordpressAppPasswordRef, patch.wordpressAppPasswordRef);
+      // Brand is stored as a JSON object, not a plain string
+      if ((patch as Record<string, unknown>).brand !== undefined) {
+        await ctx.state.set(
+          { scopeKind: "company", scopeId: companyId, stateKey: COMPANY_KEYS.brand },
+          (patch as Record<string, unknown>).brand as unknown,
+        );
+      }
       await ctx.activity.log({
         companyId,
         message: `Company config updated (${Object.keys(patch).join(", ")})`,
