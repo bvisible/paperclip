@@ -538,6 +538,89 @@ const plugin = definePlugin({
       return { ok: true, templateId };
     });
 
+    // ── Data + Actions: generated-image stock ───────────────────────
+    // Mirrors the imageGenerate / imageList / imageApprove / imageDelete
+    // tools so the UI can invoke them through the bridge without the
+    // agent indirection. Agents still call them via the tool dispatcher.
+    const makeImageRunCtx = (companyId: string, agentId?: string) => ({
+      runId: globalThis.crypto.randomUUID(),
+      companyId,
+      projectId: companyId,
+      agentId: agentId ?? "00000000-0000-0000-0000-000000000000",
+    });
+
+    ctx.data.register("imageList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { images: [], count: 0 };
+      const { runImageList } = await import("./tools/content/image-list.js");
+      const result = await runImageList(
+        {
+          status: params.status as "pending" | "approved" | "rejected" | undefined,
+          batchId: params.batchId as string | undefined,
+          limit: params.limit as number | undefined,
+          includeImages: params.includeImages as boolean | undefined,
+        },
+        {},
+        makeImageRunCtx(companyId),
+        ctxAccess,
+      );
+      return result.data ?? { images: [], count: 0 };
+    });
+
+    ctx.actions.register("imageGenerate", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) throw new Error("imageGenerate requires companyId");
+      const { runImageGenerate } = await import("./tools/content/image-generate.js");
+      const result = await runImageGenerate(
+        {
+          prompt: params.prompt as string,
+          templateId: params.templateId as string | undefined,
+          provider: (params.provider as "openai" | "gemini" | undefined) ?? "openai",
+          width: params.width as number | undefined,
+          height: params.height as number | undefined,
+          batchId: params.batchId as string | undefined,
+          logoUrl: params.logoUrl as string | undefined,
+        },
+        {},
+        makeImageRunCtx(companyId),
+        ctxAccess,
+      );
+      if (result.error) throw new Error(result.error);
+      return result.data ?? {};
+    });
+
+    ctx.actions.register("imageApprove", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) throw new Error("imageApprove requires companyId");
+      const { runImageApprove } = await import("./tools/content/image-approve.js");
+      const result = await runImageApprove(
+        {
+          imageId: params.imageId as string,
+          status: params.status as "pending" | "approved" | "rejected",
+          feedback: params.feedback as string | undefined,
+        },
+        {},
+        makeImageRunCtx(companyId),
+        ctxAccess,
+      );
+      if (result.error) throw new Error(result.error);
+      return result.data ?? {};
+    });
+
+    ctx.actions.register("imageDelete", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) throw new Error("imageDelete requires companyId");
+      const { runImageDelete } = await import("./tools/content/image-delete.js");
+      const result = await runImageDelete(
+        { imageId: params.imageId as string },
+        {},
+        makeImageRunCtx(companyId),
+        ctxAccess,
+      );
+      if (result.error) throw new Error(result.error);
+      return result.data ?? {};
+    });
+
     // ── Action: delete a brand template ──────────────────────────────
     ctx.actions.register("templateDelete", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;

@@ -38,6 +38,10 @@ import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { runTemplateCreate } from "./content/template-create.js";
 import { runTemplateList } from "./content/template-list.js";
 import { runTemplateApply } from "./content/template-apply.js";
+import { runImageGenerate } from "./content/image-generate.js";
+import { runImageList } from "./content/image-list.js";
+import { runImageApprove } from "./content/image-approve.js";
+import { runImageDelete } from "./content/image-delete.js";
 
 /**
  * Optional per-tool configuration schema — subset of JSON Schema we render
@@ -465,5 +469,96 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     },
     run: async (params, runCtx, ctxAccess) =>
       runTemplateApply(params as { templateId: string; sourceImageUrl: string; logoUrl?: string }, {}, runCtx, ctxAccess),
+  },
+  // ─── Image generation & approval stock ──────────────────────────────
+  {
+    name: "imageGenerate",
+    declaration: {
+      displayName: "Generate image with AI",
+      description:
+        "Generate a new image via an AI provider (OpenAI gpt-image-1 by default). If a templateId is provided, the brand template is composited on top of the raw image before saving. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "Free-form description of the image to generate" },
+          templateId: { type: "string", description: "Optional brand template id (externalId) to composite on top" },
+          provider: { type: "string", description: "AI provider — currently only 'openai' is supported" },
+          width: { type: "number", description: "Desired width in pixels (ignored if templateId is set)" },
+          height: { type: "number", description: "Desired height in pixels (ignored if templateId is set)" },
+          batchId: { type: "string", description: "Optional batch id to group several generations together" },
+          logoUrl: { type: "string", description: "Optional logo URL when compositing with a template" },
+        },
+        required: ["prompt"],
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runImageGenerate(
+        params as { prompt: string; templateId?: string; provider?: "openai" | "gemini"; width?: number; height?: number; batchId?: string; logoUrl?: string },
+        {},
+        runCtx,
+        ctxAccess,
+      ),
+  },
+  {
+    name: "imageList",
+    declaration: {
+      displayName: "List generated images",
+      description: "List generated images for the current company, optionally filtered by status or batchId.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", description: "Filter by approval status: pending, approved, rejected" },
+          batchId: { type: "string", description: "Filter by batch id" },
+          limit: { type: "number", description: "Max records to return (default 50)" },
+          includeImages: { type: "boolean", description: "Include the heavy dataUrl payload (default true)" },
+        },
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runImageList(
+        params as { status?: "pending" | "approved" | "rejected"; batchId?: string; limit?: number; includeImages?: boolean },
+        {},
+        runCtx,
+        ctxAccess,
+      ),
+  },
+  {
+    name: "imageApprove",
+    declaration: {
+      displayName: "Approve or reject a generated image",
+      description: "Mark a generated image as approved, rejected, or pending (review state). Approved images make up the company's image stock.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          imageId: { type: "string", description: "Image id (externalId slug)" },
+          status: { type: "string", description: "New status: pending, approved, rejected" },
+          feedback: { type: "string", description: "Optional reviewer feedback" },
+        },
+        required: ["imageId", "status"],
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runImageApprove(
+        params as { imageId: string; status: "pending" | "approved" | "rejected"; feedback?: string },
+        {},
+        runCtx,
+        ctxAccess,
+      ),
+  },
+  {
+    name: "imageDelete",
+    declaration: {
+      displayName: "Delete a generated image",
+      description: "Permanently remove a generated image from the company's stock/pool.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          imageId: { type: "string", description: "Image id (externalId slug)" },
+        },
+        required: ["imageId"],
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runImageDelete(params as { imageId: string }, {}, runCtx, ctxAccess),
   },
 ];

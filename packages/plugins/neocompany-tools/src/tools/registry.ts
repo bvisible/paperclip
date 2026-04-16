@@ -276,6 +276,39 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: false,
     allowedRoles: ["main", "writer", "community"],
   },
+  // ─── Image generation ────────────────────────────────────────────
+  imageGenerate: {
+    name: "imageGenerate",
+    label: "Generate image with AI",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
+  imageList: {
+    name: "imageList",
+    label: "List generated images",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
+  imageApprove: {
+    name: "imageApprove",
+    label: "Approve or reject a generated image",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
+  imageDelete: {
+    name: "imageDelete",
+    label: "Delete a generated image",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
 };
 
 export type ToolName = keyof typeof TOOL_REGISTRY;

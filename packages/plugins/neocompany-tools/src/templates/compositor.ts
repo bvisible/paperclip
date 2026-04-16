@@ -175,6 +175,17 @@ export async function compositeImage(
 // ---------------------------------------------------------------------------
 
 async function fetchImage(url: string): Promise<Buffer> {
+  // data: URLs don't need a network call — decode them locally
+  if (url.startsWith("data:")) {
+    const comma = url.indexOf(",");
+    if (comma === -1) throw new Error("Malformed data URL");
+    const header = url.slice(5, comma);
+    const payload = url.slice(comma + 1);
+    if (header.includes("base64")) {
+      return Buffer.from(payload, "base64");
+    }
+    return Buffer.from(decodeURIComponent(payload), "utf8");
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {

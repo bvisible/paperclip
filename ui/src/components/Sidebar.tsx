@@ -12,6 +12,7 @@ import {
   Repeat,
   Settings,
   Palette,
+  Images,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -107,6 +108,7 @@ export function Sidebar() {
 
         <SidebarSection label="Content">
           <SidebarNavItem to="/content" label="Templates" icon={Palette} />
+          <SidebarNavItem to="/content/stock" label="Image stock" icon={Images} />
         </SidebarSection>
 
         <SidebarSection label="Work">

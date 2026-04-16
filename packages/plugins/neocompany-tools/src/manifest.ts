@@ -121,6 +121,12 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "Fallback From address when an agent has no email identity.",
         default: "",
       },
+      openaiApiKeyRef: {
+        type: "string",
+        title: "OpenAI API Key",
+        description: "Secret reference to the OpenAI API key used by imageGenerate (gpt-image-1).",
+        format: "secret-ref",
+      },
     },
   },
 
