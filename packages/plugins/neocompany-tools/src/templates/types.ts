@@ -139,13 +139,21 @@ export const TEXT_ZONE_PRESETS = [
 
 export const AVAILABLE_FONTS = [
   "Arial",
-  "Helvetica",
-  "Times New Roman",
-  "Georgia",
   "Courier New",
-  "Verdana",
+  "Forum",
+  "Georgia",
+  "Helvetica",
   "Impact",
+  "Inter",
+  "Karla",
+  "Montserrat",
+  "Open Sans",
+  "Playfair Display",
+  "Poppins",
+  "Roboto",
+  "Times New Roman",
   "Trebuchet MS",
+  "Verdana",
 ];
 
 export const ENTITY_TYPE = "brand_template";

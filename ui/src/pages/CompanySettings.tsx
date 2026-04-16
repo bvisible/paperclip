@@ -742,8 +742,10 @@ function buildResolutionTestUrl(input: AgentSnippetInput): string | null {
 // ---------------------------------------------------------------------------
 
 const AVAILABLE_FONTS = [
-  "Arial", "Helvetica", "Inter", "Georgia", "Verdana",
-  "Times New Roman", "Courier New", "Impact", "Trebuchet MS",
+  "Arial", "Courier New", "Forum", "Georgia", "Helvetica",
+  "Impact", "Inter", "Karla", "Montserrat", "Open Sans",
+  "Playfair Display", "Poppins", "Roboto", "Times New Roman",
+  "Trebuchet MS", "Verdana",
 ];
 
 interface BrandData {
