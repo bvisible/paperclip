@@ -440,13 +440,18 @@ const plugin = definePlugin({
     // ── Data: list brand templates for a company ─────────────────────
     ctx.data.register("templateList", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;
-      if (!companyId) return { templates: [] };
+      if (!companyId) {
+        console.log("templateList: no companyId, returning empty");
+        return { templates: [] };
+      }
+      console.log(`templateList: querying for companyId=${companyId}`);
       const records = await ctx.entities.list({
         entityType: "brand_template",
         scopeKind: "company",
         scopeId: companyId,
         limit: 100,
       });
+      console.log(`templateList: found ${records.length} record(s)`);
       const templates = records.map((r) => ({
         id: r.id,
         ...(r.data as Record<string, unknown>),
