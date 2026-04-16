@@ -786,8 +786,8 @@ function BrandSection({ companyId }: { companyId: string }) {
   // Sync form with fetched data
   useEffect(() => {
     if (loaded || !brandQuery.data) return;
-    const d = brandQuery.data as Record<string, unknown>;
-    const brand = (d.brand as BrandData) ?? {};
+    const d = brandQuery.data as { config?: { brand?: BrandData } };
+    const brand = d.config?.brand ?? {} as BrandData;
     setTagline(brand.tagline ?? "");
     setWebsite(brand.website ?? "");
     setPrimaryFont(brand.primaryFont ?? "Arial");
