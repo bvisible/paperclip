@@ -251,6 +251,31 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: true,
     allowedRoles: ["support", "commercial", "main"],
   },
+  // ─── Templates ────────────────────────────────────────────────────
+  templateCreate: {
+    name: "templateCreate",
+    label: "Create brand template",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
+  templateList: {
+    name: "templateList",
+    label: "List brand templates",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
+  templateApply: {
+    name: "templateApply",
+    label: "Apply brand template to image",
+    category: ToolCategory.DESIGN,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
 };
 
 export type ToolName = keyof typeof TOOL_REGISTRY;
