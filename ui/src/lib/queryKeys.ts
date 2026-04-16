@@ -150,4 +150,9 @@ export const queryKeys = {
   adapters: {
     all: ["adapters"] as const,
   },
+  admin: {
+    isAdmin: ["admin", "is-admin"] as const,
+    companyMembers: (companyId: string) => ["admin", "company-members", companyId] as const,
+    companyAgents: (companyId: string) => ["admin", "company-agents", companyId] as const,
+  },
 };

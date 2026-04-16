@@ -45,6 +45,11 @@ import { BoardClaimPage } from "./pages/BoardClaim";
 import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
+import { AdminLayout } from "./pages/admin/AdminLayout";
+import { CompaniesSection } from "./pages/admin/CompaniesSection";
+import { PluginsSection } from "./pages/admin/PluginsSection";
+import { ToolsConfigSection } from "./pages/admin/ToolsConfigSection";
+import { GeneralSection } from "./pages/admin/GeneralSection";
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -319,16 +324,25 @@ export function App() {
         <Route element={<CloudAccessGate />}>
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
-          <Route path="instance" element={<Navigate to="/instance/settings/general" replace />} />
-          <Route path="instance/settings" element={<Layout />}>
-            <Route index element={<Navigate to="general" replace />} />
-            <Route path="general" element={<InstanceGeneralSettings />} />
-            <Route path="heartbeats" element={<InstanceSettings />} />
-            <Route path="experimental" element={<InstanceExperimentalSettings />} />
-            <Route path="plugins" element={<PluginManager />} />
+          {/* Admin dashboard */}
+          <Route path="admin" element={<AdminLayout />}>
+            <Route index element={<Navigate to="companies" replace />} />
+            <Route path="companies" element={<CompaniesSection />} />
+            <Route path="plugins" element={<PluginsSection />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
-            <Route path="adapters" element={<AdapterManager />} />
+            <Route path="tools" element={<ToolsConfigSection />} />
+            <Route path="general" element={<GeneralSection />} />
           </Route>
+
+          {/* Legacy redirects → /admin */}
+          <Route path="instance" element={<Navigate to="/admin/general" replace />} />
+          <Route path="instance/settings" element={<Navigate to="/admin/general" replace />} />
+          <Route path="instance/settings/general" element={<Navigate to="/admin/general" replace />} />
+          <Route path="instance/settings/heartbeats" element={<Navigate to="/admin/general" replace />} />
+          <Route path="instance/settings/experimental" element={<Navigate to="/admin/general" replace />} />
+          <Route path="instance/settings/plugins" element={<Navigate to="/admin/plugins" replace />} />
+          <Route path="instance/settings/plugins/:pluginId" element={<Navigate to="/admin/plugins" replace />} />
+          <Route path="instance/settings/adapters" element={<Navigate to="/admin/general" replace />} />
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
