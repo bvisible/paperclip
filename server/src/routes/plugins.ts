@@ -589,7 +589,10 @@ export function pluginRoutes(
         });
         return;
       }
-      runContext = { agentId, runId, companyId, projectId };
+      // Prefer the X-Paperclip-Run-Id header when present — it carries
+      // the heartbeat run ID that the tool-event-bus is subscribed to,
+      // whereas body.runContext.runId may be the gateway's own run ID.
+      runContext = { agentId, runId: req.actor.runId ?? runId, companyId, projectId };
     }
 
     assertCompanyAccess(req, runContext.companyId);
