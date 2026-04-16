@@ -239,7 +239,7 @@ interface TemplateView {
 }
 
 function BrandTemplatesSection({ companyId }: { companyId: string }) {
-  const templateData = usePluginData("templateList", { companyId });
+  const templateData = usePluginData("templateList", companyId ? { companyId } : undefined);
   const templateSave = usePluginAction("templateSave");
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");

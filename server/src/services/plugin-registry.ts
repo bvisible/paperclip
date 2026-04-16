@@ -396,20 +396,18 @@ export function pluginRegistryService(db: Db) {
      * @param query - Optional filters (type, externalId) and pagination (limit, offset).
      * @returns A list of matching `PluginEntityRecord` objects.
      */
-    listEntities: async (pluginId: string, query?: PluginEntityQuery) => {
+    listEntities: (pluginId: string, query?: PluginEntityQuery) => {
       const conditions = [eq(pluginEntities.pluginId, pluginId)];
       if (query?.entityType) conditions.push(eq(pluginEntities.entityType, query.entityType));
       if (query?.externalId) conditions.push(eq(pluginEntities.externalId, query.externalId));
 
-      const results = await db
+      return db
         .select()
         .from(pluginEntities)
         .where(and(...conditions))
         .orderBy(asc(pluginEntities.createdAt))
         .limit(query?.limit ?? 100)
         .offset(query?.offset ?? 0);
-      console.log(`[listEntities] pluginId=${pluginId} entityType=${query?.entityType} → ${results.length} row(s)`);
-      return results;
     },
 
     /**
