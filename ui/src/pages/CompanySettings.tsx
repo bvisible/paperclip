@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useState } from "react";
 import { Link } from "@/lib/router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -401,6 +401,9 @@ export function CompanySettings() {
         </div>
       )}
 
+      {/* Brand */}
+      <BrandSection companyId={selectedCompanyId!} />
+
       {/* Hiring */}
       <div className="space-y-4" data-testid="company-settings-team-section">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -732,4 +735,140 @@ function buildResolutionTestUrl(input: AgentSnippetInput): string | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Brand section — stored in plugin_state scope=company via bridge
+// ---------------------------------------------------------------------------
+
+const AVAILABLE_FONTS = [
+  "Arial", "Helvetica", "Inter", "Georgia", "Verdana",
+  "Times New Roman", "Courier New", "Impact", "Trebuchet MS",
+];
+
+interface BrandData {
+  tagline: string;
+  website: string;
+  primaryFont: string;
+  secondaryFont: string;
+}
+
+function BrandSection({ companyId }: { companyId: string }) {
+  const { pushToast } = useToast();
+  const [tagline, setTagline] = useState("");
+  const [website, setWebsite] = useState("");
+  const [primaryFont, setPrimaryFont] = useState("Arial");
+  const [secondaryFont, setSecondaryFont] = useState("Arial");
+  const [loaded, setLoaded] = useState(false);
+
+  // Load brand data from plugin state via neocompany-tools data handler
+  const { data: pluginsList } = useQuery({
+    queryKey: ["plugins"],
+    queryFn: () => import("@/api/plugins").then((m) => m.pluginsApi.list()),
+  });
+  const neoPlugin = (pluginsList ?? []).find(
+    (p: { pluginKey: string }) => p.pluginKey === "neocompany-tools",
+  );
+
+  const brandQuery = useQuery({
+    queryKey: ["brand", companyId],
+    queryFn: async () => {
+      if (!neoPlugin) return null;
+      const { pluginsApi } = await import("@/api/plugins");
+      const res = await pluginsApi.bridgeGetData(neoPlugin.id, "companyConfig", { companyId }, companyId);
+      return (res as { data: Record<string, unknown> }).data ?? null;
+    },
+    enabled: !!neoPlugin && !!companyId,
+  });
+
+  // Sync form with fetched data
+  useEffect(() => {
+    if (loaded || !brandQuery.data) return;
+    const d = brandQuery.data as Record<string, unknown>;
+    const brand = (d.brand as BrandData) ?? {};
+    setTagline(brand.tagline ?? "");
+    setWebsite(brand.website ?? "");
+    setPrimaryFont(brand.primaryFont ?? "Arial");
+    setSecondaryFont(brand.secondaryFont ?? "Arial");
+    setLoaded(true);
+  }, [brandQuery.data, loaded]);
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      if (!neoPlugin) throw new Error("neocompany-tools plugin not installed");
+      const { pluginsApi } = await import("@/api/plugins");
+      return pluginsApi.bridgePerformAction(neoPlugin.id, "setCompanyConfig", {
+        companyId,
+        patch: {
+          brand: { tagline, website, primaryFont, secondaryFont },
+        },
+      }, companyId);
+    },
+    onSuccess: () => {
+      pushToast({ title: "Brand saved", tone: "success" });
+      brandQuery.refetch();
+    },
+    onError: (err) => pushToast({ title: `Save failed: ${(err as Error).message}`, tone: "error" }),
+  });
+
+  if (!neoPlugin) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+        Brand
+      </div>
+      <div className="space-y-3 rounded-md border border-border px-4 py-4">
+        <Field label="Tagline" hint="Short brand slogan used in templates.">
+          <input
+            className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+            type="text"
+            value={tagline}
+            onChange={(e) => setTagline(e.target.value)}
+            placeholder="e.g. Innovation at your service"
+          />
+        </Field>
+        <Field label="Website" hint="Company website URL.">
+          <input
+            className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+            type="url"
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+            placeholder="https://neoservice.ai"
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Primary font" hint="Used for headings in templates.">
+            <select
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              value={primaryFont}
+              onChange={(e) => setPrimaryFont(e.target.value)}
+            >
+              {AVAILABLE_FONTS.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Secondary font" hint="Used for body text in templates.">
+            <select
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              value={secondaryFont}
+              onChange={(e) => setSecondaryFont(e.target.value)}
+            >
+              {AVAILABLE_FONTS.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => saveMut.mutate()}
+          disabled={saveMut.isPending}
+        >
+          {saveMut.isPending ? "Saving..." : "Save brand"}
+        </Button>
+      </div>
+    </div>
+  );
 }

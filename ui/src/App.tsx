@@ -45,6 +45,7 @@ import { BoardClaimPage } from "./pages/BoardClaim";
 import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
+import { ContentTemplates } from "./pages/ContentTemplates";
 import { AdminLayout } from "./pages/admin/AdminLayout";
 import { CompaniesSection } from "./pages/admin/CompaniesSection";
 import { PluginsSection } from "./pages/admin/PluginsSection";
@@ -133,6 +134,7 @@ function boardRoutes() {
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="company/export/*" element={<CompanyExport />} />
       <Route path="company/import" element={<CompanyImport />} />
+      <Route path="content" element={<ContentTemplates />} />
       <Route path="skills/*" element={<CompanySkills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />

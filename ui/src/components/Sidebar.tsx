@@ -11,6 +11,7 @@ import {
   Boxes,
   Repeat,
   Settings,
+  Palette,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -103,6 +104,10 @@ export function Sidebar() {
             itemClassName="w-full"
           />
         </div>
+
+        <SidebarSection label="Content">
+          <SidebarNavItem to="/content" label="Templates" icon={Palette} />
+        </SidebarSection>
 
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />
