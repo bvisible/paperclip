@@ -9,16 +9,22 @@
 
 import type { TemplateConfig, LogoPosition } from "./types.js";
 
-// Sharp is a peer dependency from the server; the plugin worker runs
-// in the same Node process so it's available at require-time.
-// We use a dynamic require to avoid bundling sharp in the plugin build.
+// Sharp is loaded lazily via dynamic import() to work with ESM workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sharp: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  sharp = require("sharp");
-} catch {
-  // Sharp not available — compositeImage will throw at runtime
+let sharpLoadAttempted = false;
+
+async function getSharp() {
+  if (sharp) return sharp;
+  if (sharpLoadAttempted) throw new Error("sharp is not available in this environment");
+  sharpLoadAttempted = true;
+  try {
+    const mod = await import("sharp");
+    sharp = mod.default ?? mod;
+    return sharp;
+  } catch (err) {
+    throw new Error(`sharp failed to load: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 export interface CompositeResult {
@@ -39,14 +45,14 @@ export async function compositeImage(
   height: number,
   logoUrl?: string,
 ): Promise<CompositeResult> {
-  if (!sharp) throw new Error("sharp is not available in this environment");
+  const sharpFn = await getSharp();
 
   // 1. Fetch source image
   const sourceBuffer = await fetchImage(sourceImageUrl);
 
   // 2. Resize to target dimensions
   const fitMap: Record<string, string> = { cover: "cover", contain: "inside", fill: "fill" };
-  let img = sharp(sourceBuffer).resize(width, height, {
+  let img = sharpFn(sourceBuffer).resize(width, height, {
     fit: (fitMap[config.imageFit] ?? "cover") as "cover" | "inside" | "fill",
     background: config.backgroundColor,
   });
@@ -77,10 +83,10 @@ export async function compositeImage(
   if (config.overlay.opacity > 0) {
     const rgba = parseColor(config.overlay.color);
     const alpha = Math.round((config.overlay.opacity / 100) * 255);
-    const overlayBuf = await sharp({
+    const overlayBuf = await sharpFn({
       create: { width, height, channels: 4, background: { r: rgba.r, g: rgba.g, b: rgba.b, alpha: alpha / 255 } },
     }).png().toBuffer();
-    buf = await sharp(buf).composite([{ input: overlayBuf, blend: "over" }]).png().toBuffer();
+    buf = await sharpFn(buf).composite([{ input: overlayBuf, blend: "over" }]).png().toBuffer();
   }
 
   // 6. Border
@@ -93,7 +99,7 @@ export async function compositeImage(
       <rect x="${bw / 2}" y="${bw / 2}" width="${width - bw}" height="${height - bw}"
         rx="${br}" ry="${br}" fill="none" stroke="rgb(${bc.r},${bc.g},${bc.b})" stroke-width="${bw}"/>
     </svg>`;
-    buf = await sharp(buf)
+    buf = await sharpFn(buf)
       .composite([{ input: Buffer.from(svg), blend: "over" }])
       .png()
       .toBuffer();
@@ -106,8 +112,8 @@ export async function compositeImage(
       const logoScale = config.logo.scale / 100;
       const logoW = Math.round(width * logoScale);
       const logoH = Math.round(height * logoScale);
-      const resizedLogo = await sharp(logoBuf).resize(logoW, logoH, { fit: "inside" }).png().toBuffer();
-      const meta = await sharp(resizedLogo).metadata();
+      const resizedLogo = await sharpFn(logoBuf).resize(logoW, logoH, { fit: "inside" }).png().toBuffer();
+      const meta = await sharpFn(resizedLogo).metadata();
       const actualW = meta.width ?? logoW;
       const actualH = meta.height ?? logoH;
 
@@ -117,17 +123,17 @@ export async function compositeImage(
       const opacity = config.logo.opacity / 100;
       let logoLayer = sharp(resizedLogo);
       if (opacity < 1) {
-        const alphaBuf = await sharp({
+        const alphaBuf = await sharpFn({
           create: { width: actualW, height: actualH, channels: 4, background: { r: 255, g: 255, b: 255, alpha: opacity } },
         }).png().toBuffer();
-        const compositedLogo = await sharp(resizedLogo)
+        const compositedLogo = await sharpFn(resizedLogo)
           .composite([{ input: alphaBuf, blend: "dest-in" }])
           .png()
           .toBuffer();
         logoLayer = sharp(compositedLogo);
       }
 
-      buf = await sharp(buf)
+      buf = await sharpFn(buf)
         .composite([{ input: await logoLayer.toBuffer(), left, top }])
         .png()
         .toBuffer();
@@ -157,7 +163,7 @@ export async function compositeImage(
         return { input: Buffer.from(svg), left: x, top: y };
       });
     if (textComposites.length > 0) {
-      buf = await sharp(buf).composite(textComposites).png().toBuffer();
+      buf = await sharpFn(buf).composite(textComposites).png().toBuffer();
     }
   }
 
