@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Image, Palette } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -10,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pluginsApi } from "@/api/plugins";
+import { TemplateCanvas } from "@/components/templates/TemplateCanvas";
+import type { TemplateConfig } from "@/components/templates/types";
 
 // ---------------------------------------------------------------------------
 // Types (mirror plugin data handler shapes)
@@ -51,8 +54,9 @@ const DEFAULT_CONFIG = {
 // ---------------------------------------------------------------------------
 
 export function ContentTemplates() {
+  const navigate = useNavigate();
   const { setBreadcrumbs } = useBreadcrumbs();
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompanyId, selectedCompany } = useCompany();
   const { pushToast } = useToast();
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
@@ -166,7 +170,12 @@ export function ContentTemplates() {
       ) : (
         <div className="grid grid-cols-2 gap-4">
           {templates.map((t) => (
-            <TemplateCard key={t.id} template={t} />
+            <TemplateCard
+              key={t.id}
+              template={t}
+              logoUrl={selectedCompany?.logoUrl ?? undefined}
+              onClick={() => navigate(`/content/${t.id}`)}
+            />
           ))}
         </div>
       )}
@@ -178,40 +187,57 @@ export function ContentTemplates() {
 // Template card
 // ---------------------------------------------------------------------------
 
-function TemplateCard({ template: t }: { template: TemplateView }) {
-  const aspectRatio = t.width / t.height;
-  const bgColor = (t.config?.backgroundColor as string) ?? "#f0f0f0";
+function TemplateCard({
+  template: t,
+  logoUrl,
+  onClick,
+}: {
+  template: TemplateView;
+  logoUrl?: string;
+  onClick: () => void;
+}) {
+  // Use a small scale to fit the card width
+  const cardScale = 340 / Math.max(t.width, t.height);
+  const cfg = (t.config as unknown as TemplateConfig) ?? null;
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden hover:shadow-sm transition-shadow">
-      {/* Preview area */}
-      <div
-        className="relative w-full flex items-center justify-center text-muted-foreground"
-        style={{
-          aspectRatio: Math.min(aspectRatio, 1.5).toString(),
-          backgroundColor: bgColor,
-        }}
-      >
-        <div className="text-center">
-          <Image className="mx-auto h-6 w-6 opacity-40" />
-          <span className="text-xs opacity-50 mt-1 block">{t.width}×{t.height}</span>
-        </div>
+    <button
+      onClick={onClick}
+      className="text-left rounded-xl border border-border bg-card overflow-hidden hover:shadow-md hover:border-primary/50 transition-all"
+    >
+      {/* Live preview */}
+      <div className="flex items-center justify-center bg-muted/20 p-4">
+        {cfg ? (
+          <TemplateCanvas
+            width={t.width}
+            height={t.height}
+            config={cfg}
+            logoUrl={logoUrl}
+            sampleImageUrl="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600"
+            scale={cardScale}
+            showLabel
+          />
+        ) : (
+          <div className="flex items-center justify-center text-muted-foreground" style={{ width: t.width * cardScale, height: t.height * cardScale }}>
+            <Image className="h-6 w-6 opacity-40" />
+          </div>
+        )}
       </div>
 
       {/* Info */}
-      <div className="p-3">
-        <div className="flex items-center justify-between">
+      <div className="p-3 border-t border-border">
+        <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium truncate">{t.name}</span>
           {t.isDefault && <Badge variant="secondary">default</Badge>}
         </div>
         {t.description && (
           <p className="text-xs text-muted-foreground mt-1 truncate">{t.description}</p>
         )}
-        <p className="text-xs text-muted-foreground mt-1">
-          {new Date(t.createdAt).toLocaleDateString()}
+        <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+          {t.width} × {t.height} · {new Date(t.createdAt).toLocaleDateString()}
         </p>
       </div>
-    </div>
+    </button>
   );
 }
 
