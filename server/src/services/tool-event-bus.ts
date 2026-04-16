@@ -7,6 +7,13 @@
  * for a runId, events are silently dropped — zero overhead for adapters
  * that don't need this (e.g. Claude CLI which already emits tool blocks
  * natively in the LLM stream).
+ *
+ * Because the OpenClaw gateway assigns its own internal runId to agent
+ * runs (different from the Paperclip heartbeat runId), the bus also
+ * maintains an `agentId → heartbeat runId` mapping. When `emit(runId)`
+ * finds no direct subscribers, the dispatcher can use
+ * `emitForAgent(agentId)` as a fallback — it resolves the active
+ * heartbeat runId and forwards the event there.
  */
 
 export interface ToolUseEvent {
@@ -30,10 +37,15 @@ export type ToolStreamListener = (event: ToolStreamEvent) => void;
 export interface ToolEventBus {
   subscribe(runId: string, listener: ToolStreamListener): () => void;
   emit(runId: string, event: ToolStreamEvent): void;
+  /** Emit to the active heartbeat run for this agent (fallback). */
+  emitForAgent(agentId: string, event: ToolStreamEvent): void;
+  /** Register a heartbeat run as the active run for an agent. */
+  trackAgent(agentId: string, heartbeatRunId: string): () => void;
 }
 
 function createToolEventBus(): ToolEventBus {
   const listeners = new Map<string, Set<ToolStreamListener>>();
+  const agentToRunId = new Map<string, string>();
 
   return {
     subscribe(runId: string, listener: ToolStreamListener): () => void {
@@ -59,6 +71,21 @@ function createToolEventBus(): ToolEventBus {
           // Listener errors must not break the dispatcher
         }
       }
+    },
+
+    emitForAgent(agentId: string, event: ToolStreamEvent): void {
+      const heartbeatRunId = agentToRunId.get(agentId);
+      if (!heartbeatRunId) return;
+      this.emit(heartbeatRunId, event);
+    },
+
+    trackAgent(agentId: string, heartbeatRunId: string): () => void {
+      agentToRunId.set(agentId, heartbeatRunId);
+      return () => {
+        if (agentToRunId.get(agentId) === heartbeatRunId) {
+          agentToRunId.delete(agentId);
+        }
+      };
     },
   };
 }

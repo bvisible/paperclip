@@ -499,18 +499,23 @@ export function createPluginToolDispatcher(
 
       // Emit synthetic tool_use / tool_result events into the session
       // stream so adapters (e.g. OpenClaw) can forward them to the chat UI.
+      // Try the exact runId first; fall back to the agent mapping (covers
+      // OpenClaw where the gateway uses its own run ID, different from the
+      // Paperclip heartbeat run ID the bus is subscribed to).
       const bus = getGlobalToolEventBus();
       const toolUseId = crypto.randomUUID();
-      log.info(
-        { runId: runContext.runId, tool: namespacedName, busAvailable: !!bus },
-        "tool-event-bus: emitting tool_use",
-      );
-      bus?.emit(runContext.runId, {
-        type: "tool_use",
+      const emitEvent = (event: import("./tool-event-bus.js").ToolStreamEvent) => {
+        if (!bus) return;
+        bus.emit(runContext.runId, event);
+        bus.emitForAgent(runContext.agentId, event);
+      };
+      const toolUseEvent = {
+        type: "tool_use" as const,
         name: namespacedName,
         input: parameters,
         id: toolUseId,
-      });
+      };
+      emitEvent(toolUseEvent);
 
       let result: ToolExecutionResult;
       try {
@@ -520,7 +525,7 @@ export function createPluginToolDispatcher(
           runContext,
         );
       } catch (err) {
-        bus?.emit(runContext.runId, {
+        emitEvent({
           type: "tool_result",
           toolUseId,
           content: err instanceof Error ? err.message : String(err),
@@ -529,7 +534,7 @@ export function createPluginToolDispatcher(
         throw err;
       }
 
-      bus?.emit(runContext.runId, {
+      emitEvent({
         type: "tool_result",
         toolUseId,
         content: typeof result.result.content === "string"
