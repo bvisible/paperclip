@@ -26,13 +26,24 @@ export async function runTemplateApply(
   const ctx = ctxAccess.getPluginContext();
   const { templateId, sourceImageUrl, logoUrl } = params;
 
-  // Fetch the template entity
-  const records = await ctx.entities.list({
+  // Fetch the template entity (templateId is the externalId stable slug)
+  const externalMatches = await ctx.entities.list({
     entityType: ENTITY_TYPE,
     scopeKind: "company",
     scopeId: runCtx.companyId,
+    externalId: templateId,
+    limit: 1,
   });
-  const record = records.find((r) => r.id === templateId);
+  let record = externalMatches[0] as typeof externalMatches[0] | undefined;
+  // Fallback: legacy row referenced by internal UUID
+  if (!record) {
+    const all = await ctx.entities.list({
+      entityType: ENTITY_TYPE,
+      scopeKind: "company",
+      scopeId: runCtx.companyId,
+    });
+    record = all.find((r) => r.id === templateId);
+  }
   if (!record) {
     return {
       content: `Template "${templateId}" not found.`,

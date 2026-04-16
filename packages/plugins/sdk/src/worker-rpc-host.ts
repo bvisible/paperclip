@@ -527,6 +527,10 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             offset: query.offset,
           });
         },
+
+        async delete(input) {
+          return callHost("entities.delete", { id: input.id });
+        },
       },
 
       projects: {

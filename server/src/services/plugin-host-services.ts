@@ -551,6 +551,9 @@ export function buildHostServices(
       async list(params) {
         return registry.listEntities(pluginId, params as any) as any;
       },
+      async delete(params: { id: string }) {
+        return registry.deleteEntity(params.id) as any;
+      },
     },
 
     events: {

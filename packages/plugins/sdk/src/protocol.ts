@@ -478,6 +478,21 @@ export interface WorkerToHostMethods {
       updatedAt: string;
     }>,
   ];
+  "entities.delete": [
+    params: { id: string },
+    result: {
+      id: string;
+      entityType: string;
+      scopeKind: PluginStateScopeKind;
+      scopeId: string | null;
+      externalId: string | null;
+      title: string | null;
+      status: string | null;
+      data: Record<string, unknown>;
+      createdAt: string;
+      updatedAt: string;
+    } | null,
+  ];
 
   // Events
   "events.emit": [

@@ -60,10 +60,12 @@ export async function runTemplateCreate(
     isDefault: false,
   };
 
-  const record = await ctx.entities.upsert({
+  const slug = globalThis.crypto.randomUUID();
+  await ctx.entities.upsert({
     entityType: ENTITY_TYPE,
     scopeKind: "company",
     scopeId: runCtx.companyId,
+    externalId: slug,
     title: name,
     status: "active",
     data: data as unknown as Record<string, unknown>,
@@ -71,6 +73,6 @@ export async function runTemplateCreate(
 
   return {
     content: `Template "${name}" created (${width}×${height}).`,
-    data: { templateId: record.id, name, width, height },
+    data: { templateId: slug, name, width, height },
   };
 }

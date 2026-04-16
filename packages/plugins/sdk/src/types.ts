@@ -601,6 +601,16 @@ export interface PluginEntitiesClient {
    * @returns Matching entity records
    */
   list(query: PluginEntityQuery): Promise<PluginEntityRecord[]>;
+
+  /**
+   * Delete a plugin entity record by its internal UUID.
+   *
+   * Idempotent — resolves `null` if the record does not exist.
+   *
+   * @param input - Internal UUID of the entity to delete
+   * @returns The deleted record, or `null` if not found
+   */
+  delete(input: { id: string }): Promise<PluginEntityRecord | null>;
 }
 
 /**

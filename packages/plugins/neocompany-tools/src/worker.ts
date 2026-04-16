@@ -465,6 +465,9 @@ const plugin = definePlugin({
     });
 
     // ── Data: list brand templates for a company ─────────────────────
+    // Uses externalId as the stable public identifier so that `upsert()`
+    // can dedup correctly on subsequent saves. Legacy rows (externalId=null)
+    // are backfilled transparently the first time they are listed or saved.
     ctx.data.register("templateList", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;
       if (!companyId) return { templates: [] };
@@ -474,8 +477,25 @@ const plugin = definePlugin({
         scopeId: companyId,
         limit: 100,
       });
+      // Backfill externalId for legacy rows created before the stable-id migration
+      for (const r of records) {
+        if (!r.externalId) {
+          const slug = globalThis.crypto.randomUUID();
+          await ctx.entities.upsert({
+            entityType: "brand_template",
+            scopeKind: "company",
+            scopeId: companyId,
+            externalId: slug,
+            title: r.title ?? undefined,
+            status: r.status ?? undefined,
+            data: r.data,
+          });
+          await ctx.entities.delete({ id: r.id });
+          r.externalId = slug;
+        }
+      }
       const templates = records.map((r) => ({
-        id: r.id,
+        id: r.externalId ?? r.id,
         ...(r.data as Record<string, unknown>),
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
@@ -484,20 +504,25 @@ const plugin = definePlugin({
     });
 
     // ── Action: save (create/update) a brand template ───────────────
+    // `templateId` represents the stable externalId. When absent we generate
+    // a fresh UUID so subsequent saves can round-trip to the same row.
     ctx.actions.register("templateSave", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;
-      const templateId = params.templateId as string | undefined;
       const data = params.data as Record<string, unknown>;
       if (!companyId || !data) throw new Error("templateSave requires companyId and data");
 
+      let templateId = params.templateId as string | undefined;
+      if (!templateId) {
+        templateId = globalThis.crypto.randomUUID();
+      }
+
       const name = (data.name as string) ?? "Untitled";
 
-      // Use externalId for upsert dedup when editing an existing template
       const record = await ctx.entities.upsert({
         entityType: "brand_template",
         scopeKind: "company",
         scopeId: companyId,
-        externalId: templateId ?? undefined,
+        externalId: templateId,
         title: name,
         status: "active",
         data,
@@ -510,7 +535,37 @@ const plugin = definePlugin({
         entityId: record.id,
       });
 
-      return { ok: true, templateId: record.id };
+      return { ok: true, templateId };
+    });
+
+    // ── Action: delete a brand template ──────────────────────────────
+    ctx.actions.register("templateDelete", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const templateId = params.templateId as string;
+      if (!companyId || !templateId) throw new Error("templateDelete requires companyId and templateId");
+
+      // templateId is the externalId slug — resolve to the internal UUID
+      const records = await ctx.entities.list({
+        entityType: "brand_template",
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: templateId,
+        limit: 1,
+      });
+      const match = records[0];
+      if (!match) {
+        return { ok: false, error: "TEMPLATE_NOT_FOUND" };
+      }
+
+      await ctx.entities.delete({ id: match.id });
+      await ctx.activity.log({
+        companyId,
+        message: `Brand template "${match.title ?? templateId}" deleted`,
+        entityType: "brand_template",
+        entityId: match.id,
+      });
+
+      return { ok: true, templateId };
     });
 
     // ── Job: IMAP poll (declared in manifest as "imap-poll") ─────────

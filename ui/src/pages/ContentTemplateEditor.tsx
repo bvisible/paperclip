@@ -142,6 +142,29 @@ export function ContentTemplateEditor() {
     onError: (err) => pushToast({ title: `Save failed: ${(err as Error).message}`, tone: "error" }),
   });
 
+  // --- Delete mutation ---
+  const deleteMut = useMutation({
+    mutationFn: async () => {
+      if (!pluginId || !selectedCompanyId || !templateId) throw new Error("No template to delete");
+      return pluginsApi.bridgePerformAction(pluginId, "templateDelete", {
+        companyId: selectedCompanyId,
+        templateId,
+      }, selectedCompanyId);
+    },
+    onSuccess: () => {
+      pushToast({ title: "Template deleted", tone: "success" });
+      qc.invalidateQueries({ queryKey: ["content-templates", selectedCompanyId] });
+      navigate("/content");
+    },
+    onError: (err) => pushToast({ title: `Delete failed: ${(err as Error).message}`, tone: "error" }),
+  });
+
+  const onDeleteClick = useCallback(() => {
+    if (!templateId) return;
+    const confirmed = globalThis.confirm(`Delete template "${name || "Untitled"}"? This cannot be undone.`);
+    if (confirmed) deleteMut.mutate();
+  }, [templateId, name, deleteMut]);
+
   // --- Export PNG (real server-side composite via templateApply) ---
   const exportMut = useMutation({
     mutationFn: async () => {
@@ -279,6 +302,17 @@ export function ContentTemplateEditor() {
           disabled={exportMut.isPending || !templateId}
         >
           {exportMut.isPending ? "Exporting…" : "Export PNG"}
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onDeleteClick}
+          disabled={deleteMut.isPending || !templateId}
+          className="text-destructive hover:text-destructive"
+          title="Delete template"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
         </Button>
       </div>
 

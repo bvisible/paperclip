@@ -279,6 +279,16 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (query.limit) out = out.slice(0, query.limit);
         return out;
       },
+      async delete(input: { id: string }) {
+        const existing = entities.get(input.id);
+        if (!existing) return null;
+        entities.delete(input.id);
+        if (existing.externalId) {
+          const externalKey = `${existing.entityType}|${existing.scopeKind}|${existing.scopeId ?? ""}|${existing.externalId}`;
+          entityExternalIndex.delete(externalKey);
+        }
+        return existing;
+      },
     },
     projects: {
       async list(input) {
