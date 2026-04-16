@@ -3195,7 +3195,10 @@ export function heartbeatService(db: Db) {
       // parser in paperclip-chat picks them up via the Claude CLI JSON
       // format (no adapter-specific formatting required).
       const toolBus = getGlobalToolEventBus();
+      logger.info({ runId: run.id, busAvailable: !!toolBus }, "tool-event-bus: subscribing for run");
       const unsubToolBus = toolBus?.subscribe(run.id, (evt: ToolStreamEvent) => {
+        logger.info({ runId: run.id, eventType: evt.type }, "tool-event-bus: received event");
+
         if (evt.type === "tool_use") {
           const line = JSON.stringify({
             type: "assistant",

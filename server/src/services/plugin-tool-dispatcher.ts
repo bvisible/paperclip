@@ -501,6 +501,10 @@ export function createPluginToolDispatcher(
       // stream so adapters (e.g. OpenClaw) can forward them to the chat UI.
       const bus = getGlobalToolEventBus();
       const toolUseId = crypto.randomUUID();
+      log.info(
+        { runId: runContext.runId, tool: namespacedName, busAvailable: !!bus },
+        "tool-event-bus: emitting tool_use",
+      );
       bus?.emit(runContext.runId, {
         type: "tool_use",
         name: namespacedName,
