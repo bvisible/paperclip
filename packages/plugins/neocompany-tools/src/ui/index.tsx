@@ -225,6 +225,171 @@ function Toggle({
 }
 
 // ---------------------------------------------------------------------------
+// Brand Templates section
+// ---------------------------------------------------------------------------
+
+interface TemplateView {
+  id: string;
+  name: string;
+  description?: string;
+  width: number;
+  height: number;
+  isDefault: boolean;
+  createdAt: string;
+}
+
+function BrandTemplatesSection({ companyId }: { companyId: string }) {
+  const templateData = usePluginData("templateList", { companyId });
+  const templateSave = usePluginAction("templateSave");
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [preset, setPreset] = useState("instagram-square");
+  const [saving, setSaving] = useState(false);
+
+  const templates: TemplateView[] = (
+    templateData as { templates?: TemplateView[] } | null
+  )?.templates ?? [];
+
+  const PRESETS = [
+    { key: "instagram-square", label: "Instagram square (1080×1080)", w: 1080, h: 1080 },
+    { key: "instagram-portrait", label: "Instagram portrait (1080×1350)", w: 1080, h: 1350 },
+    { key: "instagram-story", label: "Instagram story (1080×1920)", w: 1080, h: 1920 },
+    { key: "facebook-post", label: "Facebook post (1200×630)", w: 1200, h: 630 },
+    { key: "linkedin-post", label: "LinkedIn post (1200×627)", w: 1200, h: 627 },
+    { key: "twitter-post", label: "Twitter post (1200×675)", w: 1200, h: 675 },
+    { key: "youtube-thumbnail", label: "YouTube thumbnail (1280×720)", w: 1280, h: 720 },
+  ];
+
+  const onSave = useCallback(async () => {
+    if (!name.trim() || !companyId) return;
+    setSaving(true);
+    const match = PRESETS.find((p) => p.key === preset);
+    try {
+      await templateSave({
+        companyId,
+        data: {
+          name: name.trim(),
+          width: match?.w ?? 1080,
+          height: match?.h ?? 1080,
+          config: {
+            logo: { position: "bottom-right", scale: 15, opacity: 90 },
+            textZones: [],
+            filters: { brightness: 0, contrast: 0, saturation: 0, blur: 0 },
+            overlay: { color: "#000000", opacity: 0 },
+            border: { width: 0, color: "#ffffff", radius: 0 },
+            backgroundColor: "#ffffff",
+            imageFit: "cover",
+          },
+          isDefault: false,
+        },
+      });
+      setName("");
+      setShowForm(false);
+    } catch (err) {
+      console.error("templateSave failed:", err);
+    } finally {
+      setSaving(false);
+    }
+  }, [name, preset, companyId, templateSave]);
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+        <h2 style={{ fontSize: 14, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, color: tokens.mutedText, margin: 0 }}>
+          Brand templates {templates.length > 0 ? `· ${templates.length}` : ""}
+        </h2>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          style={{
+            background: showForm ? "rgba(100, 116, 139, 0.14)" : tokens.primary,
+            color: showForm ? "var(--foreground, #111)" : "#fff",
+            border: tokens.cardBorder,
+            borderRadius: 6,
+            padding: "4px 10px",
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          {showForm ? "Cancel" : "Create template"}
+        </button>
+      </div>
+
+      {showForm && (
+        <Card style={{ marginBottom: 12 }}>
+          <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ color: tokens.mutedText, fontSize: 12 }}>Name</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Instagram promo"
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13 }}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 4 }}>
+              <span style={{ color: tokens.mutedText, fontSize: 12 }}>Dimension preset</span>
+              <select
+                value={preset}
+                onChange={(e) => setPreset(e.target.value)}
+                style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13 }}
+              >
+                {PRESETS.map((p) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={onSave}
+              disabled={saving || !name.trim()}
+              style={{
+                background: tokens.primary,
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                padding: "6px 12px",
+                fontSize: 13,
+                cursor: saving ? "wait" : "pointer",
+                opacity: saving || !name.trim() ? 0.5 : 1,
+              }}
+            >
+              {saving ? "Saving…" : "Create"}
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {templates.length === 0 && !showForm ? (
+        <Card>
+          <p style={{ color: tokens.mutedText, fontSize: 13, margin: 0 }}>
+            No brand templates yet. Create one to apply logos, text, and filters to images.
+          </p>
+        </Card>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {templates.map((t) => (
+            <Card key={t.id}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{t.name}</div>
+                  <div style={{ color: tokens.mutedText, fontSize: 12 }}>
+                    {t.width}×{t.height} · {t.description || "No description"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {t.isDefault && <Pill tone="ok">default</Pill>}
+                  <code style={{ fontSize: 11, color: tokens.mutedText }}>{t.id.slice(0, 8)}</code>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Settings page
 // ---------------------------------------------------------------------------
 
@@ -601,6 +766,9 @@ export function SettingsPage(_props: PluginPageProps) {
           </div>
         )}
       </section>
+
+      {/* ─── Brand Templates section ──────────────────────────────── */}
+      <BrandTemplatesSection companyId={companyId} />
 
       <section style={{ marginTop: 24 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
