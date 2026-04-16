@@ -592,7 +592,13 @@ export function pluginRoutes(
       // Prefer the X-Paperclip-Run-Id header when present — it carries
       // the heartbeat run ID that the tool-event-bus is subscribed to,
       // whereas body.runContext.runId may be the gateway's own run ID.
-      runContext = { agentId, runId: req.actor.runId ?? runId, companyId, projectId };
+      const resolvedRunId = req.actor.runId ?? runId;
+      if (req.actor.runId && req.actor.runId !== runId) {
+        console.log(`[tool-execute] overriding body runId=${runId} with header runId=${req.actor.runId}`);
+      } else if (!req.actor.runId) {
+        console.log(`[tool-execute] no X-Paperclip-Run-Id header, using body runId=${runId}`);
+      }
+      runContext = { agentId, runId: resolvedRunId, companyId, projectId };
     }
 
     assertCompanyAccess(req, runContext.companyId);
