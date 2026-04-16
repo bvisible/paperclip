@@ -43,6 +43,7 @@ import {
   createPluginToolDispatcher,
   setGlobalPluginToolDispatcher,
 } from "./services/plugin-tool-dispatcher.js";
+import { createToolEventBus, setGlobalToolEventBus } from "./services/tool-event-bus.js";
 import { pluginLifecycleManager } from "./services/plugin-lifecycle.js";
 import { createPluginJobCoordinator } from "./services/plugin-job-coordinator.js";
 import { buildHostServices, flushPluginLogBuffer } from "./services/plugin-host-services.js";
@@ -194,6 +195,7 @@ export async function createApp(
   // (heartbeat, adapter pipelines) can read the tool catalog without
   // having it threaded through every factory argument.
   setGlobalPluginToolDispatcher(toolDispatcher);
+  setGlobalToolEventBus(createToolEventBus());
   const jobCoordinator = createPluginJobCoordinator({
     db,
     lifecycle,

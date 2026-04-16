@@ -22,6 +22,7 @@
  * @see PLUGIN_SPEC.md §13.10 — `executeTool`
  */
 
+import crypto from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import type {
   PaperclipPluginManifestV1,
@@ -39,6 +40,7 @@ import {
 } from "./plugin-tool-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import { pluginStateStore } from "./plugin-state-store.js";
+import { getGlobalToolEventBus } from "./tool-event-bus.js";
 import { logger } from "../middleware/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -495,11 +497,42 @@ export function createPluginToolDispatcher(
         }
       }
 
-      const result = await registry.executeTool(
-        namespacedName,
-        parameters,
-        runContext,
-      );
+      // Emit synthetic tool_use / tool_result events into the session
+      // stream so adapters (e.g. OpenClaw) can forward them to the chat UI.
+      const bus = getGlobalToolEventBus();
+      const toolUseId = crypto.randomUUID();
+      bus?.emit(runContext.runId, {
+        type: "tool_use",
+        name: namespacedName,
+        input: parameters,
+        id: toolUseId,
+      });
+
+      let result: ToolExecutionResult;
+      try {
+        result = await registry.executeTool(
+          namespacedName,
+          parameters,
+          runContext,
+        );
+      } catch (err) {
+        bus?.emit(runContext.runId, {
+          type: "tool_result",
+          toolUseId,
+          content: err instanceof Error ? err.message : String(err),
+          isError: true,
+        });
+        throw err;
+      }
+
+      bus?.emit(runContext.runId, {
+        type: "tool_result",
+        toolUseId,
+        content: typeof result.result.content === "string"
+          ? result.result.content
+          : JSON.stringify(result.result.content ?? ""),
+        isError: !!result.result.error,
+      });
 
       log.debug(
         {

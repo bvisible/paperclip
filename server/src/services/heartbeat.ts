@@ -32,6 +32,7 @@ import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService } from "./secrets.js";
 import { getGlobalPluginToolDispatcher } from "./plugin-tool-dispatcher.js";
+import { getGlobalToolEventBus, type ToolStreamEvent } from "./tool-event-bus.js";
 import { resolveDefaultAgentWorkspaceDir, resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { buildHeartbeatRunIssueComment, summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import {
@@ -3189,19 +3190,44 @@ export function heartbeatService(db: Db) {
           "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
         );
       }
-      const adapterResult = await adapter.execute({
-        runId: run.id,
-        agent,
-        runtime: runtimeForAdapter,
-        config: runtimeConfig,
-        context,
-        onLog,
-        onMeta: onAdapterMeta,
-        onSpawn: async (meta) => {
-          await persistRunProcessMetadata(run.id, meta);
-        },
-        authToken: authToken ?? undefined,
+      // Subscribe to the tool event bus so tool_use / tool_result events
+      // from the dispatcher are injected into this run's log stream. The
+      // parser in paperclip-chat picks them up via the Claude CLI JSON
+      // format (no adapter-specific formatting required).
+      const toolBus = getGlobalToolEventBus();
+      const unsubToolBus = toolBus?.subscribe(run.id, (evt: ToolStreamEvent) => {
+        if (evt.type === "tool_use") {
+          const line = JSON.stringify({
+            type: "assistant",
+            message: { role: "assistant", content: [{ type: "tool_use", id: evt.id, name: evt.name, input: evt.input }] },
+          });
+          void onLog("stdout", line + "\n");
+        } else if (evt.type === "tool_result") {
+          const line = JSON.stringify({
+            type: "user",
+            message: { role: "user", content: [{ type: "tool_result", tool_use_id: evt.toolUseId, content: evt.content, is_error: evt.isError }] },
+          });
+          void onLog("stdout", line + "\n");
+        }
       });
+      let adapterResult: AdapterExecutionResult;
+      try {
+        adapterResult = await adapter.execute({
+          runId: run.id,
+          agent,
+          runtime: runtimeForAdapter,
+          config: runtimeConfig,
+          context,
+          onLog,
+          onMeta: onAdapterMeta,
+          onSpawn: async (meta) => {
+            await persistRunProcessMetadata(run.id, meta);
+          },
+          authToken: authToken ?? undefined,
+        });
+      } finally {
+        unsubToolBus?.();
+      }
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
             db,

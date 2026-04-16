@@ -41,6 +41,12 @@ function createStreamJsonParser(emit: (event: ChatStreamEvent) => void) {
               if (typeof text === "string" && text.length > 0) {
                 emit({ type: "text", text });
               }
+            } else if (stream === "tool_use") {
+              const name = (data.name as string) ?? "tool";
+              emit({ type: "tool_use", name, input: data.input });
+            } else if (stream === "tool_result") {
+              const content = typeof data.content === "string" ? data.content : JSON.stringify(data.content ?? "");
+              emit({ type: "tool_result", content, isError: data.isError === true || data.is_error === true });
             } else if (stream === "error") {
               const msg = (data.error as string | undefined) ?? (data.message as string | undefined) ?? "error";
               emit({ type: "error", text: msg });
