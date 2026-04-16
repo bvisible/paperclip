@@ -437,6 +437,55 @@ const plugin = definePlugin({
       };
     });
 
+    // ── Data: list brand templates for a company ─────────────────────
+    ctx.data.register("templateList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { templates: [] };
+      const records = await ctx.entities.list({
+        entityType: "brand_template",
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 100,
+      });
+      const templates = records.map((r) => ({
+        id: r.id,
+        ...(r.data as Record<string, unknown>),
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
+      return { companyId, templates };
+    });
+
+    // ── Action: save (create/update) a brand template ───────────────
+    ctx.actions.register("templateSave", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const templateId = params.templateId as string | undefined;
+      const data = params.data as Record<string, unknown>;
+      if (!companyId || !data) throw new Error("templateSave requires companyId and data");
+
+      const name = (data.name as string) ?? "Untitled";
+
+      // Use externalId for upsert dedup when editing an existing template
+      const record = await ctx.entities.upsert({
+        entityType: "brand_template",
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: templateId ?? undefined,
+        title: name,
+        status: "active",
+        data,
+      });
+
+      await ctx.activity.log({
+        companyId,
+        message: `Brand template "${name}" saved`,
+        entityType: "brand_template",
+        entityId: record.id,
+      });
+
+      return { ok: true, templateId: record.id };
+    });
+
     // ── Job: IMAP poll (declared in manifest as "imap-poll") ─────────
     ctx.jobs.register("imap-poll", async (job) => {
       try {

@@ -35,6 +35,9 @@ import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams,
 import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessagesParams } from "./email/inbox-list.js";
 import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
+import { runTemplateCreate } from "./content/template-create.js";
+import { runTemplateList } from "./content/template-list.js";
+import { runTemplateApply } from "./content/template-apply.js";
 
 /**
  * Optional per-tool configuration schema — subset of JSON Schema we render
@@ -402,5 +405,65 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
       const ctx = ctxAccess.getPluginContext();
       return runEmailReadMessage(ctx, params as EmailReadMessageParams, runCtx);
     },
+  },
+  // ─── Template tools (brand template CRUD + compositor) ──────────────
+  {
+    name: "templateCreate",
+    declaration: {
+      displayName: "Create brand template",
+      description:
+        "Create a new brand template for image compositing. Specify dimensions via a preset (e.g. instagram-square) or custom width/height. Optionally provide a partial config for logo, text zones, filters, overlay, and border.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Template name" },
+          description: { type: "string", description: "Optional description" },
+          preset: {
+            type: "string",
+            description: "Dimension preset: instagram-square, instagram-portrait, instagram-story, facebook-post, linkedin-post, twitter-post, pinterest-pin, youtube-thumbnail",
+          },
+          width: { type: "number", description: "Custom width in pixels (overrides preset)" },
+          height: { type: "number", description: "Custom height in pixels (overrides preset)" },
+          config: { type: "object", description: "Partial TemplateConfig (logo, textZones, filters, overlay, border, backgroundColor, imageFit)" },
+        },
+        required: ["name"],
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runTemplateCreate(params as { name: string; description?: string; preset?: string; width?: number; height?: number; config?: Record<string, unknown> }, {}, runCtx, ctxAccess),
+  },
+  {
+    name: "templateList",
+    declaration: {
+      displayName: "List brand templates",
+      description: "List all brand templates for the current company.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max number of templates to return (default 50)" },
+        },
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runTemplateList(params as { limit?: number }, {}, runCtx, ctxAccess),
+  },
+  {
+    name: "templateApply",
+    declaration: {
+      displayName: "Apply brand template to image",
+      description:
+        "Apply a brand template to a source image URL. Downloads the source, composites it with the template config (logo, text, filters, overlay, border), and returns the result as a data URL.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "ID of the brand template to apply" },
+          sourceImageUrl: { type: "string", description: "URL of the source image to composite" },
+          logoUrl: { type: "string", description: "Optional URL of a logo image to overlay" },
+        },
+        required: ["templateId", "sourceImageUrl"],
+      },
+    },
+    run: async (params, runCtx, ctxAccess) =>
+      runTemplateApply(params as { templateId: string; sourceImageUrl: string; logoUrl?: string }, {}, runCtx, ctxAccess),
   },
 ];
