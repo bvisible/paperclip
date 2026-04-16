@@ -239,16 +239,14 @@ interface TemplateView {
 }
 
 function BrandTemplatesSection({ companyId }: { companyId: string }) {
-  const templateData = usePluginData("templateList", companyId ? { companyId } : undefined);
+  const templateResp = usePluginData<{ companyId: string; templates: TemplateView[] }>("templateList", companyId ? { companyId } : undefined);
   const templateSave = usePluginAction("templateSave");
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("instagram-square");
   const [saving, setSaving] = useState(false);
 
-  const templates: TemplateView[] = (
-    templateData as { templates?: TemplateView[] } | null
-  )?.templates ?? [];
+  const templates: TemplateView[] = templateResp.data?.templates ?? [];
 
   const PRESETS = [
     { key: "instagram-square", label: "Instagram square (1080×1080)", w: 1080, h: 1080 },
@@ -285,12 +283,13 @@ function BrandTemplatesSection({ companyId }: { companyId: string }) {
       });
       setName("");
       setShowForm(false);
+      templateResp.refresh();
     } catch (err) {
       console.error("templateSave failed:", err);
     } finally {
       setSaving(false);
     }
-  }, [name, preset, companyId, templateSave]);
+  }, [name, preset, companyId, templateSave, templateResp]);
 
   return (
     <section style={{ marginTop: 24 }}>
