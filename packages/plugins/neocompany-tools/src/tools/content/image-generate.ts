@@ -21,8 +21,8 @@ import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageProvider } from "
 import { ENTITY_TYPE as TEMPLATE_ENTITY_TYPE, type BrandTemplateData } from "../../templates/types.js";
 import { compositeImage } from "../../templates/compositor.js";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 interface Params {
@@ -114,27 +114,34 @@ async function generateWithCodexCli(
   prompt: string,
   width: number,
   height: number,
-  timeoutMs = 180_000,
+  timeoutMs = 300_000,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const workspace = await mkdtemp(join(tmpdir(), "codex-imagegen-"));
   const ratio = width === height ? "square" : width > height ? "landscape" : "portrait";
   const instruction =
-    `$imagegen ${prompt}\n\n` +
-    `Generate a single ${ratio} image (~${width}x${height}) and save it to ` +
-    `${workspace}/output.png as a PNG file. Do not write any other files. ` +
-    `Once the file is saved, reply with just the absolute path and nothing else.`;
+    `Generate an image using the image_generation tool: ${prompt}. ` +
+    `Target a ${ratio} composition (~${width}x${height}). ` +
+    `Reply only with "ok" once done — do not shell out.`;
 
-  // Give the CLI a PATH so `/usr/bin/which codex` resolves in a fresh shell
   const env = {
     ...process.env,
     PATH: `${process.env.PATH ?? ""}:/home/ubuntu/.npm-global/bin:/usr/local/bin`,
+    HOME: process.env.HOME ?? homedir(),
   };
+
+  // Snapshot the codex generated_images dir before running so we can diff
+  // and pick the PNG that belongs to this exact run.
+  const codexImagesDir = join(homedir(), ".codex", "generated_images");
+  const beforeSnapshot = await listPngsRecursive(codexImagesDir);
 
   let lastErr: unknown;
   for (const bin of CODEX_BINARY_CANDIDATES) {
     try {
       await spawnCodex(bin, instruction, workspace, env, timeoutMs);
-      const buffer = await readGeneratedPng(workspace);
+      const afterSnapshot = await listPngsRecursive(codexImagesDir);
+      const newOne = pickNewest(afterSnapshot, beforeSnapshot);
+      if (!newOne) throw new Error("codex-cli finished but no new PNG was created");
+      const buffer = await readFile(newOne);
       await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
       return { buffer, mimeType: "image/png" };
     } catch (err) {
@@ -156,7 +163,9 @@ function spawnCodex(
   return new Promise((resolve, reject) => {
     const args = [
       "exec",
-      "--full-auto",
+      "--enable",
+      "image_generation",
+      "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
       "--cd",
       workspace,
@@ -189,18 +198,38 @@ function spawnCodex(
   });
 }
 
-async function readGeneratedPng(workspace: string): Promise<Buffer> {
-  // Prefer output.png; if it doesn't exist, grab the most recent PNG in dir
+async function listPngsRecursive(root: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
   try {
-    return await readFile(join(workspace, "output.png"));
-  } catch {
-    const files = await readdir(workspace);
-    const pngs = files.filter((f) => f.toLowerCase().endsWith(".png"));
-    if (pngs.length === 0) {
-      throw new Error("codex-cli finished but no PNG was produced");
+    const sessions = await readdir(root);
+    for (const session of sessions) {
+      const sessionDir = join(root, session);
+      try {
+        const files = await readdir(sessionDir);
+        for (const f of files) {
+          if (f.toLowerCase().endsWith(".png")) {
+            const p = join(sessionDir, f);
+            const st = await stat(p);
+            out.set(p, st.mtimeMs);
+          }
+        }
+      } catch {
+        // session dir disappeared or unreadable — ignore
+      }
     }
-    return readFile(join(workspace, pngs[0]!));
+  } catch {
+    // root doesn't exist yet
   }
+  return out;
+}
+
+function pickNewest(after: Map<string, number>, before: Map<string, number>): string | null {
+  let best: { path: string; mtime: number } | null = null;
+  for (const [path, mtime] of after) {
+    if (before.has(path)) continue;
+    if (!best || mtime > best.mtime) best = { path, mtime };
+  }
+  return best?.path ?? null;
 }
 
 export async function runImageGenerate(
