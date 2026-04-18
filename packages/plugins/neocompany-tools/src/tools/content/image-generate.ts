@@ -138,11 +138,13 @@ async function generateWithCodexCli(
   let lastErr: unknown;
   for (const bin of CODEX_BINARY_CANDIDATES) {
     try {
-      await spawnCodex(bin, instruction, workspace, env, timeoutMs);
-      const afterSnapshot = await listPngsRecursive(codexImagesDir);
-      const newOne = pickNewest(afterSnapshot, beforeSnapshot);
-      if (!newOne) throw new Error("codex-cli finished but no new PNG was created");
-      const buffer = await readFile(newOne);
+      // Spawn codex but don't wait for it to exit — it tends to keep reasoning
+      // long after the image was generated. We poll ~/.codex/generated_images/
+      // until a new PNG appears, then kill codex.
+      const newPng = await spawnCodexAndWaitForPng(
+        bin, instruction, workspace, env, codexImagesDir, beforeSnapshot, timeoutMs,
+      );
+      const buffer = await readFile(newPng);
       await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
       return { buffer, mimeType: "image/png" };
     } catch (err) {
@@ -154,51 +156,66 @@ async function generateWithCodexCli(
   throw lastErr instanceof Error ? lastErr : new Error(`codex-cli failed: ${String(lastErr)}`);
 }
 
-function spawnCodex(
+async function spawnCodexAndWaitForPng(
   bin: string,
   prompt: string,
   workspace: string,
   env: NodeJS.ProcessEnv,
+  codexImagesDir: string,
+  beforeSnapshot: Map<string, number>,
   timeoutMs: number,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      "exec",
-      "--enable",
-      "image_generation",
-      "--dangerously-bypass-approvals-and-sandbox",
-      "--skip-git-repo-check",
-      "-c",
-      "reasoning.effort=minimal",
-      "--cd",
-      workspace,
-      "--color",
-      "never",
-      prompt,
-    ];
-    const child = spawn(bin, args, { env, cwd: workspace });
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`codex-cli timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+): Promise<string> {
+  const args = [
+    "exec",
+    "--enable",
+    "image_generation",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--skip-git-repo-check",
+    "-c",
+    "reasoning.effort=minimal",
+    "--cd",
+    workspace,
+    "--color",
+    "never",
+    prompt,
+  ];
 
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`codex-cli exit ${code}: ${stderr.slice(0, 400)}`));
+  const child = spawn(bin, args, { env, cwd: workspace, detached: true });
+  let stderr = "";
+  child.stderr.on("data", (c) => { stderr += c.toString(); });
+
+  const killCodex = () => {
+    try {
+      // Kill the whole process group (codex wrapper + rust binary child)
+      if (child.pid) process.kill(-child.pid, "SIGKILL");
+    } catch {
+      try { child.kill("SIGKILL"); } catch { /* already dead */ }
+    }
+  };
+
+  const startedAt = Date.now();
+  const pollIntervalMs = 1_000;
+
+  try {
+    while (Date.now() - startedAt < timeoutMs) {
+      // Quick check: is the child still alive?
+      const exited = child.exitCode !== null;
+      const afterSnapshot = await listPngsRecursive(codexImagesDir);
+      const newPng = pickNewest(afterSnapshot, beforeSnapshot);
+      if (newPng) {
+        // PNG produced — kill codex and return
+        killCodex();
+        return newPng;
       }
-    });
-  });
+      if (exited) {
+        throw new Error(`codex-cli exited without producing a PNG: ${stderr.slice(0, 400)}`);
+      }
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+    throw new Error(`codex-cli timed out after ${timeoutMs}ms without producing a PNG`);
+  } finally {
+    killCodex();
+  }
 }
 
 async function listPngsRecursive(root: string): Promise<Map<string, number>> {
