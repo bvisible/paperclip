@@ -1,14 +1,18 @@
 /**
  * Tool: imageGenerate — AI image generation with optional template overlay.
  *
- * Uses the OpenAI Images API (model `gpt-image-1` by default) with the
- * platform-level API key stored in `plugin_config.openaiApiKeyRef`.
- * If a `templateId` is provided, the generated image is composited with
- * the brand template via Sharp before being stored.
+ * Three providers are supported:
+ *  - `openai`    → direct API call to `/v1/images/generations` with an API key
+ *                  (requires `openaiApiKeyRef` in plugin platform config)
+ *  - `codex-cli` → spawn the OpenAI Codex CLI with `$imagegen` — uses the
+ *                  ChatGPT Pro subscription OAuth (no API key). Requires the
+ *                  `codex` binary on PATH and a prior interactive `codex login`.
+ *  - `gemini`    → not yet implemented
  *
- * The resulting entity (`generated_image`, scope=company) is created with
- * status=pending so a reviewer can approve or reject it. Approved images
- * become the stock an agent can pull from when publishing.
+ * If a `templateId` is provided, the generated image is composited with the
+ * brand template via Sharp before being stored. The resulting entity
+ * (`generated_image`, scope=company) is created with status=pending so a
+ * reviewer can approve or reject it.
  */
 
 import type { ToolRunContext, ToolResult, PluginContext } from "@paperclipai/plugin-sdk";
@@ -16,6 +20,10 @@ import type { ToolContextAccess } from "../index.js";
 import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageProvider } from "../../images/types.js";
 import { ENTITY_TYPE as TEMPLATE_ENTITY_TYPE, type BrandTemplateData } from "../../templates/types.js";
 import { compositeImage } from "../../templates/compositor.js";
+import { spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface Params {
   prompt: string;
@@ -90,6 +98,111 @@ function pickOpenAISize(width: number, height: number): string {
   return "1024x1024"; // square/close to square
 }
 
+// ---------------------------------------------------------------------------
+// Codex CLI provider — spawns the `codex` binary, lets $imagegen do its job,
+// and grabs the PNG the CLI writes into our scratch workspace.
+// ---------------------------------------------------------------------------
+
+const CODEX_BINARY_CANDIDATES = [
+  process.env.CODEX_BIN,
+  "codex",
+  "/home/ubuntu/.npm-global/bin/codex",
+  "/usr/local/bin/codex",
+].filter((p): p is string => typeof p === "string" && p.length > 0);
+
+async function generateWithCodexCli(
+  prompt: string,
+  width: number,
+  height: number,
+  timeoutMs = 180_000,
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  const workspace = await mkdtemp(join(tmpdir(), "codex-imagegen-"));
+  const ratio = width === height ? "square" : width > height ? "landscape" : "portrait";
+  const instruction =
+    `$imagegen ${prompt}\n\n` +
+    `Generate a single ${ratio} image (~${width}x${height}) and save it to ` +
+    `${workspace}/output.png as a PNG file. Do not write any other files. ` +
+    `Once the file is saved, reply with just the absolute path and nothing else.`;
+
+  // Give the CLI a PATH so `/usr/bin/which codex` resolves in a fresh shell
+  const env = {
+    ...process.env,
+    PATH: `${process.env.PATH ?? ""}:/home/ubuntu/.npm-global/bin:/usr/local/bin`,
+  };
+
+  let lastErr: unknown;
+  for (const bin of CODEX_BINARY_CANDIDATES) {
+    try {
+      await spawnCodex(bin, instruction, workspace, env, timeoutMs);
+      const buffer = await readGeneratedPng(workspace);
+      await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+      return { buffer, mimeType: "image/png" };
+    } catch (err) {
+      lastErr = err;
+      // Try next binary candidate
+    }
+  }
+  await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  throw lastErr instanceof Error ? lastErr : new Error(`codex-cli failed: ${String(lastErr)}`);
+}
+
+function spawnCodex(
+  bin: string,
+  prompt: string,
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "exec",
+      "--full-auto",
+      "--skip-git-repo-check",
+      "--cd",
+      workspace,
+      "--color",
+      "never",
+      prompt,
+    ];
+    const child = spawn(bin, args, { env, cwd: workspace });
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`codex-cli timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`codex-cli exit ${code}: ${stderr.slice(0, 400)}`));
+      }
+    });
+  });
+}
+
+async function readGeneratedPng(workspace: string): Promise<Buffer> {
+  // Prefer output.png; if it doesn't exist, grab the most recent PNG in dir
+  try {
+    return await readFile(join(workspace, "output.png"));
+  } catch {
+    const files = await readdir(workspace);
+    const pngs = files.filter((f) => f.toLowerCase().endsWith(".png"));
+    if (pngs.length === 0) {
+      throw new Error("codex-cli finished but no PNG was produced");
+    }
+    return readFile(join(workspace, pngs[0]!));
+  }
+}
+
 export async function runImageGenerate(
   params: Params,
   _config: unknown,
@@ -104,12 +217,12 @@ export async function runImageGenerate(
     return { content: "Prompt is required.", error: "MISSING_PROMPT" };
   }
 
-  // ── Resolve platform API key ─────────────────────────────────────
+  // ── Resolve platform API key (only required for the `openai` provider)
   const platform = (await ctx.config.get()) as { openaiApiKeyRef?: string } | null;
   const apiKey = await resolveSecret(ctx, platform?.openaiApiKeyRef);
-  if (!apiKey) {
+  if (provider === "openai" && !apiKey) {
     return {
-      content: "Platform OpenAI API key is not configured. Ask an admin to set `openaiApiKeyRef` in the plugin's platform settings.",
+      content: "Platform OpenAI API key is not configured. Ask an admin to set `openaiApiKeyRef` in the plugin's platform settings, or switch to provider=codex-cli to use a ChatGPT subscription.",
       error: "MISSING_OPENAI_KEY",
     };
   }
@@ -137,7 +250,11 @@ export async function runImageGenerate(
   let mimeType: string;
   try {
     if (provider === "openai") {
-      const gen = await generateWithOpenAI(ctx, apiKey, prompt, width, height);
+      const gen = await generateWithOpenAI(ctx, apiKey!, prompt, width, height);
+      rawBuffer = gen.buffer;
+      mimeType = gen.mimeType;
+    } else if (provider === "codex-cli") {
+      const gen = await generateWithCodexCli(prompt, width, height);
       rawBuffer = gen.buffer;
       mimeType = gen.mimeType;
     } else {

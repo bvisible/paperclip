@@ -6,7 +6,7 @@
 
 export const IMAGE_ENTITY_TYPE = "generated_image";
 
-export type ImageProvider = "openai" | "gemini";
+export type ImageProvider = "openai" | "gemini" | "codex-cli";
 
 export type ImageStatus = "pending" | "approved" | "rejected";
 

@@ -316,6 +316,7 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
   const { pushToast } = useToast();
   const [prompt, setPrompt] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
+  const [provider, setProvider] = useState<"openai" | "codex-cli">("codex-cli");
   const [count, setCount] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -345,6 +346,7 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
           companyId,
           prompt,
           templateId: templateId || undefined,
+          provider,
           batchId,
         }, companyId);
       } catch (err) {
@@ -380,7 +382,10 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
       >
         <h3 className="text-base font-semibold">Generate image</h3>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Uses OpenAI gpt-image-1. A brand template is composited on top if selected.
+          {provider === "codex-cli"
+            ? "Via ChatGPT Pro subscription (Codex CLI, gpt-image-1.5). No API key needed."
+            : "Via OpenAI API key (gpt-image-1). Billed per image."}
+          {" "}A brand template is composited on top if selected.
         </p>
 
         <div className="mt-4 space-y-3">
@@ -394,6 +399,18 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
               placeholder="e.g. modern tech startup office, warm natural light, clean minimalist aesthetic"
               className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
             />
+          </div>
+
+          <div>
+            <Label className="text-xs">Provider</Label>
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value as "openai" | "codex-cli")}
+              className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            >
+              <option value="codex-cli">Codex CLI (ChatGPT Pro subscription)</option>
+              <option value="openai">OpenAI API (gpt-image-1)</option>
+            </select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
