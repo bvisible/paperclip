@@ -274,6 +274,7 @@ export async function runImageGenerate(
   }
 
   // ── Optional: load template to use its dimensions and compositor ─
+  // Either explicit (templateId) or the company's default "brand overlay".
   let templateData: BrandTemplateData | undefined;
   if (templateId) {
     const matches = await ctx.entities.list({
@@ -286,6 +287,24 @@ export async function runImageGenerate(
     const record = matches[0];
     if (record) {
       templateData = record.data as unknown as BrandTemplateData;
+      width = templateData.width;
+      height = templateData.height;
+    }
+  } else {
+    // No explicit templateId — fall back to the company's brand overlay
+    // template (isDefault=true) if one exists.
+    const all = await ctx.entities.list({
+      entityType: TEMPLATE_ENTITY_TYPE,
+      scopeKind: "company",
+      scopeId: runCtx.companyId,
+      limit: 50,
+    });
+    const def = all.find((r) => {
+      const d = r.data as unknown as BrandTemplateData | undefined;
+      return d?.isDefault === true;
+    });
+    if (def) {
+      templateData = def.data as unknown as BrandTemplateData;
       width = templateData.width;
       height = templateData.height;
     }
@@ -320,6 +339,16 @@ export async function runImageGenerate(
   let finalImageUrl = rawImageUrl;
   let finalMime = mimeType;
   if (templateData) {
+    // If caller didn't pass a logo, try the company's brand logo.
+    let resolvedLogoUrl = logoUrl;
+    if (!resolvedLogoUrl) {
+      try {
+        const company = await ctx.companies.get(runCtx.companyId);
+        resolvedLogoUrl = company?.logoUrl ?? undefined;
+      } catch {
+        // companies.read not granted or company missing — proceed without logo
+      }
+    }
     try {
       // The compositor fetches the source image; we feed it our data URL
       const result = await compositeImage(
@@ -327,7 +356,7 @@ export async function runImageGenerate(
         templateData.config,
         templateData.width,
         templateData.height,
-        logoUrl,
+        resolvedLogoUrl,
       );
       finalImageUrl = `data:${result.mimeType};base64,${result.buffer.toString("base64")}`;
       finalMime = result.mimeType;
