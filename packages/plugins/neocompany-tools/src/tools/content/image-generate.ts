@@ -179,7 +179,13 @@ async function spawnCodexAndWaitForPng(
 
   const child = spawn(bin, args, { env, cwd: workspace, detached: true });
   let stderr = "";
+  let spawnError: Error | null = null;
   child.stderr.on("data", (c) => { stderr += c.toString(); });
+  child.on("error", (err) => {
+    // spawn() reports ENOENT and similar via this event, not via throw —
+    // if we ignore it the worker process will crash with an uncaught exception.
+    spawnError = err;
+  });
 
   const killCodex = () => {
     try {
@@ -195,6 +201,7 @@ async function spawnCodexAndWaitForPng(
 
   try {
     while (Date.now() - startedAt < timeoutMs) {
+      if (spawnError) throw spawnError;
       // Quick check: is the child still alive?
       const exited = child.exitCode !== null;
       const afterSnapshot = await listPngsRecursive(codexImagesDir);
