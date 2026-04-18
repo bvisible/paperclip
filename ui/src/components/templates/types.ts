@@ -9,6 +9,10 @@ export interface LogoConfig {
   y: number;       // 0-100% (center point)
   scale: number;   // 3-50% of canvas width
   opacity: number; // 10-100
+  /** Inline data URL (data:image/...;base64,…) so the server compositor
+   *  can render the logo without needing a network fetch. Populated when
+   *  the user uploads a file in the Logo tab. */
+  imageDataUrl?: string;
 }
 
 export interface TextZone {

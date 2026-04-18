@@ -106,6 +106,11 @@ export function ContentTemplateEditor() {
     setHeight(tpl.height ?? 1080);
     setConfig({ ...DEFAULT_TEMPLATE_CONFIG, ...tpl.config });
     setIsDefault(tpl.isDefault ?? false);
+    // Prefer the inline logo data URL stored in the template (works on
+    // the server without any fetch); fall back to the company logo URL.
+    if (tpl.config?.logo?.imageDataUrl) {
+      setLogoUrl(tpl.config.logo.imageDataUrl);
+    }
     setLoaded(true);
   }, [templateId, templatesQuery.data, loaded]);
 
@@ -378,7 +383,17 @@ export function ContentTemplateEditor() {
               <LogoTab
                 config={config}
                 logoUrl={logoUrl}
-                onLogoUrlChange={setLogoUrl}
+                onLogoUrlChange={(url) => {
+                  setLogoUrl(url);
+                  // Persist data URLs into the template config so the server
+                  // compositor can render the logo without fetching a URL.
+                  if (url && url.startsWith("data:")) {
+                    onConfigChange({ logo: { ...config.logo, imageDataUrl: url } });
+                  } else if (!url) {
+                    const { imageDataUrl: _drop, ...rest } = config.logo;
+                    onConfigChange({ logo: rest });
+                  }
+                }}
                 onConfigChange={onConfigChange}
               />
             )}

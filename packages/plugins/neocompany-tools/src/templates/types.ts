@@ -23,6 +23,9 @@ export interface LogoConfig {
   y?: number;       // 0-100%
   scale: number;    // 3-50%
   opacity: number;  // 10-100%
+  /** Inline data URL so the server compositor can render the logo without
+   *  fetching a remote URL (which fails for Paperclip's auth-gated assets). */
+  imageDataUrl?: string;
 }
 
 export interface TextZone {

@@ -346,8 +346,11 @@ export async function runImageGenerate(
   let finalImageUrl = rawImageUrl;
   let finalMime = mimeType;
   if (templateData) {
-    // If caller didn't pass a logo, try the company's brand logo.
+    // Priority: explicit param > template's embedded data URL > company brand logo
     let resolvedLogoUrl = logoUrl;
+    if (!resolvedLogoUrl) {
+      resolvedLogoUrl = templateData.config.logo?.imageDataUrl;
+    }
     if (!resolvedLogoUrl) {
       try {
         const company = await ctx.companies.get(runCtx.companyId);
@@ -355,6 +358,12 @@ export async function runImageGenerate(
       } catch {
         // companies.read not granted or company missing — proceed without logo
       }
+    }
+    // Paperclip returns the brand logo as a relative, auth-gated URL
+    // (/api/assets/…/content). The worker sandbox cannot reach it, so unless
+    // the URL is already a data: URL we drop it and rely on in-template logo.
+    if (resolvedLogoUrl && resolvedLogoUrl.startsWith("/")) {
+      resolvedLogoUrl = undefined;
     }
     try {
       // The compositor fetches the source image; we feed it our data URL
