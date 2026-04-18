@@ -4,9 +4,19 @@
  * so the UI doesn't depend on the plugin package directly.
  */
 
+export type LogoPosition =
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right"
+  | "bottom-center"
+  | "center"
+  | "custom";
+
 export interface LogoConfig {
-  x: number;       // 0-100% (center point)
-  y: number;       // 0-100% (center point)
+  position?: LogoPosition;
+  x: number;       // 0-100% (center point, used when position="custom")
+  y: number;       // 0-100% (center point, used when position="custom")
   scale: number;   // 3-50% of canvas width
   opacity: number; // 10-100
   /** Inline data URL (data:image/...;base64,…) so the server compositor
