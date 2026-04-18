@@ -170,7 +170,7 @@ export function LogoTab({ config, logoUrl, onLogoUrlChange, onConfigChange }: Lo
         <div className="flex items-center justify-between mb-1.5">
           <label className="text-xs font-medium text-muted-foreground">Logo position</label>
           <button
-            onClick={() => updateLogo({ x: 50, y: 50 })}
+            onClick={() => updateLogo({ position: "custom", x: 50, y: 50 })}
             className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
             <Locate className="h-3 w-3" /> Center
@@ -182,14 +182,14 @@ export function LogoTab({ config, logoUrl, onLogoUrlChange, onConfigChange }: Lo
             value={logo?.x ?? 50}
             min={0}
             max={100}
-            onChange={(v) => updateLogo({ x: v })}
+            onChange={(v) => updateLogo({ position: "custom", x: v })}
           />
           <Slider
             label="Y — Vertical"
             value={logo?.y ?? 85}
             min={0}
             max={100}
-            onChange={(v) => updateLogo({ y: v })}
+            onChange={(v) => updateLogo({ position: "custom", y: v })}
           />
         </div>
       </div>
