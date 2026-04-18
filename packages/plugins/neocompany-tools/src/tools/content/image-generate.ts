@@ -114,14 +114,15 @@ async function generateWithCodexCli(
   prompt: string,
   width: number,
   height: number,
-  timeoutMs = 300_000,
+  timeoutMs = 12 * 60_000,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const workspace = await mkdtemp(join(tmpdir(), "codex-imagegen-"));
   const ratio = width === height ? "square" : width > height ? "landscape" : "portrait";
   const instruction =
-    `Generate an image using the image_generation tool: ${prompt}. ` +
-    `Target a ${ratio} composition (~${width}x${height}). ` +
-    `Reply only with "ok" once done — do not shell out.`;
+    `Use the image_generation tool now — do not reason, do not shell out, do not list files. ` +
+    `Prompt: ${prompt}. ` +
+    `Aspect: ${ratio} (${width}x${height}). ` +
+    `Reply with "ok" immediately after calling the tool.`;
 
   const env = {
     ...process.env,
@@ -167,6 +168,8 @@ function spawnCodex(
       "image_generation",
       "--dangerously-bypass-approvals-and-sandbox",
       "--skip-git-repo-check",
+      "-c",
+      "reasoning.effort=minimal",
       "--cd",
       workspace,
       "--color",

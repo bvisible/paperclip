@@ -54,12 +54,12 @@ import { logger } from "../middleware/logger.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Default timeout for RPC calls in milliseconds. Raised to 5 min so long-running
- *  chat/agent actions don't hit the default 30s budget (NeoCompany). */
-const DEFAULT_RPC_TIMEOUT_MS = 5 * 60 * 1_000;
+/** Default timeout for RPC calls in milliseconds. Raised to 15 min so long-running
+ *  image generation via Codex CLI (~2-5 min) has headroom (NeoCompany). */
+const DEFAULT_RPC_TIMEOUT_MS = 15 * 60 * 1_000;
 
-/** Hard upper bound for any RPC timeout (5 minutes). Prevents unbounded waits. */
-const MAX_RPC_TIMEOUT_MS = 5 * 60 * 1_000;
+/** Hard upper bound for any RPC timeout (15 minutes). */
+const MAX_RPC_TIMEOUT_MS = 15 * 60 * 1_000;
 
 /** Timeout for the initialize RPC call. */
 const INITIALIZE_TIMEOUT_MS = 15_000;
