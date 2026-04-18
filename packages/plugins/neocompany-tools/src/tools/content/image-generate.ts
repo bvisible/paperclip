@@ -117,12 +117,9 @@ async function generateWithCodexCli(
   timeoutMs = 12 * 60_000,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const workspace = await mkdtemp(join(tmpdir(), "codex-imagegen-"));
-  const ratio = width === height ? "square" : width > height ? "landscape" : "portrait";
-  const instruction =
-    `Use the image_generation tool now — do not reason, do not shell out, do not list files. ` +
-    `Prompt: ${prompt}. ` +
-    `Aspect: ${ratio} (${width}x${height}). ` +
-    `Reply with "ok" immediately after calling the tool.`;
+  // Simple prompt form — complex instructions trigger extra reasoning cycles
+  // that add minutes. Keep it terse.
+  const instruction = `generate image: ${prompt}`;
 
   const env = {
     ...process.env,
