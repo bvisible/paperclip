@@ -176,7 +176,17 @@ async function spawnCodexAndWaitForPng(
     prompt,
   ];
 
-  const child = spawn(bin, args, { env, cwd: workspace, detached: true });
+  // stdin: 'ignore' avoids codex hanging when it probes for TTY/keyboard input.
+  // stdout piped so we can keep stream draining (codex writes progress there).
+  const child = spawn(bin, args, {
+    env,
+    cwd: workspace,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  // Drain stdout so the child doesn't block on a full pipe buffer after codex
+  // prints its status/token lines.
+  child.stdout?.on("data", () => {});
   let stderr = "";
   let spawnError: Error | null = null;
   child.stderr.on("data", (c) => { stderr += c.toString(); });
