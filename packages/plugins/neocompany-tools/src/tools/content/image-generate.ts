@@ -162,10 +162,9 @@ async function spawnCodexAndWaitForPng(
   beforeSnapshot: Map<string, number>,
   timeoutMs: number,
 ): Promise<string> {
+  // Codex 0.122+ ships image_generation as a stable feature (enabled by default)
   const args = [
     "exec",
-    "--enable",
-    "image_generation",
     "--dangerously-bypass-approvals-and-sandbox",
     "--skip-git-repo-check",
     "-c",
