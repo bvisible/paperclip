@@ -14,6 +14,7 @@ import {
   Palette,
   Images,
   Share2,
+  CheckSquare,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -104,6 +105,8 @@ export function Sidebar() {
           <SidebarNavItem to="/content" label="Templates" icon={Palette} />
           <SidebarNavItem to="/content/stock" label="Image library" icon={Images} />
           <SidebarNavItem to="/content/channels" label="Channels" icon={Share2} />
+          <SidebarNavItem to="/content/strategy" label="Strategy" icon={Target} />
+          <SidebarNavItem to="/content/approvals" label="Approvals" icon={CheckSquare} />
         </SidebarSection>
 
         <SidebarSection label="Work">

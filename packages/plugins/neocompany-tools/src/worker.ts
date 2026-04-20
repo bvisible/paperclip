@@ -24,6 +24,15 @@ import type {
   StoredChannelToken,
 } from "./integrations/types.js";
 import { randomState } from "./integrations/base.js";
+import {
+  EDITORIAL_STRATEGY_ENTITY_TYPE,
+  EDITORIAL_STRATEGY_SINGLETON_EXTERNAL_ID,
+  SOCIAL_POST_ENTITY_TYPE,
+  type EditorialStrategyData,
+  type SocialPostChannel,
+  type SocialPostData,
+  type SocialPostStatus,
+} from "./social/types.js";
 
 const PLUGIN_NAME = "neocompany-tools";
 
@@ -938,6 +947,223 @@ const plugin = definePlugin({
         next as unknown as Record<string, unknown>,
       );
       return { ok: true, expiresAt: next.expiresAt };
+    });
+
+    // ── Editorial strategy + social post pipeline (Phase L) ─────────
+
+    ctx.data.register("strategyGet", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { strategy: null };
+      const rows = await ctx.entities.list({
+        entityType: EDITORIAL_STRATEGY_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: EDITORIAL_STRATEGY_SINGLETON_EXTERNAL_ID,
+        limit: 1,
+      });
+      const row = rows[0];
+      return { strategy: row ? (row.data as unknown as EditorialStrategyData) : null };
+    });
+
+    ctx.actions.register("setEditorialStrategy", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) throw new Error("setEditorialStrategy requires companyId");
+      const strategy = params.strategy as EditorialStrategyData | undefined;
+      if (!strategy || typeof strategy !== "object") {
+        throw new Error("setEditorialStrategy requires strategy object");
+      }
+      const now = new Date().toISOString();
+      const data: EditorialStrategyData = { ...strategy, updatedAt: now };
+      await ctx.entities.upsert({
+        entityType: EDITORIAL_STRATEGY_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: EDITORIAL_STRATEGY_SINGLETON_EXTERNAL_ID,
+        title: "Editorial strategy",
+        status: "active",
+        data: data as unknown as Record<string, unknown>,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: "Editorial strategy updated",
+        entityType: EDITORIAL_STRATEGY_ENTITY_TYPE,
+        entityId: EDITORIAL_STRATEGY_SINGLETON_EXTERNAL_ID,
+      });
+      return { ok: true, strategy: data };
+    });
+
+    ctx.data.register("socialPostsList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { posts: [], count: 0 };
+      const status = params.status as SocialPostStatus | undefined;
+      const limit = typeof params.limit === "number" ? params.limit : 200;
+      const rows = await ctx.entities.list({
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        limit,
+      });
+      let posts = rows.map((r) => {
+        const d = r.data as unknown as SocialPostData;
+        return {
+          id: r.externalId ?? r.id,
+          ...d,
+          createdAt: d.createdAt ?? r.createdAt,
+        };
+      });
+      if (status) posts = posts.filter((p) => p.status === status);
+      // Newest first for approvals, chronological for calendar — caller sorts.
+      posts.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      return { posts, count: posts.length };
+    });
+
+    ctx.actions.register("draftCreate", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) throw new Error("draftCreate requires companyId");
+      const channel = params.channel as SocialPostChannel | undefined;
+      if (!channel?.provider || !channel.channelKey) {
+        throw new Error("draftCreate requires channel.{provider, channelKey}");
+      }
+      const text = typeof params.text === "string" ? params.text : "";
+      const imageId = typeof params.imageId === "string" ? params.imageId : undefined;
+      const proposedAt = typeof params.proposedAt === "string"
+        ? params.proposedAt
+        : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      const generatedByAgentId = typeof params.generatedByAgentId === "string"
+        ? params.generatedByAgentId
+        : undefined;
+      const dimensions = (params.dimensions && typeof params.dimensions === "object")
+        ? (params.dimensions as { width: number; height: number })
+        : undefined;
+
+      const slug = globalThis.crypto.randomUUID();
+      const now = new Date().toISOString();
+      const data: SocialPostData = {
+        text,
+        imageId,
+        dimensions,
+        channel,
+        proposedAt,
+        status: "pending_review",
+        generatedByAgentId,
+        createdAt: now,
+      };
+      await ctx.entities.upsert({
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: slug,
+        title: text.slice(0, 80),
+        status: "pending_review",
+        data: data as unknown as Record<string, unknown>,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: `Draft post created for ${channel.provider}`,
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        entityId: slug,
+      });
+      return { postId: slug, ...data };
+    });
+
+    const resolveSocialPost = async (companyId: string, postId: string) => {
+      const rows = await ctx.entities.list({
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: postId,
+        limit: 1,
+      });
+      return rows[0] ?? null;
+    };
+
+    ctx.actions.register("approveDraftPost", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const postId = params.postId as string;
+      const scheduledAtOverride = params.scheduledAt as string | undefined;
+      if (!companyId || !postId) throw new Error("approveDraftPost requires companyId and postId");
+      const row = await resolveSocialPost(companyId, postId);
+      if (!row) throw new Error("Post not found");
+      const current = row.data as unknown as SocialPostData;
+      const next: SocialPostData = {
+        ...current,
+        status: "scheduled",
+        scheduledAt: scheduledAtOverride ?? current.proposedAt,
+      };
+      await ctx.entities.upsert({
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: postId,
+        title: row.title ?? undefined,
+        status: "scheduled",
+        data: next as unknown as Record<string, unknown>,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: `Draft post approved — scheduled for ${next.scheduledAt}`,
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        entityId: postId,
+      });
+      return { ok: true, status: "scheduled", scheduledAt: next.scheduledAt };
+    });
+
+    ctx.actions.register("rejectDraftPost", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const postId = params.postId as string;
+      const feedback = params.feedback as string | undefined;
+      if (!companyId || !postId) throw new Error("rejectDraftPost requires companyId and postId");
+      const row = await resolveSocialPost(companyId, postId);
+      if (!row) throw new Error("Post not found");
+      const current = row.data as unknown as SocialPostData;
+      const next: SocialPostData = {
+        ...current,
+        status: "rejected",
+        rejectionFeedback: feedback,
+      };
+      await ctx.entities.upsert({
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: postId,
+        title: row.title ?? undefined,
+        status: "rejected",
+        data: next as unknown as Record<string, unknown>,
+      });
+      return { ok: true };
+    });
+
+    ctx.actions.register("rescheduleSocialPost", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const postId = params.postId as string;
+      const scheduledAt = params.scheduledAt as string;
+      if (!companyId || !postId || !scheduledAt) {
+        throw new Error("rescheduleSocialPost requires companyId, postId, scheduledAt");
+      }
+      const row = await resolveSocialPost(companyId, postId);
+      if (!row) throw new Error("Post not found");
+      const current = row.data as unknown as SocialPostData;
+      const next: SocialPostData = { ...current, scheduledAt, proposedAt: scheduledAt };
+      await ctx.entities.upsert({
+        entityType: SOCIAL_POST_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: postId,
+        title: row.title ?? undefined,
+        status: row.status ?? undefined,
+        data: next as unknown as Record<string, unknown>,
+      });
+      return { ok: true, scheduledAt };
+    });
+
+    ctx.actions.register("cancelSocialPost", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const postId = params.postId as string;
+      if (!companyId || !postId) throw new Error("cancelSocialPost requires companyId and postId");
+      const row = await resolveSocialPost(companyId, postId);
+      if (!row) return { ok: true };
+      await ctx.entities.delete({ id: row.id });
+      return { ok: true };
     });
 
     // ── Action: delete a brand template ──────────────────────────────
