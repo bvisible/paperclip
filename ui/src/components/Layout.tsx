@@ -18,6 +18,7 @@ import { MobileBottomNav } from "./MobileBottomNav";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
+import { usePluginSlots } from "../plugins/slots";
 import { useDialog } from "../context/DialogContext";
 import { GeneralSettingsProvider } from "../context/GeneralSettingsContext";
 import { usePanel } from "../context/PanelContext";
@@ -315,6 +316,12 @@ export function Layout() {
   }, [location.pathname, navigationType]);
 
   const neofficeEmbedMode = IS_NEOFFICE_DEPLOYMENT && isPluginRoute(location.pathname);
+
+  // In embed mode we render only the Outlet — no Sidebar, no BreadcrumbBar —
+  // so nothing would trigger dynamic plugin module imports. Call usePluginSlots
+  // with `enabled: neofficeEmbedMode` so the `page` slot components are fetched
+  // and registered before PluginPage tries to mount them.
+  usePluginSlots({ slotTypes: ["page"], enabled: neofficeEmbedMode });
 
   if (neofficeEmbedMode) {
     return (
