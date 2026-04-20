@@ -350,7 +350,11 @@ export function companyRoutes(db: Db, storage?: StorageService) {
           openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:3200",
           openclawGatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN ?? "",
           actorUserId: req.actor.userId ?? null,
-          enableHeartbeat: true,
+          // Heartbeat starts disabled on seed agents because the claimed API
+          // key (written by OpenClaw after an invite+approval dance) is not
+          // provisioned automatically yet. Enable per-agent from the UI once
+          // OpenClaw has claimed its key for that agent.
+          enableHeartbeat: false,
           heartbeatIntervalSec: 900,
         },
       );
