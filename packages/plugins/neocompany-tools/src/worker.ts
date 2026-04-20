@@ -874,10 +874,11 @@ const plugin = definePlugin({
         throw new Error("channelDisconnect requires companyId, provider and accountId");
       }
       // Delete the token; keep the index clean as well.
-      await ctx.state.set(
-        { scopeKind: "company", scopeId: companyId, stateKey: channelKey(provider, accountId) },
-        null as unknown as Record<string, unknown>,
-      );
+      await ctx.state.delete({
+        scopeKind: "company",
+        scopeId: companyId,
+        stateKey: channelKey(provider, accountId),
+      });
       const indexKey = `channel-index:${provider}`;
       const index = (await ctx.state.get({
         scopeKind: "company",

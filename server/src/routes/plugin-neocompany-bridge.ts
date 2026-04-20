@@ -262,11 +262,7 @@ function createPlatformConfigRoutes(db: Db): Router {
         return;
       }
       // Consume the pending record immediately so it cannot be replayed.
-      await stateStore.set(pluginId, {
-        scopeKind: "instance",
-        stateKey: pendingKey,
-        value: null as unknown,
-      });
+      await stateStore.delete(pluginId, "instance", pendingKey);
 
       if (Date.now() > pending.expiresAt) {
         redirectWithError(pending.returnTo || fallbackReturn, "state_expired");
