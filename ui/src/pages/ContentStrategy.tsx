@@ -108,11 +108,23 @@ export function ContentStrategy() {
     refetchOnWindowFocus: false,
   });
 
-  // Hydrate from server once
+  // Hydrate from server once — merge with defaults so a partial record
+  // doesn't leave `publishingSlots` / `defaultChannels` as undefined
+  // (which would crash the subsequent .map() calls).
   useEffect(() => {
     if (loaded) return;
     if (strategyQuery.data) {
-      setStrategy(strategyQuery.data);
+      const base = defaultStrategy();
+      const s = strategyQuery.data;
+      setStrategy({
+        postsPerWeek: s.postsPerWeek ?? base.postsPerWeek,
+        leadTimeWeeks: s.leadTimeWeeks ?? base.leadTimeWeeks,
+        queueSize: s.queueSize ?? base.queueSize,
+        publishingSlots: Array.isArray(s.publishingSlots) ? s.publishingSlots : base.publishingSlots,
+        voiceGuidelines: s.voiceGuidelines ?? base.voiceGuidelines,
+        defaultChannels: Array.isArray(s.defaultChannels) ? s.defaultChannels : base.defaultChannels,
+        updatedAt: s.updatedAt,
+      });
     }
     if (strategyQuery.data !== undefined) setLoaded(true);
   }, [strategyQuery.data, loaded]);
