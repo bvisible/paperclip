@@ -4,7 +4,13 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { createUiDevWatchOptions } from "./src/lib/vite-watch";
 
+// Base URL for assets. Defaults to "/" (root path, like app.neocompany.ch).
+// Set to "/paperclip/" when Paperclip is served under a sub-path (e.g. Neoffice
+// deployment behind nginx that proxies /paperclip/* → Paperclip local_trusted).
+const base = process.env.PAPERCLIP_BASE_URL || "/";
+
 export default defineConfig(({ mode }) => ({
+  base,
   plugins: [react(), tailwindcss()],
   build: {
     minify: "esbuild",
