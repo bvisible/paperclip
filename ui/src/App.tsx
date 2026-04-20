@@ -56,6 +56,7 @@ import { ContentChannels } from "./pages/ContentChannels";
 import { ContentStrategy } from "./pages/ContentStrategy";
 import { ContentApprovals } from "./pages/ContentApprovals";
 import { ContentCalendar } from "./pages/ContentCalendar";
+import { ContentDashboard } from "./pages/ContentDashboard";
 import { AdminLayout } from "./pages/admin/AdminLayout";
 import { CompaniesSection } from "./pages/admin/CompaniesSection";
 import { PluginsSection } from "./pages/admin/PluginsSection";
@@ -79,13 +80,14 @@ function boardRoutes() {
       <Route path="company/settings/invites" element={<CompanyInvites />} />
       <Route path="company/export/*" element={<CompanyExport />} />
       <Route path="company/import" element={<CompanyImport />} />
-      <Route path="content" element={<ContentTemplates />} />
+      <Route path="content" element={<ContentDashboard />} />
+      <Route path="content/templates" element={<ContentTemplates />} />
+      <Route path="content/templates/:templateId" element={<ContentTemplateEditor />} />
       <Route path="content/stock" element={<ContentStock />} />
       <Route path="content/channels" element={<ContentChannels />} />
       <Route path="content/strategy" element={<ContentStrategy />} />
       <Route path="content/approvals" element={<ContentApprovals />} />
       <Route path="content/calendar" element={<ContentCalendar />} />
-      <Route path="content/:templateId" element={<ContentTemplateEditor />} />
       <Route path="skills/*" element={<CompanySkills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />

@@ -16,6 +16,7 @@ import {
   Share2,
   CheckSquare,
   CalendarDays,
+  LayoutGrid,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -103,7 +104,8 @@ export function Sidebar() {
         </div>
 
         <SidebarSection label="Content">
-          <SidebarNavItem to="/content" label="Templates" icon={Palette} />
+          <SidebarNavItem to="/content" label="Overview" icon={LayoutGrid} end />
+          <SidebarNavItem to="/content/templates" label="Templates" icon={Palette} />
           <SidebarNavItem to="/content/stock" label="Image library" icon={Images} />
           <SidebarNavItem to="/content/channels" label="Channels" icon={Share2} />
           <SidebarNavItem to="/content/strategy" label="Strategy" icon={Target} />

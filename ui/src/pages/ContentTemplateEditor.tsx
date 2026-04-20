@@ -125,7 +125,7 @@ export function ContentTemplateEditor() {
   useEffect(() => {
     setBreadcrumbs([
       { label: "Content", href: "/content" },
-      { label: "Templates", href: "/content" },
+      { label: "Templates", href: "/content/templates" },
       { label: name || "New template" },
     ]);
   }, [setBreadcrumbs, name]);
@@ -159,7 +159,7 @@ export function ContentTemplateEditor() {
     onSuccess: () => {
       pushToast({ title: "Template deleted", tone: "success" });
       qc.invalidateQueries({ queryKey: ["content-templates", selectedCompanyId] });
-      navigate("/content");
+      navigate("/content/templates");
     },
     onError: (err) => pushToast({ title: `Delete failed: ${(err as Error).message}`, tone: "error" }),
   });
@@ -275,7 +275,7 @@ export function ContentTemplateEditor() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => navigate("/content")}
+          onClick={() => navigate("/content/templates")}
           className="shrink-0"
         >
           <ArrowLeft className="mr-1 h-4 w-4" />

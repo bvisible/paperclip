@@ -174,7 +174,7 @@ export function ContentTemplates() {
               key={t.id}
               template={t}
               logoUrl={selectedCompany?.logoUrl ?? undefined}
-              onClick={() => navigate(`/content/${t.id}`)}
+              onClick={() => navigate(`/content/templates/${t.id}`)}
             />
           ))}
         </div>
