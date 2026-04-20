@@ -101,15 +101,28 @@ HEARTBEAT_SCHEDULER_ENABLED=true
 
 - **End-to-end conversational chat** via the vendored `paperclip-chat` plugin
   (`packages/plugins/paperclip-chat/`) routed through OpenClaw Gateway → GPT-5.4.
-- **Sidebar entry "Chat"** with a `MessageCircle` icon, rendered by our
-  `PluginLauncherOutlet` on `sidebar` placement in `ui/src/components/Sidebar.tsx`.
+- **Sidebar** uses upstream's `SidebarCompanyMenu` (multi-company switcher
+  + account menu) combined with our `PluginLauncherOutlet` on `sidebar`
+  placement — "Chat" and "NeoCompany Tools" render as native-looking items.
 - **Chat UI** with right-aligned user bubbles, left-aligned agent messages
   (avatar + real agent name from `thread.agentName`), markdown rendering,
   per-agent placeholder text.
+- **Multi-user system** (upstream PR #3784 merged 2026-04-20): invites,
+  `company_memberships`, `instance_user_roles.instance_admin`,
+  `CloudAccessGate`, `JoinRequestQueue`, `CompanyAccess`, `CompanyInvites`,
+  `InstanceAccess`, `ProfileSettings`. Jérémy is `instance_admin` + `owner`
+  of Neoservice/CLI/NEOA. Clients are provisioned as `company_members` —
+  SuperAdmin configures API keys once in `/admin/tools`, clients never
+  supply their own Google/OpenAI keys.
+- **Two admin surfaces coexist**:
+  - `/admin/*` — our NeoCompany SuperAdmin dashboard (SAAS config, API
+    keys, company provisioning).
+  - `/instance/settings/*` — upstream's multi-user/invites/plugins/adapters
+    management.
 - Company **"Neoservice"** (prefix `NEO`, id `2852b040-1d6f-46e7-a1c1-cf02ae77d2ba`),
   agent **"Melvyn"** (adapter `openclaw_gateway`, id
-  `8a892763-f2ab-4c18-87c1-599075c9ef4c`). A second dormant company with
-  prefix `NEOA` exists from the first test run.
+  `8a892763-f2ab-4c18-87c1-599075c9ef4c`). Two additional companies `CLI`
+  and `NEOA` exist.
 - OpenAI Codex OAuth linked to `info@bvisible.ch` on the server for the
   OpenClaw gateway.
 
@@ -128,8 +141,8 @@ These are **must keep** when syncing from upstream — they fix real blockers:
    OpenClaw adapter uses it directly instead of the heartbeat wake text
    (otherwise the agent answers with the task procedure instead of chatting).
 3. **Plugin RPC timeout** (`server/src/services/plugin-worker-manager.ts`) —
-   `DEFAULT_RPC_TIMEOUT_MS` bumped from 30 s to 5 min so long chat runs
-   don't hit the default budget.
+   `DEFAULT_RPC_TIMEOUT_MS` bumped from 30 s to 15 min so long chat runs
+   and codex-cli image generation don't hit the default budget.
 4. **OpenClaw Gateway adapter enabled in UI**
    (`ui/src/adapters/adapter-display-registry.ts`) — removed the
    `comingSoon: true` flag.
@@ -148,6 +161,23 @@ These are **must keep** when syncing from upstream — they fix real blockers:
    maps `paperclip-chat` → `MessageCircle`, everything else → `Puzzle`.
 9. **PluginPage chrome removed** (`ui/src/pages/PluginPage.tsx`) — dropped the
    "Back" button and wrapper padding so plugin pages get the full viewport.
+10. **`/plugins/tools/execute` accepts agent JWT**
+    (`server/src/routes/plugins.ts`) — upstream (post PR #3784 multi-user) locks
+    the endpoint behind `assertBoardOrgAccess` which refuses `actor.type ===
+    "agent"`. We preserve a dual-branch authz: board callers still go through
+    `assertBoardOrgAccess`, but agent callers (OpenClaw callbacks from Melvyn)
+    are accepted and their `runContext` is derived from the authenticated JWT
+    (`agentId`, `companyId`, `runId`) instead of trusting the request body.
+    Without this, Melvyn can't invoke NeoCompany plugin tools during a run.
+11. **SAAS dashboard coexists with upstream settings** (`ui/src/App.tsx`) —
+    our `/admin/*` SuperAdmin dashboard (AdminLayout + CompaniesSection +
+    PluginsSection + ToolsConfigSection + GeneralSection, used by
+    `instance_admin` for global API-key provisioning and company CRUD) is
+    mounted alongside upstream's `/instance/settings/*` (ProfileSettings,
+    InstanceGeneralSettings, InstanceAccess, PluginManager, AdapterManager,
+    …). Both are under `CloudAccessGate`. No legacy redirects from
+    `/instance/settings/*` to `/admin/*` — the upstream multi-user pages are
+    the source of truth for identity/access management.
 
 ---
 
