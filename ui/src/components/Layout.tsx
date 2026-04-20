@@ -48,9 +48,8 @@ const INSTANCE_SETTINGS_MEMORY_KEY = "paperclip.lastInstanceSettingsPath";
 // and the user is on a plugin route (e.g. /DEF/plugins/paperclip-chat), hide Paperclip
 // chrome (CompanyRail, Sidebar, SidebarAccountMenu, BreadcrumbBar, PropertiesPanel) so the
 // plugin renders full-surface inside the host iframe.
-const IS_NEOFFICE_DEPLOYMENT =
-  typeof import.meta !== "undefined" &&
-  (import.meta as { env?: { VITE_PAPERCLIP_DEPLOYMENT?: string } }).env?.VITE_PAPERCLIP_DEPLOYMENT === "neoffice";
+// Direct `import.meta.env.VITE_PAPERCLIP_DEPLOYMENT` reference so Vite inlines it at build.
+const IS_NEOFFICE_DEPLOYMENT = import.meta.env.VITE_PAPERCLIP_DEPLOYMENT === "neoffice";
 
 function isPluginRoute(pathname: string): boolean {
   return pathname.includes("/plugins/");
