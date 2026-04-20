@@ -12,7 +12,7 @@
  *  - https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin
  */
 
-import { buildPkce, buildQuery, expiresAtFromSeconds, fetchJson, postForm } from "./base.js";
+import { buildQuery, expiresAtFromSeconds, fetchJson, postForm } from "./base.js";
 import type {
   AccountInfo,
   AuthResult,
@@ -51,19 +51,18 @@ export const linkedin: SocialProvider = {
   recommendedFeedDimensions: { width: 1200, height: 627 },
 
   buildAuthUrl({ clientId, redirectUri, state, scopes }: AuthUrlParams): AuthUrl {
-    const pkce = buildPkce();
+    // LinkedIn Standalone apps authenticate with client_secret on the
+    // /accessToken endpoint. PKCE alongside a secret makes LinkedIn return
+    // invalid_client, so we skip PKCE here and rely on the secret.
     const qs = buildQuery({
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
       state,
       scope: (scopes ?? DEFAULT_SCOPES).join(" "),
-      code_challenge: pkce.challenge,
-      code_challenge_method: "S256",
     });
     return {
       url: `${LINKEDIN_AUTH_URL}?${qs}`,
-      codeVerifier: pkce.verifier,
     };
   },
 
