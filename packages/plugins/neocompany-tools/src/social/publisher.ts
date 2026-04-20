@@ -226,8 +226,15 @@ export async function runSocialPublisherTick(ctx: PluginContext): Promise<{
 
         // Dry-run kill switch — skip the real API call, log as if it ran.
         // Used for workflow testing with a real OAuth token in place but
-        // without actually posting to the provider's feed.
-        const dryRun = process.env.SOCIAL_PUBLISHER_DRY_RUN === "1";
+        // without actually posting to the provider's feed. The flag lives
+        // in the plugin's platform config (worker env is sandboxed).
+        const platformCfg = ((await ctx.config.get()) ?? {}) as {
+          socialPublisherDryRun?: boolean | string;
+        };
+        const dryRun =
+          platformCfg.socialPublisherDryRun === true
+          || platformCfg.socialPublisherDryRun === "1"
+          || platformCfg.socialPublisherDryRun === "true";
         let result;
         if (dryRun) {
           ctx.logger.info?.(
