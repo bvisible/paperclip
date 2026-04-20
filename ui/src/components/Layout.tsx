@@ -43,6 +43,18 @@ import { NotFoundPage } from "../pages/NotFound";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "paperclip.lastInstanceSettingsPath";
 
+// Neoffice embed mode: when deployed inside Frappe (via VITE_PAPERCLIP_DEPLOYMENT=neoffice)
+// and the user is on a plugin route (e.g. /DEF/plugins/paperclip-chat), hide Paperclip
+// chrome (CompanyRail, Sidebar, SidebarAccountMenu, BreadcrumbBar, PropertiesPanel) so the
+// plugin renders full-surface inside the host iframe.
+const IS_NEOFFICE_DEPLOYMENT =
+  typeof import.meta !== "undefined" &&
+  (import.meta as { env?: { VITE_PAPERCLIP_DEPLOYMENT?: string } }).env?.VITE_PAPERCLIP_DEPLOYMENT === "neoffice";
+
+function isPluginRoute(pathname: string): boolean {
+  return pathname.includes("/plugins/");
+}
+
 function readRememberedInstanceSettingsPath(): string {
   if (typeof window === "undefined") return DEFAULT_INSTANCE_SETTINGS_PATH;
   try {
@@ -301,6 +313,26 @@ export function Layout() {
     if (!shouldResetScroll) return;
     resetNavigationScroll(mainContentRef.current);
   }, [location.pathname, navigationType]);
+
+  const neofficeEmbedMode = IS_NEOFFICE_DEPLOYMENT && isPluginRoute(location.pathname);
+
+  if (neofficeEmbedMode) {
+    return (
+      <GeneralSettingsProvider value={{ keyboardShortcutsEnabled }}>
+        <div className="bg-background text-foreground flex h-dvh flex-col overflow-hidden">
+          <main
+            id="main-content"
+            ref={mainContentRef}
+            tabIndex={-1}
+            className="flex-1 overflow-auto outline-none"
+          >
+            <Outlet />
+          </main>
+          <ToastViewport />
+        </div>
+      </GeneralSettingsProvider>
+    );
+  }
 
   return (
     <GeneralSettingsProvider value={{ keyboardShortcutsEnabled }}>
