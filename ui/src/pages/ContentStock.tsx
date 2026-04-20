@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Image as ImageIcon, Loader2, Plus, Sparkles, X, Trash2 } from "lucide-react";
+import { Check, Image as ImageIcon, Loader2, Plus, Sparkles, Upload, X, Trash2 } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { useToast } from "../context/ToastContext";
@@ -9,10 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pluginsApi } from "@/api/plugins";
 
+type ImageSource = "generated" | "upload";
+
 interface GeneratedImage {
   id: string;
   prompt: string;
-  provider: "openai" | "gemini";
+  provider?: "openai" | "gemini" | "codex-cli";
+  source?: ImageSource;
+  tags?: string[];
   rawImageUrl?: string;
   finalImageUrl?: string;
   templateId?: string;
@@ -25,6 +29,7 @@ interface GeneratedImage {
 }
 
 type StatusFilter = "all" | "pending" | "approved" | "rejected";
+type SourceFilter = "all" | "generated" | "upload";
 
 const STATUS_TABS: Array<{ key: StatusFilter; label: string }> = [
   { key: "pending", label: "Pending" },
@@ -33,16 +38,24 @@ const STATUS_TABS: Array<{ key: StatusFilter; label: string }> = [
   { key: "all", label: "All" },
 ];
 
+const SOURCE_TABS: Array<{ key: SourceFilter; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "generated", label: "AI generated" },
+  { key: "upload", label: "Uploaded" },
+];
+
 export function ContentStock() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<StatusFilter>("pending");
+  const [statusTab, setStatusTab] = useState<StatusFilter>("all");
+  const [sourceTab, setSourceTab] = useState<SourceFilter>("all");
   const [showGenerate, setShowGenerate] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Content" }, { label: "Stock" }]);
+    setBreadcrumbs([{ label: "Content" }, { label: "Library" }]);
   }, [setBreadcrumbs]);
 
   const pluginsQuery = useQuery({
@@ -96,11 +109,71 @@ export function ContentStock() {
     onError: (err) => pushToast({ title: `Delete failed: ${(err as Error).message}`, tone: "error" }),
   });
 
-  const filtered = (imagesQuery.data ?? []).filter((img) => tab === "all" || img.status === tab);
-  const counts = {
-    pending: (imagesQuery.data ?? []).filter((i) => i.status === "pending").length,
-    approved: (imagesQuery.data ?? []).filter((i) => i.status === "approved").length,
-    rejected: (imagesQuery.data ?? []).filter((i) => i.status === "rejected").length,
+  const uploadMut = useMutation({
+    mutationFn: async (files: FileList) => {
+      if (!pluginId || !selectedCompanyId) throw new Error("Plugin not available");
+      let uploaded = 0;
+      let failures = 0;
+      for (const file of Array.from(files)) {
+        try {
+          const dataUrl = await readFileAsDataUrl(file);
+          const dims = await probeImageDimensions(dataUrl);
+          await pluginsApi.bridgePerformAction(pluginId, "libraryUpload", {
+            companyId: selectedCompanyId,
+            imageDataUrl: dataUrl,
+            mimeType: file.type,
+            filename: file.name,
+            width: dims.width,
+            height: dims.height,
+            tags: [],
+          }, selectedCompanyId);
+          uploaded++;
+        } catch (err) {
+          failures++;
+          // eslint-disable-next-line no-console
+          console.error(`Upload failed for ${file.name}:`, err);
+        }
+      }
+      return { uploaded, failures };
+    },
+    onSuccess: ({ uploaded, failures }) => {
+      qc.invalidateQueries({ queryKey: ["generated-images", selectedCompanyId] });
+      if (failures > 0) {
+        pushToast({ title: `Uploaded ${uploaded} (${failures} failed)`, tone: "info" });
+      } else {
+        pushToast({ title: `Uploaded ${uploaded} image(s)`, tone: "success" });
+      }
+    },
+    onError: (err) => pushToast({ title: `Upload failed: ${(err as Error).message}`, tone: "error" }),
+  });
+
+  const triggerUpload = () => uploadInputRef.current?.click();
+  const onFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      uploadMut.mutate(e.target.files);
+    }
+    // Reset so the same file can be re-picked
+    if (e.target) e.target.value = "";
+  };
+
+  // Normalize source (backfill default "generated" for legacy rows).
+  const normalized = (imagesQuery.data ?? []).map((img) => ({
+    ...img,
+    source: img.source ?? ("generated" as ImageSource),
+  }));
+  const filtered = normalized.filter((img) => {
+    if (statusTab !== "all" && img.status !== statusTab) return false;
+    if (sourceTab !== "all" && img.source !== sourceTab) return false;
+    return true;
+  });
+  const statusCounts = {
+    pending: normalized.filter((i) => i.status === "pending").length,
+    approved: normalized.filter((i) => i.status === "approved").length,
+    rejected: normalized.filter((i) => i.status === "rejected").length,
+  };
+  const sourceCounts = {
+    generated: normalized.filter((i) => i.source === "generated").length,
+    upload: normalized.filter((i) => i.source === "upload").length,
   };
 
   if (pluginsQuery.isLoading) {
@@ -109,7 +182,7 @@ export function ContentStock() {
   if (!neoPlugin) {
     return (
       <div className="max-w-3xl p-6">
-        <p className="text-muted-foreground">Install the <strong>neocompany-tools</strong> plugin to use the image stock.</p>
+        <p className="text-muted-foreground">Install the <strong>neocompany-tools</strong> plugin to use the image library.</p>
       </div>
     );
   }
@@ -118,15 +191,58 @@ export function ContentStock() {
     <div className="max-w-6xl space-y-5">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-lg font-semibold">Image Stock</h1>
+          <h1 className="text-lg font-semibold">Image Library</h1>
           <p className="text-sm text-muted-foreground">
-            AI-generated images with optional template overlay. Approve them to enter the publishing pool.
+            Uploaded photos and AI-generated images. Approved items feed the social posts.
           </p>
         </div>
-        <Button size="sm" onClick={() => setShowGenerate(true)}>
-          <Sparkles className="mr-1 h-4 w-4" />
-          Generate image
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={triggerUpload} disabled={uploadMut.isPending}>
+            {uploadMut.isPending ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="mr-1 h-4 w-4" />
+            )}
+            Upload
+          </Button>
+          <Button size="sm" onClick={() => setShowGenerate(true)}>
+            <Sparkles className="mr-1 h-4 w-4" />
+            Generate
+          </Button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={onFilesChosen}
+          />
+        </div>
+      </div>
+
+      {/* Source filter pills */}
+      <div className="flex items-center gap-1.5">
+        {SOURCE_TABS.map((t) => {
+          const count =
+            t.key === "all"
+              ? normalized.length
+              : sourceCounts[t.key as "generated" | "upload"];
+          const active = sourceTab === t.key;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setSourceTab(t.key)}
+              className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/70"
+              }`}
+            >
+              {t.label}
+              <span className="ml-1.5 tabular-nums opacity-75">{count}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Status tabs */}
@@ -134,9 +250,9 @@ export function ContentStock() {
         {STATUS_TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => setStatusTab(t.key)}
             className={`px-3 py-2 text-sm border-b-2 transition-colors -mb-px ${
-              tab === t.key
+              statusTab === t.key
                 ? "border-primary text-foreground font-medium"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
@@ -144,7 +260,7 @@ export function ContentStock() {
             {t.label}
             {t.key !== "all" && (
               <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">
-                {counts[t.key as "pending" | "approved" | "rejected"]}
+                {statusCounts[t.key as "pending" | "approved" | "rejected"]}
               </span>
             )}
           </button>
@@ -159,7 +275,8 @@ export function ContentStock() {
           onSuccess={() => {
             setShowGenerate(false);
             qc.invalidateQueries({ queryKey: ["generated-images", selectedCompanyId] });
-            setTab("pending");
+            setStatusTab("pending");
+            setSourceTab("generated");
           }}
         />
       )}
@@ -170,20 +287,16 @@ export function ContentStock() {
         <div className="rounded-xl border border-border bg-card p-8 text-center">
           <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
           <p className="text-muted-foreground mb-3">
-            {tab === "pending"
-              ? "No pending images. Generate one to get started."
-              : tab === "approved"
-              ? "No approved images yet. Approve pending ones first."
-              : tab === "rejected"
-              ? "Nothing rejected here."
-              : "No images yet."}
+            No images match this filter. Try another tab or add some.
           </p>
-          {tab === "pending" && (
-            <Button size="sm" onClick={() => setShowGenerate(true)}>
-              <Plus className="mr-1 h-4 w-4" />
-              Generate first image
+          <div className="flex items-center justify-center gap-2">
+            <Button size="sm" variant="outline" onClick={triggerUpload}>
+              <Upload className="mr-1 h-4 w-4" /> Upload
             </Button>
-          )}
+            <Button size="sm" onClick={() => setShowGenerate(true)}>
+              <Plus className="mr-1 h-4 w-4" /> Generate
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -208,6 +321,28 @@ export function ContentStock() {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("File read failed"));
+    reader.onload = () => resolve(reader.result as string);
+    reader.readAsDataURL(file);
+  });
+}
+
+function probeImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 0, height: 0 });
+    img.src = dataUrl;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Image card
 // ---------------------------------------------------------------------------
 
@@ -218,19 +353,23 @@ function ImageCard({
   onRestore,
   onDelete,
 }: {
-  img: GeneratedImage;
+  img: GeneratedImage & { source: ImageSource };
   onApprove: () => void;
   onReject: () => void;
   onRestore: () => void;
   onDelete: () => void;
 }) {
+  const caption =
+    img.source === "upload"
+      ? "Uploaded image"
+      : img.prompt || "Generated image";
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden group">
       <div className="relative aspect-square bg-muted">
         {img.finalImageUrl ? (
           <img
             src={img.finalImageUrl}
-            alt={img.prompt}
+            alt={caption}
             className="h-full w-full object-cover"
           />
         ) : (
@@ -238,17 +377,23 @@ function ImageCard({
             <ImageIcon className="h-8 w-8 opacity-40" />
           </div>
         )}
+        <div className="absolute top-2 left-2">
+          <SourcePill source={img.source} />
+        </div>
         <div className="absolute top-2 right-2">
           <StatusPill status={img.status} />
         </div>
       </div>
 
       <div className="p-3 space-y-2 border-t border-border">
-        <p className="text-xs text-foreground line-clamp-2" title={img.prompt}>
-          {img.prompt}
+        <p className="text-xs text-foreground line-clamp-2" title={caption}>
+          {caption}
         </p>
         <p className="text-[10px] text-muted-foreground tabular-nums">
-          {img.width} × {img.height} · {img.provider} · {new Date(img.createdAt).toLocaleDateString()}
+          {img.width} × {img.height}
+          {img.provider ? ` · ${img.provider}` : ""}
+          {" · "}
+          {new Date(img.createdAt).toLocaleDateString()}
         </p>
 
         <div className="flex gap-1.5">
@@ -297,6 +442,19 @@ function StatusPill({ status }: { status: "pending" | "approved" | "rejected" })
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${styles}`}>
       {status}
+    </span>
+  );
+}
+
+function SourcePill({ source }: { source: ImageSource }) {
+  const styles =
+    source === "upload"
+      ? "bg-sky-500/90 text-white"
+      : "bg-violet-500/90 text-white";
+  const label = source === "upload" ? "Uploaded" : "AI";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${styles}`}>
+      {label}
     </span>
   );
 }
@@ -369,7 +527,7 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
       pushToast({ title: `Generated ${count} image(s)`, tone: "success" });
     }
     onSuccess();
-  }, [pluginId, companyId, prompt, templateId, count, pushToast, onSuccess]);
+  }, [pluginId, companyId, prompt, templateId, provider, count, pushToast, onSuccess]);
 
   return (
     <div

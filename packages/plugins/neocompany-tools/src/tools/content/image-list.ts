@@ -4,7 +4,7 @@
 
 import type { ToolRunContext, ToolResult } from "@paperclipai/plugin-sdk";
 import type { ToolContextAccess } from "../index.js";
-import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageStatus } from "../../images/types.js";
+import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageSource, type ImageStatus } from "../../images/types.js";
 
 interface Params {
   status?: ImageStatus;
@@ -12,6 +12,10 @@ interface Params {
   limit?: number;
   /** When true, strip the finalImageUrl/rawImageUrl (data URLs can be MB-sized). */
   includeImages?: boolean;
+  /** Filter by source: generated vs uploaded. Absent = both. */
+  source?: ImageSource;
+  /** Filter by tags — matches any of the provided tags. */
+  tags?: string[];
 }
 
 export async function runImageList(
@@ -21,7 +25,7 @@ export async function runImageList(
   ctxAccess: ToolContextAccess,
 ): Promise<ToolResult> {
   const ctx = ctxAccess.getPluginContext();
-  const { status, batchId, limit = 50, includeImages = true } = params;
+  const { status, batchId, limit = 50, includeImages = true, source, tags } = params;
 
   const records = await ctx.entities.list({
     entityType: IMAGE_ENTITY_TYPE,
@@ -32,9 +36,13 @@ export async function runImageList(
 
   let images = records.map((r) => {
     const d = r.data as unknown as GeneratedImageData;
+    // Default source for legacy rows without the field is "generated".
+    const normalizedSource: ImageSource = d.source ?? "generated";
     const base = {
       id: r.externalId ?? r.id,
       ...d,
+      source: normalizedSource,
+      tags: d.tags ?? [],
       createdAt: r.createdAt,
     };
     if (!includeImages) {
@@ -45,12 +53,19 @@ export async function runImageList(
 
   if (status) images = images.filter((img) => img.status === status);
   if (batchId) images = images.filter((img) => img.batchId === batchId);
+  if (source) images = images.filter((img) => img.source === source);
+  if (tags && tags.length > 0) {
+    images = images.filter((img) => {
+      const imgTags = img.tags ?? [];
+      return tags.some((t) => imgTags.includes(t));
+    });
+  }
 
   // Sort newest first
   images.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 
   return {
-    content: `Found ${images.length} generated image(s).`,
+    content: `Found ${images.length} image(s).`,
     data: { images, count: images.length },
   };
 }

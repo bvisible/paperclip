@@ -10,11 +10,18 @@ export type ImageProvider = "openai" | "gemini" | "codex-cli";
 
 export type ImageStatus = "pending" | "approved" | "rejected";
 
+export type ImageSource = "generated" | "upload";
+
 export interface GeneratedImageData {
-  /** Prompt used for the generation (plain text). */
+  /** Prompt used for the generation (plain text, empty for uploads). */
   prompt: string;
-  /** Provider that produced the base image. */
-  provider: ImageProvider;
+  /** Provider that produced the base image (undefined for uploads). */
+  provider?: ImageProvider;
+  /** Origin of the image — AI-generated or user-uploaded. Defaults to
+   *  "generated" when absent for backward compatibility with existing rows. */
+  source?: ImageSource;
+  /** User-editable tags for filtering / agent targeting. */
+  tags?: string[];
   /** Raw generated image (before template composite), as a data URL. */
   rawImageUrl: string;
   /**
@@ -33,6 +40,6 @@ export interface GeneratedImageData {
   batchId?: string;
   /** Feedback notes left by the reviewer. */
   feedback?: string;
-  /** ISO-8601 timestamp — when the image was generated. */
+  /** ISO-8601 timestamp — when the image was generated or uploaded. */
   createdAt: string;
 }

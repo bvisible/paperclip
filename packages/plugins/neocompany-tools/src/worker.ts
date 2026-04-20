@@ -16,6 +16,7 @@ import { TOOL_REGISTRY, CATEGORY_LABELS, type ToolMetadata } from "./tools/regis
 import { runImapPollJob } from "./email/poller.js";
 import { pollImapAccount } from "./email/imap-client.js";
 import type { EmailAccountData } from "./email/types.js";
+import { IMAGE_ENTITY_TYPE, type GeneratedImageData } from "./images/types.js";
 
 const PLUGIN_NAME = "neocompany-tools";
 
@@ -559,6 +560,8 @@ const plugin = definePlugin({
           batchId: params.batchId as string | undefined,
           limit: params.limit as number | undefined,
           includeImages: params.includeImages as boolean | undefined,
+          source: params.source as "generated" | "upload" | undefined,
+          tags: Array.isArray(params.tags) ? (params.tags as string[]) : undefined,
         },
         {},
         makeImageRunCtx(companyId),
@@ -619,6 +622,87 @@ const plugin = definePlugin({
       );
       if (result.error) throw new Error(result.error);
       return result.data ?? {};
+    });
+
+    // ── Action: libraryUpload — user-uploaded image into the library ─
+    ctx.actions.register("libraryUpload", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const imageDataUrl = params.imageDataUrl as string;
+      if (!companyId) throw new Error("libraryUpload requires companyId");
+      if (!imageDataUrl || !imageDataUrl.startsWith("data:")) {
+        throw new Error("libraryUpload requires imageDataUrl (data: URL)");
+      }
+      const tags = Array.isArray(params.tags) ? (params.tags as string[]) : [];
+      const width = typeof params.width === "number" ? params.width : 0;
+      const height = typeof params.height === "number" ? params.height : 0;
+      const filename = (params.filename as string | undefined) ?? "upload";
+
+      const slug = globalThis.crypto.randomUUID();
+      const now = new Date().toISOString();
+      const data: GeneratedImageData = {
+        prompt: "",
+        source: "upload",
+        tags,
+        rawImageUrl: imageDataUrl,
+        finalImageUrl: imageDataUrl,
+        width,
+        height,
+        // Uploaded images are pre-approved by the user uploading them.
+        status: "approved",
+        createdAt: now,
+      };
+
+      await ctx.entities.upsert({
+        entityType: IMAGE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: slug,
+        title: filename.slice(0, 80),
+        status: "approved",
+        data: data as unknown as Record<string, unknown>,
+      });
+
+      await ctx.activity.log({
+        companyId,
+        message: `Uploaded image "${filename.slice(0, 50)}"`,
+        entityType: IMAGE_ENTITY_TYPE,
+        entityId: slug,
+      });
+
+      return { imageId: slug, width, height, status: "approved", source: "upload", tags };
+    });
+
+    // ── Action: libraryTag — edit tags on an existing library image ─
+    ctx.actions.register("libraryTag", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const imageId = params.imageId as string;
+      if (!companyId || !imageId) throw new Error("libraryTag requires companyId and imageId");
+      const tags = Array.isArray(params.tags) ? (params.tags as string[]) : [];
+
+      const records = await ctx.entities.list({
+        entityType: IMAGE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: imageId,
+        limit: 1,
+      });
+      const match = records[0];
+      if (!match) return { ok: false, error: "IMAGE_NOT_FOUND" };
+
+      const currentData = match.data as unknown as GeneratedImageData;
+      const nextData: GeneratedImageData = { ...currentData, tags };
+
+      await ctx.entities.upsert({
+        entityType: IMAGE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: imageId,
+        title: match.title ?? undefined,
+        status: match.status ?? undefined,
+        data: nextData as unknown as Record<string, unknown>,
+      });
+
+      return { ok: true, imageId, tags };
     });
 
     // ── Action: delete a brand template ──────────────────────────────
