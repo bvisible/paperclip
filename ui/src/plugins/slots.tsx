@@ -183,7 +183,10 @@ function buildPluginModuleKey(contribution: PluginUiContribution): string {
 
 function buildPluginUiUrl(contribution: PluginUiContribution): string {
   const cacheHint = encodeURIComponent(contribution.updatedAt ?? contribution.version ?? "0");
-  return `/_plugins/${encodeURIComponent(contribution.pluginId)}/ui/${contribution.uiEntryFile}?v=${cacheHint}`;
+  // Prefix with Vite's BASE_URL so plugin bundles load correctly both at the
+  // domain root and under a sub-path (e.g. /paperclip/ for Neoffice).
+  const basePrefix = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  return `${basePrefix}/_plugins/${encodeURIComponent(contribution.pluginId)}/ui/${contribution.uiEntryFile}?v=${cacheHint}`;
 }
 
 /**
