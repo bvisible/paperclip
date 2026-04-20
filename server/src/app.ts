@@ -33,6 +33,7 @@ import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { createPlatformConfigRoutes } from "./routes/plugin-neocompany-bridge.js";
+import { signedAssetsRoute } from "./routes/assets-public.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { applyUiBranding } from "./ui-branding.js";
@@ -273,6 +274,7 @@ export async function createApp(
   // allowlist + Google/Resend/Open PageRank refs) without going through
   // the worker, which has no concept of caller identity.
   api.use(createPlatformConfigRoutes(db));
+  api.use(signedAssetsRoute(db));
   api.use(adapterRoutes());
   api.use(
     accessRoutes(db, {

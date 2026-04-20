@@ -16,6 +16,7 @@
  */
 
 import type { PluginContext } from "@paperclipai/plugin-sdk";
+import { createHmac } from "node:crypto";
 import { getProvider } from "../integrations/registry.js";
 import type { StoredChannelToken, SocialProviderKey } from "../integrations/types.js";
 import {
@@ -36,6 +37,9 @@ interface PlatformConfig {
   linkedinClientSecretRef?: string;
   facebookAppId?: string;
   facebookAppSecretRef?: string;
+  paperclipPublicUrl?: string;
+  paperclipAssetSigningSecret?: string;
+  socialPublisherDryRun?: boolean | string;
 }
 
 async function resolveProviderCreds(
@@ -69,10 +73,37 @@ function decodeDataUrl(dataUrl: string): { buffer: Buffer; mimeType: string } | 
   };
 }
 
+function base64UrlEncode(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/=+$/, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function buildSignedAssetUrl(
+  publicOrigin: string,
+  secret: string,
+  companyId: string,
+  externalId: string,
+  ttlMs: number,
+): string {
+  const payload = JSON.stringify({
+    c: companyId,
+    e: externalId,
+    k: IMAGE_ENTITY_TYPE,
+    x: Date.now() + ttlMs,
+  });
+  const payloadB64 = base64UrlEncode(Buffer.from(payload, "utf8"));
+  const sig = createHmac("sha256", Buffer.from(secret)).update(payloadB64).digest("hex");
+  return `${publicOrigin.replace(/\/+$/, "")}/api/assets/public/${payloadB64}.${sig}`;
+}
+
 async function loadImageForPost(
   ctx: PluginContext,
   companyId: string,
   imageId: string,
+  publicImageOpts: { origin?: string; secret?: string } | null,
 ): Promise<{ buffer?: Buffer; mimeType?: string; imageUrl?: string }> {
   const rows = await ctx.entities.list({
     entityType: IMAGE_ENTITY_TYPE,
@@ -88,8 +119,22 @@ async function loadImageForPost(
   if (!url) return {};
   if (url.startsWith("data:")) {
     const decoded = decodeDataUrl(url);
-    if (decoded) return { buffer: decoded.buffer, mimeType: decoded.mimeType };
-    return {};
+    const out: { buffer?: Buffer; mimeType?: string; imageUrl?: string } = decoded
+      ? { buffer: decoded.buffer, mimeType: decoded.mimeType }
+      : {};
+    // If we have a public origin + signing secret, also build a signed
+    // public URL so providers that require an HTTP-reachable image
+    // (Instagram) can work.
+    if (publicImageOpts?.origin && publicImageOpts.secret) {
+      out.imageUrl = buildSignedAssetUrl(
+        publicImageOpts.origin,
+        publicImageOpts.secret,
+        companyId,
+        row.externalId ?? imageId,
+        2 * 60 * 60 * 1000,
+      );
+    }
+    return out;
   }
   return { imageUrl: url };
 }
@@ -218,7 +263,17 @@ export async function runSocialPublisherTick(ctx: PluginContext): Promise<{
         let imageMimeType: string | undefined;
         let imageUrl: string | undefined;
         if (data.imageId) {
-          const loaded = await loadImageForPost(ctx, company.id, data.imageId);
+          const platformCfgLocal = ((await ctx.config.get()) ?? {}) as PlatformConfig;
+          const publicImageOpts = {
+            origin: platformCfgLocal.paperclipPublicUrl,
+            secret: platformCfgLocal.paperclipAssetSigningSecret,
+          };
+          const loaded = await loadImageForPost(
+            ctx,
+            company.id,
+            data.imageId,
+            publicImageOpts,
+          );
           imageBuffer = loaded.buffer;
           imageMimeType = loaded.mimeType;
           imageUrl = loaded.imageUrl;

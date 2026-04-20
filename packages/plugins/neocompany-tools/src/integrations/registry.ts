@@ -5,12 +5,14 @@
  */
 
 import { linkedin } from "./linkedin.js";
+import { facebook } from "./facebook.js";
+import { instagram } from "./instagram.js";
 import type { SocialProvider, SocialProviderKey } from "./types.js";
 
 export const PROVIDERS: Record<SocialProviderKey, SocialProvider | undefined> = {
   linkedin,
-  facebook: undefined,
-  instagram: undefined,
+  facebook,
+  instagram,
 };
 
 export function getProvider(key: SocialProviderKey): SocialProvider {

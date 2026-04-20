@@ -309,14 +309,23 @@ function createPlatformConfigRoutes(db: Db): Router {
       const publicUrl = resolvePublicUrl(req);
       const redirectUri = `${publicUrl}/api/plugins/neocompany-tools/bridge/oauth/callback`;
 
-      // Provider exchange — LinkedIn only for now.
+      // Provider exchange — dispatch per provider. Each branch produces
+      // (auth, accounts[]) — typically one account for LinkedIn but a
+      // list for Facebook Pages / Instagram Business accounts.
       let auth: {
         accessToken: string;
         refreshToken?: string;
         expiresAt: number | null;
         scopes?: string[];
       };
-      let account: { accountId: string; accountName: string; iconUrl?: string };
+      interface DiscoveredAccount {
+        accountId: string;
+        accountName: string;
+        iconUrl?: string;
+        /** per-account override (FB page tokens, IG=shared page token) */
+        accessToken?: string;
+      }
+      let accounts: DiscoveredAccount[] = [];
 
       if (pending.provider === "linkedin") {
         const tokenRes = await postForm<{
@@ -342,51 +351,129 @@ function createPlatformConfigRoutes(db: Db): Router {
           "https://api.linkedin.com/v2/userinfo",
           { headers: { Authorization: `Bearer ${auth.accessToken}` } },
         );
-        account = {
-          accountId: `urn:li:person:${info.sub}`,
-          accountName: info.name,
-          iconUrl: info.picture,
+        accounts = [
+          {
+            accountId: `urn:li:person:${info.sub}`,
+            accountName: info.name,
+            iconUrl: info.picture,
+          },
+        ];
+      } else if (pending.provider === "facebook" || pending.provider === "instagram") {
+        const GRAPH_V = "v23.0";
+        const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_V}`;
+
+        // 1. short-lived user token via authorization_code
+        const shortRes = await postForm<{ access_token: string; expires_in?: number }>(
+          `${GRAPH_BASE}/oauth/access_token`,
+          {
+            grant_type: "authorization_code",
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: redirectUri,
+            code,
+          },
+        );
+        // 2. exchange for long-lived user token (~60 days)
+        const longRes = await postForm<{ access_token: string; expires_in?: number }>(
+          `${GRAPH_BASE}/oauth/access_token`,
+          {
+            grant_type: "fb_exchange_token",
+            client_id: clientId,
+            client_secret: clientSecret,
+            fb_exchange_token: shortRes.access_token,
+          },
+        );
+        auth = {
+          accessToken: longRes.access_token,
+          expiresAt: longRes.expires_in ? Date.now() + longRes.expires_in * 1000 : null,
         };
+
+        // 3. fetch pages (and linked IG accounts) owned by the user
+        const fields = pending.provider === "instagram"
+          ? "id,name,access_token,instagram_business_account{id,username}"
+          : "id,name,access_token,category";
+        const pagesUrl = `${GRAPH_BASE}/me/accounts?fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`;
+        const pagesRes = await fetchJson<{
+          data: Array<{
+            id: string;
+            name: string;
+            access_token: string;
+            category?: string;
+            instagram_business_account?: { id: string; username?: string };
+          }>;
+        }>(pagesUrl);
+
+        if (pending.provider === "facebook") {
+          accounts = pagesRes.data.map((p) => ({
+            accountId: p.id,
+            accountName: p.name,
+            accessToken: p.access_token,
+          }));
+        } else {
+          accounts = pagesRes.data
+            .filter((p) => p.instagram_business_account?.id)
+            .map((p) => ({
+              accountId: p.instagram_business_account!.id,
+              accountName: p.instagram_business_account!.username
+                ? `@${p.instagram_business_account!.username}`
+                : p.name,
+              accessToken: p.access_token,
+            }));
+        }
+
+        if (accounts.length === 0) {
+          redirectWithError(
+            pending.returnTo || fallbackReturn,
+            pending.provider === "instagram"
+              ? "no_instagram_business_account_linked"
+              : "no_facebook_pages",
+          );
+          return;
+        }
       } else {
         redirectWithError(pending.returnTo || fallbackReturn, "provider_not_implemented");
         return;
       }
 
-      // Persist the token + update the per-provider index so channelsList
-      // can enumerate it without a prefix scan primitive.
-      const stored: StoredChannelToken = {
-        provider: pending.provider,
-        accountId: account.accountId,
-        accountName: account.accountName,
-        iconUrl: account.iconUrl,
-        accessToken: auth.accessToken,
-        refreshToken: auth.refreshToken,
-        expiresAt: auth.expiresAt,
-        scopes: auth.scopes,
-        connectedAt: new Date().toISOString(),
-      };
-      await stateStore.set(pluginId, {
-        scopeKind: "company",
-        scopeId: pending.companyId,
-        stateKey: `channel:${pending.provider}:${account.accountId}`,
-        value: stored as unknown,
-      });
+      // Persist one token per discovered account + update the index.
       const indexKey = `channel-index:${pending.provider}`;
       const currentIndex = (await stateStore.get(pluginId, "company", indexKey, {
         scopeId: pending.companyId,
       })) as string[] | null;
-      const nextIndex = Array.from(new Set([...(currentIndex ?? []), account.accountId]));
+      const nextIndex = new Set<string>(currentIndex ?? []);
+
+      for (const account of accounts) {
+        const stored: StoredChannelToken = {
+          provider: pending.provider,
+          accountId: account.accountId,
+          accountName: account.accountName,
+          iconUrl: account.iconUrl,
+          accessToken: account.accessToken ?? auth.accessToken,
+          refreshToken: auth.refreshToken,
+          expiresAt: auth.expiresAt,
+          scopes: auth.scopes,
+          connectedAt: new Date().toISOString(),
+        };
+        await stateStore.set(pluginId, {
+          scopeKind: "company",
+          scopeId: pending.companyId,
+          stateKey: `channel:${pending.provider}:${account.accountId}`,
+          value: stored as unknown,
+        });
+        nextIndex.add(account.accountId);
+      }
       await stateStore.set(pluginId, {
         scopeKind: "company",
         scopeId: pending.companyId,
         stateKey: indexKey,
-        value: nextIndex as unknown,
+        value: Array.from(nextIndex) as unknown,
       });
 
       const sep = pending.returnTo.includes("?") ? "&" : "?";
+      const primary = accounts[0]!;
       res.redirect(
-        `${pending.returnTo}${sep}connected=${pending.provider}&account=${encodeURIComponent(
-          account.accountName,
+        `${pending.returnTo}${sep}connected=${pending.provider}&count=${accounts.length}&account=${encodeURIComponent(
+          primary.accountName,
         )}`,
       );
     } catch (err) {

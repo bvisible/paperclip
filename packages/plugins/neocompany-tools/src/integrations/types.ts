@@ -88,11 +88,30 @@ export interface PublishResult {
   postUrl?: string;
 }
 
+/**
+ * Per-account override for the stored token and any provider-specific
+ * material (e.g. Facebook page access token). Returned by `listAccounts`
+ * so the callback can persist one row per account with the correct
+ * access token instead of the user-level one.
+ */
+export interface DiscoveredAccount extends AccountInfo {
+  /** When provided, overrides the auth access token for this account.
+   *  Facebook Pages return a per-page access token; Instagram accounts
+   *  share the page token. */
+  accessToken?: string;
+  /** Optional extra metadata (ig user id linked to this fb page, etc.). */
+  extra?: Record<string, unknown>;
+}
+
 export interface SocialProvider extends SocialProviderMeta {
   buildAuthUrl(params: AuthUrlParams): AuthUrl;
   exchangeCode(params: ExchangeCodeParams): Promise<AuthResult>;
   refreshToken?(params: RefreshTokenParams): Promise<AuthResult>;
   getAccountInfo(accessToken: string): Promise<AccountInfo>;
+  /** Optional: for providers that can return multiple managed accounts
+   *  after a single OAuth flow (Facebook Pages, Instagram accounts). The
+   *  callback route stores one StoredChannelToken per entry. */
+  listAccounts?(accessToken: string): Promise<DiscoveredAccount[]>;
   publish?(params: PublishParams): Promise<PublishResult>;
 }
 
