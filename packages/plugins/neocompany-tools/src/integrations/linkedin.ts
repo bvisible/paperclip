@@ -19,6 +19,8 @@ import type {
   AuthUrl,
   AuthUrlParams,
   ExchangeCodeParams,
+  PublishParams,
+  PublishResult,
   RefreshTokenParams,
   SocialProvider,
 } from "./types.js";
@@ -26,6 +28,9 @@ import type {
 const LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization";
 const LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 const LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo";
+const LINKEDIN_UGC_POSTS_URL = "https://api.linkedin.com/v2/ugcPosts";
+const LINKEDIN_ASSETS_REGISTER_URL =
+  "https://api.linkedin.com/v2/assets?action=registerUpload";
 
 const DEFAULT_SCOPES = ["openid", "profile", "email", "w_member_social"];
 
@@ -123,6 +128,147 @@ export const linkedin: SocialProvider = {
     };
   },
 
-  // publish() — implemented in Phase L (publisher cron). For now we just
-  // declare the provider so Connect/Disconnect works end-to-end.
+  async publish({
+    accessToken,
+    accountId,
+    text,
+    imageBuffer,
+    imageMimeType,
+  }: PublishParams): Promise<PublishResult> {
+    // accountId is already the full URN (urn:li:person:<sub>) because we
+    // store it that way in getAccountInfo.
+    const authorUrn = accountId;
+
+    let imageAssetUrn: string | undefined;
+    if (imageBuffer && imageBuffer.length > 0) {
+      imageAssetUrn = await uploadLinkedInImage({
+        accessToken,
+        authorUrn,
+        buffer: imageBuffer,
+        mimeType: imageMimeType ?? "image/png",
+      });
+    }
+
+    const shareMedia: Array<Record<string, unknown>> = imageAssetUrn
+      ? [
+          {
+            status: "READY",
+            description: { text: "" },
+            media: imageAssetUrn,
+            title: { text: "" },
+          },
+        ]
+      : [];
+
+    const body = {
+      author: authorUrn,
+      lifecycleState: "PUBLISHED",
+      specificContent: {
+        "com.linkedin.ugc.ShareContent": {
+          shareCommentary: { text },
+          shareMediaCategory: imageAssetUrn ? "IMAGE" : "NONE",
+          ...(shareMedia.length > 0 ? { media: shareMedia } : {}),
+        },
+      },
+      visibility: {
+        "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+      },
+    };
+
+    const res = await fetch(LINKEDIN_UGC_POSTS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+      body: JSON.stringify(body),
+    });
+    const responseText = await res.text();
+    if (!res.ok) {
+      throw new Error(`LinkedIn UGC post failed (${res.status}): ${responseText.slice(0, 400)}`);
+    }
+    // Header `x-restli-id` carries the post URN on success.
+    const postUrn = res.headers.get("x-restli-id") ?? "";
+    return {
+      postId: postUrn,
+      postUrl: postUrn ? `https://www.linkedin.com/feed/update/${encodeURIComponent(postUrn)}/` : undefined,
+    };
+  },
 };
+
+// ---------------------------------------------------------------------------
+// LinkedIn image upload helper
+// ---------------------------------------------------------------------------
+
+interface UploadParams {
+  accessToken: string;
+  authorUrn: string;
+  buffer: Buffer;
+  mimeType: string;
+}
+
+interface RegisterUploadResponse {
+  value: {
+    uploadMechanism: {
+      "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest": {
+        uploadUrl: string;
+        headers?: Record<string, string>;
+      };
+    };
+    asset: string;
+  };
+}
+
+async function uploadLinkedInImage({
+  accessToken,
+  authorUrn,
+  buffer,
+  mimeType,
+}: UploadParams): Promise<string> {
+  const registerBody = {
+    registerUploadRequest: {
+      recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
+      owner: authorUrn,
+      serviceRelationships: [
+        {
+          relationshipType: "OWNER",
+          identifier: "urn:li:userGeneratedContent",
+        },
+      ],
+    },
+  };
+  const registerRes = await fetchJson<RegisterUploadResponse>(LINKEDIN_ASSETS_REGISTER_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+    body: JSON.stringify(registerBody),
+  });
+  const mechanism =
+    registerRes.value.uploadMechanism[
+      "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
+    ];
+  const uploadUrl = mechanism.uploadUrl;
+  if (!uploadUrl) throw new Error("LinkedIn register upload returned no uploadUrl");
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": mimeType,
+      ...(mechanism.headers ?? {}),
+    },
+    body: new Uint8Array(buffer),
+  });
+  if (!uploadRes.ok) {
+    const errorBody = await uploadRes.text().catch(() => "");
+    throw new Error(
+      `LinkedIn image upload failed (${uploadRes.status}): ${errorBody.slice(0, 300)}`,
+    );
+  }
+
+  return registerRes.value.asset;
+}

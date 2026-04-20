@@ -64,6 +64,13 @@ const manifest: PaperclipPluginManifestV1 = {
         "Walks every enabled email_account entity and pulls new messages via IMAP. Runs every 5 minutes.",
       schedule: "*/5 * * * *",
     },
+    {
+      jobKey: "social-publisher",
+      displayName: "Social publisher",
+      description:
+        "Publishes approved social_post entities whose scheduledAt <= now via the corresponding social provider. Runs every minute.",
+      schedule: "* * * * *",
+    },
   ],
 
   // Platform-wide config. These fields are declared here so the

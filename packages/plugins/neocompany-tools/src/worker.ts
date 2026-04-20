@@ -1207,6 +1207,23 @@ const plugin = definePlugin({
       }
     });
 
+    // ── Job: social publisher (declared in manifest as "social-publisher") ─
+    ctx.jobs.register("social-publisher", async () => {
+      try {
+        const { runSocialPublisherTick } = await import("./social/publisher.js");
+        const report = await runSocialPublisherTick(ctx);
+        if (report.scanned > 0) {
+          ctx.logger.info?.(
+            `[social-publisher] tick: scanned=${report.scanned} published=${report.published} retried=${report.retried} failed=${report.failed}`,
+          );
+        }
+      } catch (err) {
+        ctx.logger.error("social-publisher: unexpected error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
     // ── Action: enable/disable a category toggle for a company ───────
     ctx.actions.register("setCategoryEnabled", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;
