@@ -52,6 +52,7 @@ import { NotFoundPage } from "./pages/NotFound";
 import { ContentTemplates } from "./pages/ContentTemplates";
 import { ContentTemplateEditor } from "./pages/ContentTemplateEditor";
 import { ContentStock } from "./pages/ContentStock";
+import { ContentChannels } from "./pages/ContentChannels";
 import { AdminLayout } from "./pages/admin/AdminLayout";
 import { CompaniesSection } from "./pages/admin/CompaniesSection";
 import { PluginsSection } from "./pages/admin/PluginsSection";
@@ -77,6 +78,7 @@ function boardRoutes() {
       <Route path="company/import" element={<CompanyImport />} />
       <Route path="content" element={<ContentTemplates />} />
       <Route path="content/stock" element={<ContentStock />} />
+      <Route path="content/channels" element={<ContentChannels />} />
       <Route path="content/:templateId" element={<ContentTemplateEditor />} />
       <Route path="skills/*" element={<CompanySkills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />

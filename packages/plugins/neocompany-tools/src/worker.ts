@@ -17,6 +17,13 @@ import { runImapPollJob } from "./email/poller.js";
 import { pollImapAccount } from "./email/imap-client.js";
 import type { EmailAccountData } from "./email/types.js";
 import { IMAGE_ENTITY_TYPE, type GeneratedImageData } from "./images/types.js";
+import { getProvider, listAvailableProviders } from "./integrations/registry.js";
+import type {
+  PendingOAuthState,
+  SocialProviderKey,
+  StoredChannelToken,
+} from "./integrations/types.js";
+import { randomState } from "./integrations/base.js";
 
 const PLUGIN_NAME = "neocompany-tools";
 
@@ -43,6 +50,11 @@ interface PlatformConfig {
   defaultFromAddress?: string;
   /** New key name used by the bridge routes. */
   resendDefaultFrom?: string;
+  openaiApiKeyRef?: string;
+  linkedinClientId?: string;
+  linkedinClientSecretRef?: string;
+  facebookAppId?: string;
+  facebookAppSecretRef?: string;
 }
 
 /**
@@ -78,6 +90,27 @@ const COMPANY_KEYS = {
 async function readPlatformConfig(ctx: PluginContext): Promise<PlatformConfig> {
   const raw = (await ctx.config.get()) as PlatformConfig | null;
   return raw ?? {};
+}
+
+async function resolveProviderCreds(
+  ctx: PluginContext,
+  platform: PlatformConfig,
+  provider: "linkedin" | "facebook" | "instagram",
+): Promise<{ clientId: string; clientSecret: string }> {
+  let clientId: string | undefined;
+  let clientSecretRef: string | undefined;
+  if (provider === "linkedin") {
+    clientId = platform.linkedinClientId;
+    clientSecretRef = platform.linkedinClientSecretRef;
+  } else if (provider === "facebook" || provider === "instagram") {
+    clientId = platform.facebookAppId;
+    clientSecretRef = platform.facebookAppSecretRef;
+  }
+  if (!clientId) throw new Error(`${provider} client id is not configured`);
+  if (!clientSecretRef) throw new Error(`${provider} client secret is not configured`);
+  const clientSecret = await ctx.secrets.resolve(clientSecretRef);
+  if (!clientSecret) throw new Error(`${provider} client secret could not be resolved`);
+  return { clientId, clientSecret };
 }
 
 async function readCompanyConfig(ctx: PluginContext, companyId: string): Promise<CompanyConfig> {
@@ -703,6 +736,207 @@ const plugin = definePlugin({
       });
 
       return { ok: true, imageId, tags };
+    });
+
+    // ── Social channels (Phase K) ────────────────────────────────────
+    //
+    // All OAuth tokens live in plugin_state scope=company under the key
+    // `channel:<provider>:<accountId>`. The public callback URL is shared
+    // across the whole platform; the per-company identity is carried in
+    // the `state` param (stored transiently under scope=instance).
+
+    const channelKey = (provider: SocialProviderKey, accountId: string) =>
+      `channel:${provider}:${accountId}`;
+    const pendingOAuthKey = (state: string) => `oauth-pending:${state}`;
+
+    // Redirect URI is derived from PAPERCLIP_PUBLIC_URL at runtime by the
+    // server; the worker passes a symbolic placeholder that the bridge
+    // route rewrites to the actual absolute URL before calling the
+    // provider. This keeps OAuth app registration independent of env vars
+    // the worker can read.
+    const oauthCallbackPath = "/api/plugins/neocompany-tools/bridge/oauth/callback";
+    const redactedToken = (t: StoredChannelToken) => ({
+      provider: t.provider,
+      accountId: t.accountId,
+      accountName: t.accountName,
+      iconUrl: t.iconUrl,
+      expiresAt: t.expiresAt,
+      scopes: t.scopes,
+      connectedAt: t.connectedAt,
+      refreshedAt: t.refreshedAt,
+    });
+
+    const listChannelsForCompany = async (companyId: string) => {
+      // plugin_state has no "list by prefix" primitive yet — we rely on
+      // the known set of providers + we attempt to read each account id
+      // stored in an index key. We maintain a simple index under
+      // `channel-index:<provider>` holding accountIds.
+      const out: ReturnType<typeof redactedToken>[] = [];
+      for (const provider of ["linkedin", "facebook", "instagram"] as SocialProviderKey[]) {
+        const indexKey = `channel-index:${provider}`;
+        const index = (await ctx.state.get({
+          scopeKind: "company",
+          scopeId: companyId,
+          stateKey: indexKey,
+        })) as string[] | null;
+        if (!Array.isArray(index)) continue;
+        for (const accountId of index) {
+          const token = (await ctx.state.get({
+            scopeKind: "company",
+            scopeId: companyId,
+            stateKey: channelKey(provider, accountId),
+          })) as StoredChannelToken | null;
+          if (token) out.push(redactedToken(token));
+        }
+      }
+      return out;
+    };
+
+    ctx.data.register("channelsList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { channels: [], providers: [] };
+      const channels = await listChannelsForCompany(companyId);
+      const providers = listAvailableProviders().map((p) => ({
+        key: p.key,
+        displayName: p.displayName,
+        recommendedFeedDimensions: p.recommendedFeedDimensions,
+      }));
+      return { channels, providers };
+    });
+
+    ctx.data.register("channelGet", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const provider = params.provider as SocialProviderKey;
+      const accountId = params.accountId as string;
+      if (!companyId || !provider || !accountId) return null;
+      const token = (await ctx.state.get({
+        scopeKind: "company",
+        scopeId: companyId,
+        stateKey: channelKey(provider, accountId),
+      })) as StoredChannelToken | null;
+      return token ? redactedToken(token) : null;
+    });
+
+    ctx.actions.register("channelConnectStart", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const provider = params.provider as SocialProviderKey;
+      if (!companyId || !provider) {
+        throw new Error("channelConnectStart requires companyId and provider");
+      }
+      const providerImpl = getProvider(provider);
+      const platform = await readPlatformConfig(ctx);
+
+      let clientId: string | undefined;
+      if (provider === "linkedin") clientId = platform.linkedinClientId;
+      else if (provider === "facebook" || provider === "instagram") clientId = platform.facebookAppId;
+      if (!clientId) {
+        throw new Error(`${provider} is not configured — platform admin must set the client id`);
+      }
+
+      const publicUrl = (params.publicUrl as string | undefined) ?? "";
+      if (!publicUrl) {
+        // The UI should pass window.location.origin; we refuse rather than
+        // guess a URL that won't match the OAuth app's allowed list.
+        throw new Error("channelConnectStart requires publicUrl (origin of this Paperclip instance)");
+      }
+      const redirectUri = `${publicUrl.replace(/\/+$/, "")}${oauthCallbackPath}`;
+
+      const state = randomState();
+      const auth = providerImpl.buildAuthUrl({
+        clientId,
+        redirectUri,
+        state,
+      });
+
+      const returnTo = (params.returnTo as string | undefined) ?? `/content/channels?connected=${provider}`;
+
+      const pending: PendingOAuthState = {
+        state,
+        provider,
+        companyId,
+        codeVerifier: auth.codeVerifier,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+        returnTo,
+      };
+      await ctx.state.set(
+        { scopeKind: "instance", stateKey: pendingOAuthKey(state) },
+        pending as unknown as Record<string, unknown>,
+      );
+
+      return { url: auth.url, state };
+    });
+
+    ctx.actions.register("channelDisconnect", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const provider = params.provider as SocialProviderKey;
+      const accountId = params.accountId as string;
+      if (!companyId || !provider || !accountId) {
+        throw new Error("channelDisconnect requires companyId, provider and accountId");
+      }
+      // Delete the token; keep the index clean as well.
+      await ctx.state.set(
+        { scopeKind: "company", scopeId: companyId, stateKey: channelKey(provider, accountId) },
+        null as unknown as Record<string, unknown>,
+      );
+      const indexKey = `channel-index:${provider}`;
+      const index = (await ctx.state.get({
+        scopeKind: "company",
+        scopeId: companyId,
+        stateKey: indexKey,
+      })) as string[] | null;
+      const next = (index ?? []).filter((id) => id !== accountId);
+      await ctx.state.set(
+        { scopeKind: "company", scopeId: companyId, stateKey: indexKey },
+        next as unknown as Record<string, unknown>,
+      );
+      await ctx.activity.log({
+        companyId,
+        message: `Disconnected ${provider} channel ${accountId}`,
+        entityType: "social-channel",
+        entityId: `${provider}:${accountId}`,
+      });
+      return { ok: true };
+    });
+
+    ctx.actions.register("channelRefresh", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const provider = params.provider as SocialProviderKey;
+      const accountId = params.accountId as string;
+      if (!companyId || !provider || !accountId) {
+        throw new Error("channelRefresh requires companyId, provider and accountId");
+      }
+      const providerImpl = getProvider(provider);
+      if (!providerImpl.refreshToken) {
+        throw new Error(`${provider} does not support token refresh`);
+      }
+      const stored = (await ctx.state.get({
+        scopeKind: "company",
+        scopeId: companyId,
+        stateKey: channelKey(provider, accountId),
+      })) as StoredChannelToken | null;
+      if (!stored || !stored.refreshToken) {
+        throw new Error("No refresh token available for this channel");
+      }
+      const platform = await readPlatformConfig(ctx);
+      const { clientId, clientSecret } = await resolveProviderCreds(ctx, platform, provider);
+      const fresh = await providerImpl.refreshToken({
+        clientId,
+        clientSecret,
+        refreshToken: stored.refreshToken,
+      });
+      const next: StoredChannelToken = {
+        ...stored,
+        accessToken: fresh.accessToken,
+        refreshToken: fresh.refreshToken ?? stored.refreshToken,
+        expiresAt: fresh.expiresAt,
+        scopes: fresh.scopes ?? stored.scopes,
+        refreshedAt: new Date().toISOString(),
+      };
+      await ctx.state.set(
+        { scopeKind: "company", scopeId: companyId, stateKey: channelKey(provider, accountId) },
+        next as unknown as Record<string, unknown>,
+      );
+      return { ok: true, expiresAt: next.expiresAt };
     });
 
     // ── Action: delete a brand template ──────────────────────────────

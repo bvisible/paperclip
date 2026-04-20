@@ -13,6 +13,7 @@ import {
   Settings,
   Palette,
   Images,
+  Share2,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -101,7 +102,8 @@ export function Sidebar() {
 
         <SidebarSection label="Content">
           <SidebarNavItem to="/content" label="Templates" icon={Palette} />
-          <SidebarNavItem to="/content/stock" label="Image stock" icon={Images} />
+          <SidebarNavItem to="/content/stock" label="Image library" icon={Images} />
+          <SidebarNavItem to="/content/channels" label="Channels" icon={Share2} />
         </SidebarSection>
 
         <SidebarSection label="Work">

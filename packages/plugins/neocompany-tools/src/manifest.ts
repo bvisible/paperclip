@@ -129,6 +129,30 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "Secret reference to the OpenAI API key used by imageGenerate (gpt-image-1).",
         format: "secret-ref",
       },
+      linkedinClientId: {
+        type: "string",
+        title: "LinkedIn OAuth Client ID",
+        description: "Platform-wide LinkedIn OAuth app client id. Each company connects its own account via OAuth against this shared app.",
+        default: "",
+      },
+      linkedinClientSecretRef: {
+        type: "string",
+        title: "LinkedIn OAuth Client Secret",
+        description: "Secret reference to the LinkedIn OAuth client secret.",
+        format: "secret-ref",
+      },
+      facebookAppId: {
+        type: "string",
+        title: "Facebook App ID (reused for Instagram Business)",
+        description: "Platform-wide Meta app id. Required for Facebook pages and Instagram Business accounts.",
+        default: "",
+      },
+      facebookAppSecretRef: {
+        type: "string",
+        title: "Facebook App Secret",
+        description: "Secret reference to the Meta app secret.",
+        format: "secret-ref",
+      },
     },
   },
 
