@@ -71,6 +71,7 @@ import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@paperclipai/adapter-opencode-local/server";
 import {
   loadDefaultAgentInstructionsBundle,
+  loadInstructionsBundleForNewAgent,
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -626,8 +627,14 @@ export function agentRoutes(db: Db) {
     const promptTemplate = typeof adapterConfig.promptTemplate === "string"
       ? adapterConfig.promptTemplate
       : "";
+    const instructionsTemplate = typeof adapterConfig.instructionsTemplate === "string"
+      ? adapterConfig.instructionsTemplate
+      : null;
     const files = promptTemplate.trim().length === 0
-      ? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role))
+      ? await loadInstructionsBundleForNewAgent({
+          role: agent.role,
+          instructionsTemplate,
+        })
       : { "AGENTS.md": promptTemplate };
     const materialized = await instructions.materializeManagedBundle(
       agent,
@@ -2127,9 +2134,22 @@ export function agentRoutes(db: Db) {
   router.delete("/agents/:id", async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    if (!(await getAccessibleAgent(req, res, id))) {
+    const accessibleAgent = await getAccessibleAgent(req, res, id);
+    if (!accessibleAgent) {
       return;
     }
+
+    // Block deletion of seed (system) agents. These are provisioned by
+    // seedDefaultAgentsForCompany() on every new company and the rest of
+    // the codebase references them by seedKey — removing one would break
+    // runtime lookups like findAgentBySeedKey(company, "pixel").
+    const metadata = (accessibleAgent.metadata ?? {}) as Record<string, unknown>;
+    if (metadata.isSystem === true) {
+      throw forbidden(
+        "System agents cannot be deleted. Edit their instructions bundle instead.",
+      );
+    }
+
     const agent = await svc.remove(id);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });

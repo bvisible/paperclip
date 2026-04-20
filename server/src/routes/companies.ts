@@ -16,6 +16,7 @@ import { badRequest, forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
+  agentInstructionsService,
   agentService,
   budgetService,
   companyPortabilityService,
@@ -23,6 +24,8 @@ import {
   feedbackService,
   logActivity,
 } from "../services/index.js";
+import { seedDefaultAgentsForCompany } from "../services/seed-agents.js";
+import { loadInstructionsBundleForNewAgent } from "../services/default-agent-instructions.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
@@ -34,6 +37,7 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const access = accessService(db);
   const budgets = budgetService(db);
   const feedback = feedbackService(db);
+  const instructions = agentInstructionsService();
 
   function parseBooleanQuery(value: unknown) {
     return value === true || value === "true" || value === "1";
@@ -292,6 +296,69 @@ export function companyRoutes(db: Db, storage?: StorageService) {
         req.actor.userId ?? "board",
       );
     }
+
+    // Provision the default fleet (Nora / Lyra / Nova / Maya / Ella / Atlas
+    // / Scout / Iris / Pixel) for every new company. Failures here do not
+    // unwind the company creation — they are logged and the user sees a
+    // warning. The reconcile CLI can fix a partial seed later.
+    try {
+      await seedDefaultAgentsForCompany(
+        company.id,
+        {
+          createAgent: (companyId, input) =>
+            agents.create(companyId, input as Parameters<typeof agents.create>[1]),
+          materializeBundleForNewAgent: async (agent) => {
+            const adapterConfig = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+            const instructionsTemplate =
+              typeof adapterConfig.instructionsTemplate === "string"
+                ? (adapterConfig.instructionsTemplate as string)
+                : null;
+            const files = await loadInstructionsBundleForNewAgent({
+              role: agent.role,
+              instructionsTemplate,
+            });
+            const result = await instructions.materializeManagedBundle(agent, files, {
+              entryFile: "AGENTS.md",
+              replaceExisting: false,
+            });
+            await agents.update(agent.id, { adapterConfig: result.adapterConfig });
+          },
+          grantDefaultAgentAccess: async (companyId, agentId, grantedByUserId) => {
+            await access.ensureMembership(companyId, "agent", agentId, "member", "active");
+            await access.setPrincipalPermission(
+              companyId,
+              "agent",
+              agentId,
+              "tasks:assign",
+              true,
+              grantedByUserId,
+            );
+          },
+          logActivity: async ({ companyId, agentId, actorUserId, seedKey }) => {
+            await logActivity(db, {
+              companyId,
+              actorType: "user",
+              actorId: actorUserId ?? "board",
+              action: "agent.seeded",
+              entityType: "agent",
+              entityId: agentId,
+              details: { seedKey },
+            });
+          },
+        },
+        {
+          openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:3200",
+          openclawGatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN ?? "",
+          actorUserId: req.actor.userId ?? null,
+          enableHeartbeat: true,
+          heartbeatIntervalSec: 900,
+        },
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[company.create] seed agents failed", err);
+    }
+
     res.status(201).json(company);
   });
 
