@@ -434,7 +434,16 @@ const plugin = definePlugin({
         // Prefer agents with role "assistant" (dedicated chat agents) over task-oriented agents
         const agents = await ctx.agents.list({ companyId });
         const matching = agents.filter((a) => a.adapterType === thread.adapterType);
-        const agent = matching.find((a) => a.name === "Chat Assistant") ?? matching.find((a) => a.role === "general") ?? matching[0];
+        // Preference order:
+        //   1. Explicit "Chat Assistant" named agent (NeoCompany convention)
+        //   2. CEO role (Neoffice CEO pattern — chat always routes to the coordinator)
+        //   3. Generic "general" role
+        //   4. First matching agent
+        const agent =
+          matching.find((a) => a.name === "Chat Assistant") ??
+          matching.find((a) => a.role === "ceo") ??
+          matching.find((a) => a.role === "general") ??
+          matching[0];
         if (!agent) {
           throw new Error(`No agent found with adapter type "${thread.adapterType}". Available: ${agents.map((a) => `${a.name}(${a.adapterType})`).join(", ") || "none"}`);
         }
