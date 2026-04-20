@@ -1,4 +1,6 @@
-const BASE = "/api";
+// Prepend Vite's base path so the client works both at the root ("/")
+// and under a sub-path ("/paperclip/"). Set via PAPERCLIP_BASE_URL at build.
+const BASE = ((import.meta.env.BASE_URL || "/").replace(/\/$/, "")) + "/api";
 
 export class ApiError extends Error {
   status: number;
