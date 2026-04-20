@@ -71,6 +71,13 @@ const manifest: PaperclipPluginManifestV1 = {
         "Publishes approved social_post entities whose scheduledAt <= now via the corresponding social provider. Runs every minute.",
       schedule: "* * * * *",
     },
+    {
+      jobKey: "pixel-autopilot",
+      displayName: "Pixel autopilot",
+      description:
+        "Keeps each company's draft queue filled according to its editorial strategy. Runs every 15 minutes.",
+      schedule: "*/15 * * * *",
+    },
   ],
 
   // Platform-wide config. These fields are declared here so the

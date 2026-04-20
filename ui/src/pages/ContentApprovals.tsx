@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, X, Linkedin, Facebook, Instagram, Sparkles, Loader2 } from "lucide-react";
+import { Check, X, Linkedin, Facebook, Instagram, Sparkles, Loader2, Zap } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { useToast } from "../context/ToastContext";
@@ -204,6 +204,29 @@ export function ContentApprovals() {
     },
   });
 
+  const autopilotMut = useMutation({
+    mutationFn: async () => {
+      if (!pluginId || !selectedCompanyId) throw new Error("Plugin not available");
+      return pluginsApi.bridgePerformAction(
+        pluginId,
+        "runPixelAutopilotNow",
+        { companyId: selectedCompanyId },
+        selectedCompanyId,
+      );
+    },
+    onSuccess: (res) => {
+      const report = (res as { data?: { planned: number; created: number; skipped: number } }).data;
+      qc.invalidateQueries({ queryKey: ["social-posts-pending", selectedCompanyId] });
+      if (report) {
+        pushToast({
+          title: `Autopilot: ${report.created} created · ${report.skipped} skipped`,
+          tone: report.created > 0 ? "success" : "info",
+        });
+      }
+    },
+    onError: (err) => pushToast({ title: `Autopilot failed: ${(err as Error).message}`, tone: "error" }),
+  });
+
   const posts = postsQuery.data ?? [];
 
   const imageById = useMemo(() => {
@@ -230,14 +253,30 @@ export function ContentApprovals() {
             Pixel prepares posts in advance. Approve to schedule, reject to drop.
           </p>
         </div>
-        <Button
-          size="sm"
-          onClick={() => generateBatchMut.mutate()}
-          disabled={generating || generateBatchMut.isPending}
-        >
-          {generating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1 h-4 w-4" />}
-          Generate 3 drafts
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => autopilotMut.mutate()}
+            disabled={autopilotMut.isPending}
+            title="Run Pixel autopilot now — generates drafts based on the editorial strategy"
+          >
+            {autopilotMut.isPending ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Zap className="mr-1 h-4 w-4" />
+            )}
+            Run autopilot
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => generateBatchMut.mutate()}
+            disabled={generating || generateBatchMut.isPending}
+          >
+            {generating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Sparkles className="mr-1 h-4 w-4" />}
+            Generate 3 drafts
+          </Button>
+        </div>
       </div>
 
       {posts.length === 0 ? (

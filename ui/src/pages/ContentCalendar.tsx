@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Linkedin, Facebook, Instagram } from "lucide-react";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
+import { useToast } from "../context/ToastContext";
 import { Button } from "@/components/ui/button";
 import { pluginsApi } from "@/api/plugins";
 
@@ -100,7 +101,10 @@ function formatMonthLabel(d: Date, locale: string = "en-US"): string {
 export function ContentCalendar() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { pushToast } = useToast();
+  const qc = useQueryClient();
   const [cursor, setCursor] = useState<Date>(startOfMonth(new Date()));
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Content" }, { label: "Calendar" }]);
@@ -170,6 +174,32 @@ export function ContentCalendar() {
   const today = new Date();
   const monthLabel = formatMonthLabel(cursor);
 
+  const rescheduleMut = useMutation({
+    mutationFn: async ({ postId, scheduledAt }: { postId: string; scheduledAt: string }) => {
+      if (!pluginId || !selectedCompanyId) throw new Error("Plugin not available");
+      return pluginsApi.bridgePerformAction(
+        pluginId,
+        "rescheduleSocialPost",
+        { companyId: selectedCompanyId, postId, scheduledAt },
+        selectedCompanyId,
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["social-posts-calendar", selectedCompanyId] });
+      pushToast({ title: "Post rescheduled", tone: "success" });
+    },
+    onError: (err) => pushToast({ title: `Reschedule failed: ${(err as Error).message}`, tone: "error" }),
+  });
+
+  function handleDrop(post: SocialPost, targetDate: Date) {
+    // Preserve hour/minute from the current scheduledAt / proposedAt.
+    const current = new Date(post.scheduledAt ?? post.proposedAt);
+    const next = new Date(targetDate);
+    next.setHours(current.getHours(), current.getMinutes(), 0, 0);
+    if (next.getTime() === current.getTime()) return;
+    rescheduleMut.mutate({ postId: post.id, scheduledAt: next.toISOString() });
+  }
+
   if (pluginsQuery.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   if (!neoPlugin) {
     return (
@@ -216,10 +246,29 @@ export function ContentCalendar() {
           const outOfMonth = d.getMonth() !== cursor.getMonth();
           const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
           const posts = postsByDay.get(key) ?? [];
+          const isDragOver = dragOverKey === key;
           return (
             <div
               key={idx}
-              className={`min-h-[96px] bg-card p-1.5 ${outOfMonth ? "opacity-50" : ""}`}
+              className={`min-h-[96px] bg-card p-1.5 transition-colors ${outOfMonth ? "opacity-50" : ""} ${
+                isDragOver ? "ring-2 ring-primary ring-inset bg-primary/5" : ""
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                if (dragOverKey !== key) setDragOverKey(key);
+              }}
+              onDragLeave={() => {
+                if (dragOverKey === key) setDragOverKey(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverKey(null);
+                const postId = e.dataTransfer?.getData("text/plain");
+                if (!postId) return;
+                const post = (postsQuery.data ?? []).find((p) => p.id === postId);
+                if (post) handleDrop(post, d);
+              }}
             >
               <div className="flex items-center justify-between">
                 <span
@@ -232,7 +281,12 @@ export function ContentCalendar() {
               </div>
               <div className="mt-1 space-y-1">
                 {posts.slice(0, 3).map((p) => (
-                  <PostPill key={p.id} post={p} image={p.imageId ? imageById.get(p.imageId) : undefined} />
+                  <PostPill
+                    key={p.id}
+                    post={p}
+                    image={p.imageId ? imageById.get(p.imageId) : undefined}
+                    canDrag={p.status === "scheduled" || p.status === "approved"}
+                  />
                 ))}
                 {posts.length > 3 && (
                   <div className="text-[10px] text-muted-foreground">+{posts.length - 3} more</div>
@@ -248,13 +302,34 @@ export function ContentCalendar() {
   );
 }
 
-function PostPill({ post, image }: { post: SocialPost; image?: LibraryImage }) {
+function PostPill({
+  post,
+  image,
+  canDrag,
+}: {
+  post: SocialPost;
+  image?: LibraryImage;
+  canDrag?: boolean;
+}) {
   const Icon = PROVIDER_ICON[post.channel.provider];
   const color = STATUS_COLOR[post.status];
   const label = post.text.length > 0 ? post.text : "(empty)";
-  const title = `${post.status}${post.lastError ? ` · ${post.lastError}` : ""}\n${label}`;
+  const title = `${post.status}${canDrag ? " · drag to reschedule" : ""}${
+    post.lastError ? ` · ${post.lastError}` : ""
+  }\n${label}`;
   return (
-    <div className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] ${color}`} title={title}>
+    <div
+      draggable={canDrag}
+      onDragStart={(e) => {
+        if (!canDrag) return;
+        e.dataTransfer.setData("text/plain", post.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] ${color} ${
+        canDrag ? "cursor-grab active:cursor-grabbing" : ""
+      }`}
+      title={title}
+    >
       {image?.finalImageUrl ? (
         <img src={image.finalImageUrl} alt="" className="h-3 w-3 rounded-sm object-cover shrink-0" />
       ) : null}

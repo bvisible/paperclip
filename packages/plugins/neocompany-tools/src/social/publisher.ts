@@ -224,14 +224,28 @@ export async function runSocialPublisherTick(ctx: PluginContext): Promise<{
           imageUrl = loaded.imageUrl;
         }
 
-        const result = await providerImpl.publish({
-          accessToken: stored.accessToken,
-          accountId: stored.accountId,
-          text: data.text,
-          imageUrl,
-          imageBuffer,
-          imageMimeType,
-        });
+        // Dry-run kill switch — skip the real API call, log as if it ran.
+        // Used for workflow testing with a real OAuth token in place but
+        // without actually posting to the provider's feed.
+        const dryRun = process.env.SOCIAL_PUBLISHER_DRY_RUN === "1";
+        let result;
+        if (dryRun) {
+          ctx.logger.info?.(
+            `[social-publisher] DRY RUN — would post to ${data.channel.provider} ` +
+              `(${stored.accountId}) ${imageBuffer ? "with image" : "text only"}: ` +
+              `${data.text.slice(0, 80)}`,
+          );
+          result = { postId: `dryrun-${Date.now()}`, postUrl: undefined };
+        } else {
+          result = await providerImpl.publish({
+            accessToken: stored.accessToken,
+            accountId: stored.accountId,
+            text: data.text,
+            imageUrl,
+            imageBuffer,
+            imageMimeType,
+          });
+        }
 
         await transitionPost(
           ctx,

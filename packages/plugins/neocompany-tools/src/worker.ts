@@ -1224,6 +1224,30 @@ const plugin = definePlugin({
       }
     });
 
+    // ── Job: pixel autopilot ─────────────────────────────────────────
+    ctx.jobs.register("pixel-autopilot", async () => {
+      try {
+        const { runPixelAutopilotTick } = await import("./social/autopilot.js");
+        const report = await runPixelAutopilotTick(ctx);
+        if (report.planned > 0 || report.companies > 0) {
+          ctx.logger.info?.(
+            `[pixel-autopilot] tick: companies=${report.companies} planned=${report.planned} created=${report.created} skipped=${report.skipped}`,
+          );
+        }
+      } catch (err) {
+        ctx.logger.error("pixel-autopilot: unexpected error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
+    // ── Action: manual autopilot trigger ────────────────────────────
+    ctx.actions.register("runPixelAutopilotNow", async () => {
+      const { runPixelAutopilotTick } = await import("./social/autopilot.js");
+      const report = await runPixelAutopilotTick(ctx);
+      return report;
+    });
+
     // ── Action: enable/disable a category toggle for a company ───────
     ctx.actions.register("setCategoryEnabled", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;
