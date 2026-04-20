@@ -21,17 +21,47 @@ interface ActorMiddlewareOptions {
 export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHandler {
   const boardAuth = boardAuthService(db);
   return async (req, _res, next) => {
-    req.actor =
-      opts.deploymentMode === "local_trusted"
-        ? {
-            type: "board",
-            userId: "local-board",
-            userName: "Local Board",
-            userEmail: null,
-            isInstanceAdmin: true,
-            source: "local_implicit",
-          }
-        : { type: "none", source: "none" };
+    // In local_trusted mode, honor proxy-injected identity headers.
+    // This lets an upstream reverse-proxy (nginx) authenticate the user
+    // via an external system (e.g. Frappe session + auth_request) and
+    // forward identity via trusted headers, without Paperclip running
+    // its own auth layer. The headers are only honored in local_trusted
+    // mode — not in authenticated mode — to avoid header spoofing.
+    //
+    // Expected headers when behind a trusted proxy:
+    //   X-Paperclip-User       : unique user id (e.g. "jeremy@neoservice.ai")
+    //   X-Paperclip-User-Name  : display name (optional)
+    //   X-Paperclip-User-Email : email (optional)
+    //   X-Paperclip-Admin      : "1" to grant instance admin (optional)
+    //
+    // Behavior:
+    //   - With X-Paperclip-User  → actor is a named "board" user with that id.
+    //   - Without X-Paperclip-User → actor is the generic "local-board" admin
+    //     (legacy behavior, used by local scripts and internal tools).
+    if (opts.deploymentMode === "local_trusted") {
+      const externalUserId = req.header("x-paperclip-user");
+      if (externalUserId) {
+        req.actor = {
+          type: "board",
+          userId: externalUserId,
+          userName: req.header("x-paperclip-user-name") ?? externalUserId,
+          userEmail: req.header("x-paperclip-user-email") ?? null,
+          isInstanceAdmin: req.header("x-paperclip-admin") === "1",
+          source: "local_implicit",
+        };
+      } else {
+        req.actor = {
+          type: "board",
+          userId: "local-board",
+          userName: "Local Board",
+          userEmail: null,
+          isInstanceAdmin: true,
+          source: "local_implicit",
+        };
+      }
+    } else {
+      req.actor = { type: "none", source: "none" };
+    }
 
     const runIdHeader = req.header("x-paperclip-run-id");
 

@@ -236,6 +236,13 @@ export interface SeedAgentOptions {
  *
  * Idempotent: skips a seedKey that already exists in this company (checked
  * via `metadata.seedKey`).
+ *
+ * Deployment-aware:
+ *   - Default (NeoCompany): seeds the full Postiz fleet (Nora/Lyra/Nova/…).
+ *   - Neoffice (env PAPERCLIP_DEPLOYMENT=neoffice OR
+ *     PAPERCLIP_SKIP_DEFAULT_AGENTS=1): skips default seed. Neoffice provides
+ *     its own agent fleet (Nora/Sophie/Marc/Léa/Thomas/Vincent) via a separate
+ *     post-install seed script — avoids polluting the company with inert agents.
  */
 export async function seedDefaultAgentsForCompany(
   companyId: string,
@@ -243,6 +250,14 @@ export async function seedDefaultAgentsForCompany(
   options: SeedAgentOptions,
   existingSeedKeys: Set<string> = new Set(),
 ): Promise<Array<{ agentId: string; seedKey: string }>> {
+  // Skip default seed for deployments that provide their own agent fleet.
+  if (
+    process.env.PAPERCLIP_DEPLOYMENT === "neoffice" ||
+    process.env.PAPERCLIP_SKIP_DEFAULT_AGENTS === "1"
+  ) {
+    return [];
+  }
+
   const created: Array<{ agentId: string; seedKey: string }> = [];
   for (const spec of SEED_AGENTS) {
     if (existingSeedKeys.has(spec.seedKey)) continue;
