@@ -172,6 +172,51 @@ const CHAT_STYLES = `
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
   }
+  .chat-thinking {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 2px 0;
+  }
+  .chat-thinking__label {
+    position: relative;
+    color: var(--muted-foreground, rgba(100, 116, 139, 0.5));
+    background-image: linear-gradient(
+      90deg,
+      var(--muted-foreground, rgba(100, 116, 139, 0.5)) 0%,
+      var(--muted-foreground, rgba(100, 116, 139, 0.5)) 40%,
+      var(--foreground, rgba(15, 23, 42, 1)) 50%,
+      var(--muted-foreground, rgba(100, 116, 139, 0.5)) 60%,
+      var(--muted-foreground, rgba(100, 116, 139, 0.5)) 100%
+    );
+    background-size: 250% 100%;
+    background-position: 200% 0;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: chatThinkingShimmer 1.8s linear infinite;
+  }
+  .chat-thinking__dots {
+    color: var(--muted-foreground, rgba(100, 116, 139, 0.5));
+    animation: chatThinkingDots 1.4s steps(4) infinite;
+    display: inline-block;
+    min-width: 0.9em;
+    text-align: left;
+    letter-spacing: 0.05em;
+  }
+  @keyframes chatThinkingShimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -100% 0; }
+  }
+  @keyframes chatThinkingDots {
+    0%   { content: ""; opacity: 0.2; }
+    25%  { opacity: 0.5; }
+    50%  { opacity: 0.8; }
+    75%  { opacity: 1; }
+    100% { opacity: 0.2; }
+  }
   .chat-input-glow:focus-within {
     border-color: var(--primary, #2563eb) !important;
     box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
@@ -768,9 +813,9 @@ function StreamingMessage({
         </div>
         <div className="text-sm text-foreground leading-relaxed">
           {!hasAnyContent && isActive && (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <span className="inline-block" style={{ animation: "spin 1s linear infinite" }}>&#x27F3;</span>
-              <span className="text-xs">Thinking&#x2026;</span>
+            <div className="chat-thinking">
+              <span className="chat-thinking__label">Thinking</span>
+              <span className="chat-thinking__dots" aria-hidden="true">&#x2026;</span>
             </div>
           )}
 
