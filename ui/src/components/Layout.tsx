@@ -55,6 +55,19 @@ function isPluginRoute(pathname: string): boolean {
   return pathname.includes("/plugins/");
 }
 
+// True when the app is rendered inside an iframe (the Neoffice Quick Chat overlay
+// embeds Paperclip that way). Direct navigation in a top-level window keeps the
+// full Paperclip chrome — so admins can still open `/plugins/<id>` standalone.
+function isRenderedInIframe(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    // Cross-origin parent throws on .top access → we're definitely framed.
+    return true;
+  }
+}
+
 function readRememberedInstanceSettingsPath(): string {
   if (typeof window === "undefined") return DEFAULT_INSTANCE_SETTINGS_PATH;
   try {
@@ -314,7 +327,8 @@ export function Layout() {
     resetNavigationScroll(mainContentRef.current);
   }, [location.pathname, navigationType]);
 
-  const neofficeEmbedMode = IS_NEOFFICE_DEPLOYMENT && isPluginRoute(location.pathname);
+  const neofficeEmbedMode =
+    IS_NEOFFICE_DEPLOYMENT && isPluginRoute(location.pathname) && isRenderedInIframe();
 
   // In embed mode we render only the Outlet — no Sidebar, no BreadcrumbBar —
   // so nothing would trigger dynamic plugin module imports. Call usePluginSlots
