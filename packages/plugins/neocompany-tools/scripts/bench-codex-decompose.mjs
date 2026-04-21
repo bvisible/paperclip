@@ -14,6 +14,36 @@ import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+async function listPngs(root) {
+  const out = new Map();
+  try {
+    const sessions = await readdir(root);
+    for (const session of sessions) {
+      const sessionDir = join(root, session);
+      try {
+        const files = await readdir(sessionDir);
+        for (const f of files) {
+          if (f.toLowerCase().endsWith(".png")) {
+            const p = join(sessionDir, f);
+            const st = await stat(p);
+            out.set(p, st.mtimeMs);
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
+function pickNewest(after, before) {
+  let best = null;
+  for (const [path, mtime] of after) {
+    if (before.has(path)) continue;
+    if (!best || mtime > best.mtime) best = { path, mtime };
+  }
+  return best?.path ?? null;
+}
+
 const CODEX_BIN = process.env.CODEX_BIN
   ?? "/home/ubuntu/.npm-global/bin/codex";
 const PROMPT = process.argv[2] ?? "simple blue circle on white background";
@@ -120,7 +150,7 @@ await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
 const t0 = timestamps.t0_spawn;
 function phase(label, tLabel, prev) {
   const t = timestamps[tLabel];
-  if (!t) return `  ${label.padEnd(22)}  —`;
+  if (!t) return `  ${label.padEnd(22)}  -`;
   const ms = t - t0;
   const delta = t - (timestamps[prev] ?? t0);
   return `  ${label.padEnd(22)}  t+${(ms / 1000).toFixed(1)}s   (+${(delta / 1000).toFixed(1)}s)`;
