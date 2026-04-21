@@ -388,7 +388,7 @@ export function Layout() {
             )}
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <CompanyRail />
+              {!IS_NEOFFICE_DEPLOYMENT && <CompanyRail />}
               {isInstanceSettingsRoute ? (
                 <InstanceSidebar />
               ) : isCompanySettingsRoute ? (
@@ -397,16 +397,18 @@ export function Layout() {
                 <Sidebar />
               )}
             </div>
-            <SidebarAccountMenu
-              deploymentMode={health?.deploymentMode}
-              instanceSettingsTarget={instanceSettingsTarget}
-              version={health?.version}
-            />
+            {!IS_NEOFFICE_DEPLOYMENT && (
+              <SidebarAccountMenu
+                deploymentMode={health?.deploymentMode}
+                instanceSettingsTarget={instanceSettingsTarget}
+                version={health?.version}
+              />
+            )}
           </div>
         ) : (
           <div className="flex h-full flex-col shrink-0">
             <div className="flex flex-1 min-h-0">
-              <CompanyRail />
+              {!IS_NEOFFICE_DEPLOYMENT && <CompanyRail />}
               <div
                 className={cn(
                   "overflow-hidden transition-[width] duration-100 ease-out",
@@ -422,11 +424,13 @@ export function Layout() {
                 )}
               </div>
             </div>
-            <SidebarAccountMenu
-              deploymentMode={health?.deploymentMode}
-              instanceSettingsTarget={instanceSettingsTarget}
-              version={health?.version}
-            />
+            {!IS_NEOFFICE_DEPLOYMENT && (
+              <SidebarAccountMenu
+                deploymentMode={health?.deploymentMode}
+                instanceSettingsTarget={instanceSettingsTarget}
+                version={health?.version}
+              />
+            )}
           </div>
         )}
 

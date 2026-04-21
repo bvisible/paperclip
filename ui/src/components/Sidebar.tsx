@@ -33,6 +33,10 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 
+// Neoffice deployments enforce a single Company named "Default" + Frappe SSO,
+// so the Company dropdown at the top of the sidebar is never useful — hide it.
+const IS_NEOFFICE_DEPLOYMENT = import.meta.env.VITE_PAPERCLIP_DEPLOYMENT === "neoffice";
+
 export function Sidebar() {
   const { openNewIssue } = useDialog();
   const { selectedCompanyId, selectedCompany } = useCompany();
@@ -56,13 +60,18 @@ export function Sidebar() {
 
   return (
     <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
-      {/* Top bar: Company name (bold) + Search — aligned with top sections (no visible border) */}
+      {/* Top bar: Company name (bold) + Search — aligned with top sections (no visible border).
+          In Neoffice deployments, we only render the search button (no company dropdown). */}
       <div className="flex items-center gap-1 px-3 h-12 shrink-0">
-        <SidebarCompanyMenu />
+        {!IS_NEOFFICE_DEPLOYMENT && <SidebarCompanyMenu />}
         <Button
           variant="ghost"
           size="icon-sm"
-          className="text-muted-foreground shrink-0"
+          className={
+            IS_NEOFFICE_DEPLOYMENT
+              ? "text-muted-foreground shrink-0 ml-auto"
+              : "text-muted-foreground shrink-0"
+          }
           onClick={openSearch}
         >
           <Search className="h-4 w-4" />
