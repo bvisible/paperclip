@@ -144,8 +144,20 @@ export function resolveSessionKey(input: {
   agentId: string | null;
   runId: string;
   issueId: string | null;
+  chatSessionId?: string | null;
 }): string {
   const fallback = input.configuredSessionKey ?? "paperclip";
+  // Chat plugin wakeups always derive their key from the Paperclip session
+  // id so each chat thread gets an isolated engine-side session. This
+  // mirrors the Slack/Telegram/Discord adapter pattern and prevents
+  // cumulative wake-event accumulation from overflowing the model
+  // context window (OpenClaw issue #29729).
+  if (input.chatSessionId) {
+    return prefixSessionKeyForAgent(
+      `paperclip:chat:${input.chatSessionId}`,
+      input.agentId,
+    );
+  }
   if (input.strategy === "run") {
     return prefixSessionKeyForAgent(`paperclip:run:${input.runId}`, input.agentId);
   }
@@ -1206,12 +1218,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
   const configuredSessionKey = nonEmpty(ctx.config.sessionKey);
+  const chatSessionId = nonEmpty(ctx.context.chatSessionId);
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
     agentId: nonEmpty(ctx.config.agentId),
     runId: ctx.runId,
     issueId: wakePayload.issueId,
+    chatSessionId,
   });
 
   // Chat sessions (e.g. paperclip-chat plugin) inject the user prompt via

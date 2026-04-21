@@ -1032,6 +1032,14 @@ export function buildHostServices(
             // responds to the user message rather than the wake procedure.
             chatPrompt: params.prompt,
             chatPluginId: pluginId,
+            // Expose the per-thread Paperclip session id so chat-capable
+            // adapters can derive a per-thread LLM session key. Without
+            // this, every thread shares a single cumulative session on
+            // the engine side (OpenClaw), which eventually overflows the
+            // context window as wake events pile up across threads. The
+            // value mirrors Slack/Telegram/Discord adapters which key
+            // their LLM sessions by thread id (OpenClaw issue #29729).
+            chatSessionId: params.sessionId,
           },
           requestedByActorType: "system",
           requestedByActorId: pluginId,
