@@ -47,6 +47,30 @@ function createStreamJsonParser(emit: (event: ChatStreamEvent) => void) {
             } else if (stream === "tool_result") {
               const content = typeof data.content === "string" ? data.content : JSON.stringify(data.content ?? "");
               emit({ type: "tool_result", content, isError: data.isError === true || data.is_error === true });
+            } else if (stream === "item") {
+              // OpenClaw Gateway emits `stream=item` for its native tool
+              // calls (sessions_spawn, read, write, exec, edit, …). Map
+              // them to the same tool_use / tool_result events so the
+              // retry-narration filter and the UI tool-call rendering
+              // both react correctly.
+              const kind = data.kind as string | undefined;
+              const phase = data.phase as string | undefined;
+              if (kind === "tool" || kind === "command") {
+                const name = (data.name as string) ?? (kind === "command" ? "exec" : "tool");
+                if (phase === "start") {
+                  emit({ type: "tool_use", name, input: data.meta ?? data.title });
+                } else if (phase === "end") {
+                  const out = (data.output as string | undefined) ?? (data.result as string | undefined) ?? "";
+                  const failed =
+                    data.status === "error" ||
+                    data.status === "failed" ||
+                    (typeof data.exitCode === "number" && data.exitCode !== 0);
+                  emit({ type: "tool_result", content: out, isError: failed });
+                }
+                // `update` / `delta` phases stream progress; we ignore them
+                // here because the tool call is already open in the segment
+                // list and the UI does not need every keystroke.
+              }
             } else if (stream === "error") {
               const msg = (data.error as string | undefined) ?? (data.message as string | undefined) ?? "error";
               emit({ type: "error", text: msg });
