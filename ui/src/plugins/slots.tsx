@@ -110,6 +110,28 @@ function getErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
+// Listeners notified whenever a plugin module registers a new component.
+// Used by PluginSlotMount so that a slot mounted BEFORE its plugin module
+// finished loading can re-render as soon as the registry fills in.
+const registryListeners = new Set<() => void>();
+
+function notifyRegistryChange() {
+  for (const listener of registryListeners) {
+    try {
+      listener();
+    } catch {
+      // Ignore individual listener errors — they shouldn't block other listeners.
+    }
+  }
+}
+
+function subscribeToRegistryChanges(listener: () => void): () => void {
+  registryListeners.add(listener);
+  return () => {
+    registryListeners.delete(listener);
+  };
+}
+
 /**
  * Registers a React component export for a plugin UI slot.
  */
@@ -122,6 +144,7 @@ export function registerPluginReactComponent(
     kind: "react",
     component,
   });
+  notifyRegistryChange();
 }
 
 /**
@@ -136,6 +159,7 @@ export function registerPluginWebComponent(
     kind: "web-component",
     tagName,
   });
+  notifyRegistryChange();
 }
 
 function resolveRegisteredComponent(slot: ResolvedPluginSlot): RegisteredPluginComponent | null {
@@ -734,19 +758,26 @@ export function PluginSlotMount({
 
   useEffect(() => {
     if (component) return;
+    // 1) If there's an inflight import for this plugin, wait for it.
     const inflight = inflightImports.get(slot.pluginId);
-    if (!inflight) return;
-
-    let cancelled = false;
-    void inflight.finally(() => {
-      if (!cancelled) {
-        forceRerender((tick) => tick + 1);
-      }
+    if (inflight) {
+      let cancelled = false;
+      void inflight.finally(() => {
+        if (!cancelled) {
+          forceRerender((tick) => tick + 1);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    // 2) No inflight — the module may already be loading via a different
+    //    codepath (or loaded-then-deleted from inflightImports before we
+    //    mounted). Subscribe to registry changes so we re-render when the
+    //    component is eventually registered.
+    return subscribeToRegistryChanges(() => {
+      forceRerender((tick) => tick + 1);
     });
-
-    return () => {
-      cancelled = true;
-    };
   }, [component, slot.pluginId]);
 
   if (!component) {
