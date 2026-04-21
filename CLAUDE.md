@@ -13,6 +13,37 @@ Postiz monorepo (250 deps, fragile build) proved unfit for production.
 - Commits: no Claude co-author, no "Generated with Claude Code" footer.
 - Code comments: English only.
 
+**Shared fork — NeoCompany AND Neoffice both ship from this tree:**
+
+This Paperclip fork is the runtime for two distinct products:
+
+1. **NeoCompany** — the multi-tenant SaaS at `app.neocompany.ch`. Uses the
+   onboarding assets in `server/src/onboarding-assets/` (CEO + seed agents
+   Maya / Nora / Iris / Nova / Scout / Ella / Pixel / Atlas / Lyra). Those
+   SOUL files are NeoCompany's property and must stay aligned with the
+   NeoCompany product spec.
+2. **Neoffice** — Jeremy's ERP platform (`osiris.neoffice.me` et al.).
+   Uses a different NORA agent, provisioned by the `bvisible/nora` Frappe
+   app from `nora/integrations/paperclip/scripts/souls/main-nora-ceo.md`.
+   Osiris writes the resolved SOUL into `~/.openclaw/workspace/SOUL.md`
+   on each instance — nothing under `server/src/onboarding-assets/` is
+   involved.
+
+There are **two distinct "Nora" personas**:
+
+- `server/src/onboarding-assets/seed-agents/nora/SOUL.md` — NeoCompany
+  Nora (seed agent, generic business assistant).
+- `bvisible/nora` repo, `nora/integrations/paperclip/scripts/souls/main-nora-ceo.md`
+  — Neoffice Nora (ERP-specific CEO pattern with Sophie/Marc/Léa/
+  Thomas/Vincent subagents).
+
+**Do not conflate them.** When you touch a SOUL in this repo, you are
+changing NeoCompany behaviour. When you want to change Neoffice Nora's
+persona, go to the `bvisible/nora` repo instead. Shared plugin code
+(`packages/plugins/*`, `packages/adapters/*`, server runtime) affects
+both products — that is intentional, but be explicit about why a change
+is safe for both when you commit it.
+
 ---
 
 ## Architecture
