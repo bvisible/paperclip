@@ -1555,6 +1555,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         resultJson: asRecord(latestResultPayload),
         ...(runtimeServices.length > 0 ? { runtimeServices } : {}),
         ...(summary ? { summary } : {}),
+        // Persist the engine-side session key so heartbeat keeps the
+        // Paperclip agent_task_session alive after the run completes.
+        // Without this, resolveNextSessionState() sees both sessionId and
+        // sessionParams as undefined, serializes to null, and
+        // clearTaskSessions() drops the row — every follow-up message in
+        // the same chat thread then fails with "Session not found".
+        sessionId: sessionKey,
+        sessionDisplayId: sessionKey,
+        sessionParams: { sessionId: sessionKey },
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
