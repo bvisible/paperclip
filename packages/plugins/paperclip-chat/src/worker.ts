@@ -495,16 +495,41 @@ const plugin = definePlugin({
           reject(new Error("Chat response timed out"));
         }, RUN_TIMEOUT_MS);
 
+        // Text emitted BEFORE a tool call is a retry narration ("Let me
+        // try...", "That didn't work, let me..."), not part of the final
+        // answer. We only keep text that arrived after the last tool use
+        // or tool result — i.e. once the agent has stopped retrying and
+        // is producing the answer.
+        let pendingText: Array<{ index: number; content: string }> = [];
+
+        const discardPendingText = () => {
+          for (const entry of pendingText) {
+            const seg = segments.segments[entry.index];
+            if (seg && seg.kind === "text") {
+              // Neutralise the segment so the UI does not render it.
+              seg.content = "";
+            }
+          }
+          pendingText = [];
+        };
+
         // Helper to process parsed stream events
         const handleParsedEvent = (chatEvent: ChatStreamEvent) => {
           // Accumulate for persistence
           if (chatEvent.type === "text" && chatEvent.text) {
-            fullResponse += chatEvent.text;
             const last = segments.segments[segments.segments.length - 1];
             if (last && last.kind === "text") {
               last.content += chatEvent.text;
+              const pending = pendingText[pendingText.length - 1];
+              if (pending && pending.index === segments.segments.length - 1) {
+                pending.content += chatEvent.text;
+              }
             } else {
               segments.segments.push({ kind: "text", content: chatEvent.text });
+              pendingText.push({
+                index: segments.segments.length - 1,
+                content: chatEvent.text,
+              });
             }
           }
           if (chatEvent.type === "thinking" && chatEvent.text) {
@@ -516,6 +541,9 @@ const plugin = definePlugin({
             }
           }
           if (chatEvent.type === "tool_use") {
+            // Any text that accumulated before this tool call is retry
+            // narration ("Let me try..."). Drop it from persistence.
+            discardPendingText();
             segments.segments.push({
               kind: "tool",
               name: chatEvent.name ?? "tool",
@@ -524,6 +552,8 @@ const plugin = definePlugin({
             });
           }
           if (chatEvent.type === "tool_result") {
+            // A tool result also resets the "final answer" window.
+            discardPendingText();
             for (let i = segments.segments.length - 1; i >= 0; i--) {
               const seg = segments.segments[i];
               if (seg && seg.kind === "tool" && seg.result === undefined) {
@@ -538,13 +568,27 @@ const plugin = definePlugin({
             thread.sessionId = chatEvent.sessionId;
           }
 
-          // Terminal events: run completed or errored — resolve the wait
+          // Terminal events: run completed or errored — resolve the wait.
+          // Whatever text is still pending at this point IS the final
+          // answer (no tool call followed it), so keep it.
           if (chatEvent.type === "result" || chatEvent.type === "error") {
+            // Rebuild fullResponse from the retained text segments so it
+            // matches what the UI will render.
+            fullResponse = segments.segments
+              .filter((seg): seg is { kind: "text"; content: string } =>
+                seg.kind === "text" && typeof seg.content === "string" && seg.content.length > 0)
+              .map((seg) => seg.content)
+              .join("");
+            pendingText = [];
             clearTimeout(timer);
             resolve();
           }
 
-          // Push event to UI via SSE stream in real-time
+          // Push event to UI via SSE stream in real-time.
+          // We intentionally still emit intermediate text to the live
+          // stream so users see something is happening — the filtering
+          // above only applies to the persisted message that survives
+          // after the run completes.
           ctx.streams.emit(streamChannel, chatEvent);
         };
 
