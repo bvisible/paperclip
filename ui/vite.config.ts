@@ -9,8 +9,16 @@ import { createUiDevWatchOptions } from "./src/lib/vite-watch";
 // deployment behind nginx that proxies /paperclip/* → Paperclip local_trusted).
 const base = process.env.PAPERCLIP_BASE_URL || "/";
 
+// Explicit replacement so Vite inlines the deployment flag even when the
+// `.env.production` file is not picked up in some build environments (pnpm
+// monorepo + --filter quirks).
+const paperclipDeployment = process.env.VITE_PAPERCLIP_DEPLOYMENT || "";
+
 export default defineConfig(({ mode }) => ({
   base,
+  define: {
+    "import.meta.env.VITE_PAPERCLIP_DEPLOYMENT": JSON.stringify(paperclipDeployment),
+  },
   plugins: [react(), tailwindcss()],
   build: {
     minify: "esbuild",
