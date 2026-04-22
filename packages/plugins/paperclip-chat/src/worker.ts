@@ -346,6 +346,15 @@ const plugin = definePlugin({
       const title = (params.title as string) ?? "New Chat";
       if (!companyId) throw new Error("companyId is required");
 
+      // The bridge route injects `_actor: { userId }` into params when the
+      // HTTP caller is an authenticated board user. Persist that as
+      // `createdBy` so sendMessage can later forward it to the adapter
+      // for per-user session key scoping.
+      const actor = (params._actor ?? params.actor) as { userId?: string } | null | undefined;
+      const actorUserId = (actor && typeof actor.userId === "string" && actor.userId.length > 0)
+        ? actor.userId
+        : null;
+
       const thread: ChatThread = {
         id: generateId(),
         companyId,
@@ -354,7 +363,7 @@ const plugin = definePlugin({
         adapterType,
         model,
         status: "idle",
-        createdBy: null,
+        createdBy: actorUserId,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -634,6 +643,12 @@ const plugin = definePlugin({
         ctx.agents.sessions.sendMessage(sessionId, companyId, {
           prompt: enrichedMessage,
           reason: "Chat plugin: user message",
+          // Forward the Frappe/Neoffice session user so the adapter scopes
+          // the engine-side session key per user. Threads with a null
+          // createdBy (legacy / system-invoked) fall back to thread-only
+          // scoping, which is still isolated enough — it just doesn't
+          // cloister MEMORY across users sharing the same thread id space.
+          actorUserId: thread.createdBy ?? undefined,
           onEvent: (event: AgentSessionEvent) => {
             // The host forwards raw output chunks as "chunk" events.
             // Claude CLI uses stdout, OpenClaw Gateway routes its events through

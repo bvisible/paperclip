@@ -145,16 +145,25 @@ export function resolveSessionKey(input: {
   runId: string;
   issueId: string | null;
   chatSessionId?: string | null;
+  userId?: string | null;
 }): string {
   const fallback = input.configuredSessionKey ?? "paperclip";
+  const userSegment = input.userId
+    ? `user:${input.userId.replace(/[^a-zA-Z0-9._@-]/g, "_")}:`
+    : "";
   // Chat plugin wakeups always derive their key from the Paperclip session
   // id so each chat thread gets an isolated engine-side session. This
   // mirrors the Slack/Telegram/Discord adapter pattern and prevents
   // cumulative wake-event accumulation from overflowing the model
   // context window (OpenClaw issue #29729).
+  //
+  // When an external user id is known (Frappe/Neoffice integration passes
+  // `X-Paperclip-User`), it's injected into the key so that one agent's
+  // MEMORY/journals stay scoped per user instead of being shared across
+  // accounts that happen to talk to the same agent.
   if (input.chatSessionId) {
     return prefixSessionKeyForAgent(
-      `paperclip:chat:${input.chatSessionId}`,
+      `paperclip:chat:${userSegment}${input.chatSessionId}`,
       input.agentId,
     );
   }
@@ -162,7 +171,10 @@ export function resolveSessionKey(input: {
     return prefixSessionKeyForAgent(`paperclip:run:${input.runId}`, input.agentId);
   }
   if (input.strategy === "issue" && input.issueId) {
-    return prefixSessionKeyForAgent(`paperclip:issue:${input.issueId}`, input.agentId);
+    return prefixSessionKeyForAgent(
+      `paperclip:issue:${userSegment}${input.issueId}`,
+      input.agentId,
+    );
   }
   return prefixSessionKeyForAgent(fallback, input.agentId);
 }
@@ -1219,6 +1231,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
   const configuredSessionKey = nonEmpty(ctx.config.sessionKey);
   const chatSessionId = nonEmpty(ctx.context.chatSessionId);
+  // Scope the session key on the external actor (e.g. Frappe session user)
+  // so the agent's MEMORY/journals don't bleed across users talking to the
+  // same agent in different threads.
+  const actorUserId =
+    nonEmpty((ctx.context as { actorUserId?: unknown }).actorUserId) ??
+    nonEmpty((ctx.context as { externalUserId?: unknown }).externalUserId);
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
@@ -1226,6 +1244,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     runId: ctx.runId,
     issueId: wakePayload.issueId,
     chatSessionId,
+    userId: actorUserId,
   });
 
   // Chat sessions (e.g. paperclip-chat plugin) inject the user prompt via

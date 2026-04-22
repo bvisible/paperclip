@@ -1040,6 +1040,12 @@ export function buildHostServices(
             // value mirrors Slack/Telegram/Discord adapters which key
             // their LLM sessions by thread id (OpenClaw issue #29729).
             chatSessionId: params.sessionId,
+            // When the plugin knows the external end-user (e.g. Frappe
+            // session.user), forward it so the adapter can scope the LLM
+            // session key per user. Without this, two Frappe users with
+            // different threads still share MEMORY/journals at the
+            // engine layer (only the thread id differs in the key).
+            actorUserId: params.actorUserId,
           },
           requestedByActorType: "system",
           requestedByActorId: pluginId,

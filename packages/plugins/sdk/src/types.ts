@@ -1010,6 +1010,13 @@ export interface PluginAgentSessionsClient {
   sendMessage(sessionId: string, companyId: string, opts: {
     prompt: string;
     reason?: string;
+    /**
+     * External user id (e.g. Frappe/Neoffice session user). Forwarded to
+     * the adapter so the engine-side session key is scoped per user,
+     * keeping MEMORY/journals isolated across accounts that talk to the
+     * same agent.
+     */
+    actorUserId?: string;
     onEvent?: (event: AgentSessionEvent) => void;
   }): Promise<AgentSessionSendResult>;
 

@@ -967,13 +967,27 @@ export function pluginRoutes(
       assertCompanyAccess(req, body.companyId);
     }
 
+    // Inject the authenticated board actor so plugins that need to know
+    // who is calling (e.g. paperclip-chat.createThread needs to stamp
+    // `createdBy` on the thread for later per-user session-key scoping)
+    // can read it from `params._actor`. The field is reserved — user
+    // plugins shouldn't populate it themselves.
+    const actorInjected =
+      req.actor.type === "board" && typeof req.actor.userId === "string" && req.actor.userId.length > 0
+        ? { userId: req.actor.userId, userName: req.actor.userName ?? null }
+        : null;
+    const enrichedParams = {
+      ...(body.params ?? {}),
+      _actor: actorInjected,
+    };
+
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "performAction",
         {
           key: body.key,
-          params: body.params ?? {},
+          params: enrichedParams,
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );

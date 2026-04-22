@@ -685,7 +685,18 @@ export interface WorkerToHostMethods {
     result: Array<{ sessionId: string; agentId: string; companyId: string; status: "active" | "closed"; createdAt: string }>,
   ];
   "agents.sessions.sendMessage": [
-    params: { sessionId: string; companyId: string; prompt: string; reason?: string },
+    params: {
+      sessionId: string;
+      companyId: string;
+      prompt: string;
+      reason?: string;
+      /**
+       * External user id (e.g. Frappe/Neoffice session user) owning the
+       * conversation. Forwarded to the adapter so it can scope the LLM
+       * session key per user instead of per thread only.
+       */
+      actorUserId?: string;
+    },
     result: { runId: string },
   ];
   "agents.sessions.close": [
