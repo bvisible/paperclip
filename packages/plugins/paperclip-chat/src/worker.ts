@@ -620,30 +620,32 @@ const plugin = definePlugin({
         };
 
         const discardFollowUpPending = () => {
-          if (!followUp) return;
-          for (const entry of followUp.pendingText) {
-            const seg = followUp.segments.segments[entry.index];
+          const fu = followUp;
+          if (!fu) return;
+          for (const entry of fu.pendingText) {
+            const seg = fu.segments.segments[entry.index];
             if (seg && seg.kind === "text") seg.content = "";
           }
-          followUp.pendingText = [];
+          fu.pendingText = [];
         };
 
         const handleFollowUpParsed = (evt: ChatStreamEvent) => {
           if (!followUp) resetFollowUp();
-          if (!followUp) return;
+          const fu = followUp;
+          if (!fu) return;
 
           if (evt.type === "text" && evt.text) {
-            const last = followUp.segments.segments[followUp.segments.segments.length - 1];
+            const last = fu.segments.segments[fu.segments.segments.length - 1];
             if (last && last.kind === "text") {
               last.content += evt.text;
-              const pending = followUp.pendingText[followUp.pendingText.length - 1];
-              if (pending && pending.index === followUp.segments.segments.length - 1) {
+              const pending = fu.pendingText[fu.pendingText.length - 1];
+              if (pending && pending.index === fu.segments.segments.length - 1) {
                 pending.content += evt.text;
               }
             } else {
-              followUp.segments.segments.push({ kind: "text", content: evt.text });
-              followUp.pendingText.push({
-                index: followUp.segments.segments.length - 1,
+              fu.segments.segments.push({ kind: "text", content: evt.text });
+              fu.pendingText.push({
+                index: fu.segments.segments.length - 1,
                 content: evt.text,
               });
             }
@@ -652,7 +654,7 @@ const plugin = definePlugin({
           }
           if (evt.type === "tool_use") {
             discardFollowUpPending();
-            followUp.segments.segments.push({
+            fu.segments.segments.push({
               kind: "tool",
               name: evt.name ?? "tool",
               input: evt.input,
@@ -662,8 +664,8 @@ const plugin = definePlugin({
             return;
           }
           if (evt.type === "tool_result") {
-            for (let i = followUp.segments.segments.length - 1; i >= 0; i--) {
-              const seg = followUp.segments.segments[i];
+            for (let i = fu.segments.segments.length - 1; i >= 0; i--) {
+              const seg = fu.segments.segments[i];
               if (seg && seg.kind === "tool" && seg.result === undefined) {
                 seg.result = evt.content ?? "";
                 seg.isError = evt.isError ?? false;
