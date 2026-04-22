@@ -1191,7 +1191,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
   }
 
-  const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 120)));
+  // Default bumped from 120 s to 300 s: Nora's CEO pattern spawns a
+  // specialist agent, then calls sessions_send with timeoutSeconds=60 to
+  // receive the final result. Add OpenClaw bootstrap + tool latency on
+  // top and a single turn can legitimately run for 2–3 minutes. 300 s
+  // leaves headroom without masking genuine hangs (safety-net still
+  // kicks in after 5 minutes).
+  const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 300)));
   const timeoutMs = timeoutSec > 0 ? timeoutSec * 1000 : 0;
   const connectTimeoutMs = timeoutMs > 0 ? Math.min(timeoutMs, 15_000) : 10_000;
   const waitTimeoutMs = parseOptionalPositiveInteger(ctx.config.waitTimeoutMs) ?? (timeoutMs > 0 ? timeoutMs : 30_000);
