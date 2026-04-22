@@ -689,6 +689,7 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             prompt: string;
             reason?: string;
             actorUserId?: string;
+            noraTraceId?: string;
             onEvent?: (event: AgentSessionEvent) => void;
           }) {
             if (opts.onEvent) {
@@ -701,6 +702,7 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
                 prompt: opts.prompt,
                 reason: opts.reason,
                 actorUserId: opts.actorUserId,
+                noraTraceId: opts.noraTraceId,
               });
             } catch (err) {
               sessionEventCallbacks.delete(sessionId);

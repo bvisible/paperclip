@@ -1017,6 +1017,13 @@ export interface PluginAgentSessionsClient {
      * same agent.
      */
     actorUserId?: string;
+    /**
+     * Distributed trace id propagated from the external system (NORA
+     * Quick Chat → Frappe → Paperclip bridge → this call → adapter →
+     * OpenClaw). Every log line that touches this request should carry
+     * it so a single grep reconstructs the request timeline.
+     */
+    noraTraceId?: string;
     onEvent?: (event: AgentSessionEvent) => void;
   }): Promise<AgentSessionSendResult>;
 

@@ -1046,6 +1046,11 @@ export function buildHostServices(
             // different threads still share MEMORY/journals at the
             // engine layer (only the thread id differs in the key).
             actorUserId: params.actorUserId,
+            // Distributed trace id propagated from NORA (see
+            // nora_quick_chat.js → Frappe client.py → paperclip bridge
+            // route → this call). The openclaw-gateway adapter tags all
+            // its log events + stream chunks with this id.
+            noraTraceId: params.noraTraceId,
           },
           requestedByActorType: "system",
           requestedByActorId: pluginId,

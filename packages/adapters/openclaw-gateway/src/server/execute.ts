@@ -1243,6 +1243,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const actorUserId =
     nonEmpty((ctx.context as { actorUserId?: unknown }).actorUserId) ??
     nonEmpty((ctx.context as { externalUserId?: unknown }).externalUserId);
+  // Distributed trace id — propagated from NORA Quick Chat through the
+  // Paperclip bridge into the plugin-host contextSnapshot. Every onLog
+  // call made during this run prefixes its message with `[trace=<id>]`
+  // so a single grep on the gateway log stitches Paperclip + adapter +
+  // OpenClaw CLI timelines together.
+  const noraTraceId = nonEmpty(
+    (ctx.context as { noraTraceId?: unknown }).noraTraceId,
+  );
+  const logPrefix = noraTraceId ? `[trace=${noraTraceId}] ` : "";
+  const traceLog = (stream: "stdout" | "stderr", message: string) =>
+    ctx.onLog(stream, logPrefix + message);
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
@@ -1252,6 +1263,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     chatSessionId,
     userId: actorUserId,
   });
+  if (noraTraceId) {
+    traceLog(
+      "stderr",
+      `openclaw-gateway run sessionKey=${sessionKey} agentId=${nonEmpty(ctx.config.agentId) ?? "-"}`,
+    );
+  }
 
   // Chat sessions (e.g. paperclip-chat plugin) inject the user prompt via
   // ctx.context.chatPrompt. In that mode we send ONLY the user's message to

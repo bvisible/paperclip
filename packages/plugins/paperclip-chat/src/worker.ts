@@ -460,6 +460,24 @@ const plugin = definePlugin({
       // Track whether this is the first message in the thread (new session)
       const isNewSession = !thread.sessionId;
 
+      // NORA propagates a trace id through the Paperclip bridge
+      // (`params._noraTraceId` comes from the `X-Nora-Trace-Id` header the
+      // Quick Chat JS stamps on every user turn). Carry it into the
+      // sendMessage opts so the adapter can add it to every log line.
+      const noraTraceIdRaw = (params as Record<string, unknown>)._noraTraceId;
+      const noraTraceId =
+        typeof noraTraceIdRaw === "string" && noraTraceIdRaw.length > 0
+          ? noraTraceIdRaw
+          : undefined;
+      if (noraTraceId) {
+        ctx.logger.info("chat.sendMessage:start", {
+          threadId,
+          runId: undefined,
+          noraTraceId,
+          newSession: isNewSession,
+        });
+      }
+
       // Create or resume agent session
       let sessionId = thread.sessionId;
       if (!sessionId) {
@@ -797,6 +815,8 @@ const plugin = definePlugin({
           // scoping, which is still isolated enough — it just doesn't
           // cloister MEMORY across users sharing the same thread id space.
           actorUserId: thread.createdBy ?? undefined,
+          // Distributed trace id — see block above.
+          noraTraceId,
           onEvent: (event: AgentSessionEvent) => {
             // Reject everything after the follow-up window closes.
             if (phase === "done") return;

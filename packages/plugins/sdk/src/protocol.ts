@@ -696,6 +696,15 @@ export interface WorkerToHostMethods {
        * session key per user instead of per thread only.
        */
       actorUserId?: string;
+      /**
+       * Distributed trace id propagated from NORA/Neoffice so every log
+       * line in the Paperclip server, chat worker, openclaw-gateway
+       * adapter, and downstream agents can be correlated with a single
+       * grep. Stamped by the Quick Chat JS, forwarded by NORA's Python
+       * client, and read from the HTTP header by the plugins bridge
+       * route as `params._noraTraceId` before it reaches this call.
+       */
+      noraTraceId?: string;
     },
     result: { runId: string },
   ];

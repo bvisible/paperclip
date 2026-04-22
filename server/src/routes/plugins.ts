@@ -976,9 +976,20 @@ export function pluginRoutes(
       req.actor.type === "board" && typeof req.actor.userId === "string" && req.actor.userId.length > 0
         ? { userId: req.actor.userId, userName: req.actor.userName ?? null }
         : null;
+    // Propagate NORA's end-to-end trace id when present. The header is
+    // stamped by the Quick Chat JS (nora_quick_chat.js) and forwarded by
+    // nora/integrations/paperclip/client.py. Anything downstream that
+    // reads `params._noraTraceId` (chat worker, plugin-host-services,
+    // openclaw-gateway adapter) will carry the same id into its own
+    // structured logs — one grep reconstructs the full request timeline.
+    const noraTraceId =
+      (req.headers["x-nora-trace-id"] as string | undefined) ??
+      (req.headers["X-Nora-Trace-Id" as unknown as string] as unknown as string | undefined) ??
+      null;
     const enrichedParams = {
       ...(body.params ?? {}),
       _actor: actorInjected,
+      _noraTraceId: noraTraceId,
     };
 
     try {
