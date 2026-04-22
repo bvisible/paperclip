@@ -216,6 +216,38 @@ export interface SeedAgentServices {
     actorUserId: string | null;
     seedKey: string;
   }) => Promise<void>;
+  /**
+   * Optional: provision a per-agent OpenClaw isolated workspace + write the
+   * Paperclip claimed-API-key file for it. When provided, seed agents get
+   * `adapterConfig.agentId` and `adapterConfig.claimedApiKeyPath` so the
+   * OpenClaw adapter routes each agent to its own memory store.
+   *
+   * When omitted (local dev / smoke tests), all agents share the default
+   * `~/.openclaw/workspace/` — NOT multi-tenant safe.
+   *
+   * Returns the paths to merge into adapterConfig; the seed loop handles the
+   * DB update.
+   */
+  provisionIsolatedAgent?: (args: {
+    companyId: string;
+    role: string;
+    agentName: string;
+    paperclipAgentId: string;
+  }) => Promise<{ openclawAgentId: string; claimedApiKeyPath: string }>;
+  /**
+   * Optional: update an agent's adapterConfig with new fields (merged). Used
+   * to inject the isolated-agent routing fields after `createAgent` +
+   * `provisionIsolatedAgent` complete.
+   */
+  patchAgentAdapterConfig?: (
+    agentId: string,
+    patch: Record<string, unknown>,
+  ) => Promise<void>;
+  /**
+   * Optional: called once after all seed agents have been provisioned so the
+   * gateway reloads its config and picks up the newly added isolated agents.
+   */
+  onAllAgentsProvisioned?: () => Promise<void>;
 }
 
 export interface SeedAgentOptions {
@@ -303,6 +335,34 @@ export async function seedDefaultAgentsForCompany(
       createdAgent.id,
       options.actorUserId,
     );
+
+    // Multi-tenant isolation: provision a per-agent OpenClaw workspace so
+    // memory never leaks between agents/companies. See
+    // server/src/services/openclaw-isolated-agents.ts for the shell plumbing.
+    if (services.provisionIsolatedAgent && services.patchAgentAdapterConfig) {
+      try {
+        const iso = await services.provisionIsolatedAgent({
+          companyId,
+          role: spec.role,
+          agentName: spec.name,
+          paperclipAgentId: createdAgent.id,
+        });
+        await services.patchAgentAdapterConfig(createdAgent.id, {
+          agentId: iso.openclawAgentId,
+          claimedApiKeyPath: iso.claimedApiKeyPath,
+        });
+      } catch (err) {
+        // Non-fatal — the agent still works on the shared workspace and the
+        // reconcile CLI can fix isolation later. Surfaced via console so prod
+        // logs catch it.
+        // eslint-disable-next-line no-console
+        console.error(
+          `[seed-agents] isolated-agent provision failed for ${spec.seedKey} (${createdAgent.id})`,
+          err,
+        );
+      }
+    }
+
     await services.logActivity({
       companyId,
       agentId: createdAgent.id,
@@ -311,6 +371,15 @@ export async function seedDefaultAgentsForCompany(
     });
 
     created.push({ agentId: createdAgent.id, seedKey: spec.seedKey });
+  }
+
+  if (created.length > 0 && services.onAllAgentsProvisioned) {
+    try {
+      await services.onAllAgentsProvisioned();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[seed-agents] onAllAgentsProvisioned hook failed", err);
+    }
   }
   return created;
 }

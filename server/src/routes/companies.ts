@@ -25,6 +25,12 @@ import {
   logActivity,
 } from "../services/index.js";
 import { seedDefaultAgentsForCompany } from "../services/seed-agents.js";
+import {
+  defaultIsolatedConfig,
+  isIsolationEnabled,
+  provisionIsolatedAgent,
+  restartOpenClawGateway,
+} from "../services/openclaw-isolated-agents.js";
 import { loadInstructionsBundleForNewAgent } from "../services/default-agent-instructions.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
@@ -345,6 +351,52 @@ export function companyRoutes(db: Db, storage?: StorageService) {
               details: { seedKey },
             });
           },
+          // Multi-tenant isolation hooks — gated by PAPERCLIP_OPENCLAW_ISOLATED=1
+          // so local dev and smoke tests keep the legacy single-workspace flow.
+          ...(isIsolationEnabled()
+            ? {
+                provisionIsolatedAgent: async ({
+                  companyId: cid,
+                  role,
+                  agentName,
+                  paperclipAgentId,
+                }) => {
+                  // Mint a dedicated API key for this agent so the claimed
+                  // key file inside the isolated workspace is real and not
+                  // shared with other agents.
+                  const apiKey = await agents.createApiKey(paperclipAgentId, "openclaw-isolated");
+                  const iso = await provisionIsolatedAgent({
+                    companyId: cid,
+                    role,
+                    agentName,
+                    paperclipAgentId,
+                    paperclipApiKey: apiKey.token,
+                  }, defaultIsolatedConfig());
+                  return {
+                    openclawAgentId: iso.openclawAgentId,
+                    claimedApiKeyPath: iso.claimedApiKeyPath,
+                  };
+                },
+                patchAgentAdapterConfig: async (agentId, patch) => {
+                  const existing = await agents.getById(agentId);
+                  if (!existing) return;
+                  const existingConfig = (existing.adapterConfig ?? {}) as Record<string, unknown>;
+                  await agents.update(agentId, {
+                    adapterConfig: { ...existingConfig, ...patch },
+                  });
+                },
+                onAllAgentsProvisioned: async () => {
+                  const result = await restartOpenClawGateway(defaultIsolatedConfig());
+                  if (!result.ok) {
+                    // eslint-disable-next-line no-console
+                    console.warn(
+                      "[company.create] openclaw gateway restart failed — new isolated agents will not be routable until next restart",
+                      result.message,
+                    );
+                  }
+                },
+              }
+            : {}),
         },
         {
           openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:3200",
