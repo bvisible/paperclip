@@ -521,7 +521,80 @@ const plugin = definePlugin({
       // queued — the onEvent callback fires asynchronously via JSON-RPC
       // notifications.  We must wait for the terminal event before saving.
       const RUN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+      const FOLLOW_UP_WINDOW_MS = 90 * 1000; // 90s after primary terminal
       let runId: string | undefined;
+
+      // Multi-phase state machine:
+      //  - "primary"   : first run; feeds the `segments` container above and
+      //                  resolves the main Promise at its terminal event.
+      //  - "follow-up" : OpenClaw may fire additional heartbeat runs on the
+      //                  same agent session (subagent_announce → second turn
+      //                  with the real result). We keep listening, parse
+      //                  their events into a fresh `followUp` container, and
+      //                  persist each terminated follow-up run as a NEW
+      //                  assistant message in the same thread. A 90 s
+      //                  inactivity timer finalises the session.
+      //  - "done"      : terminal — further events are ignored.
+      let phase: "primary" | "follow-up" | "done" = "primary";
+      let followUp: {
+        segments: ChatMessage["metadata"];
+        fullResponse: string;
+        pendingText: Array<{ index: number; content: string }>;
+        runId: string | null;
+      } | null = null;
+      let followUpTimer: NodeJS.Timeout | null = null;
+
+      const armFollowUpTimer = () => {
+        if (followUpTimer) clearTimeout(followUpTimer);
+        followUpTimer = setTimeout(() => {
+          phase = "done";
+        }, FOLLOW_UP_WINDOW_MS);
+      };
+
+      const resetFollowUp = () => {
+        followUp = {
+          segments: { segments: [] },
+          fullResponse: "",
+          pendingText: [],
+          runId: null,
+        };
+      };
+
+      const persistFollowUpMessage = async () => {
+        if (!followUp) return;
+        const rebuilt = followUp.segments.segments
+          .filter((seg): seg is { kind: "text"; content: string } =>
+            seg.kind === "text" && typeof seg.content === "string" && seg.content.length > 0,
+          )
+          .map((seg) => seg.content)
+          .join("");
+        followUp.fullResponse = rebuilt;
+        if (!rebuilt.trim() && followUp.segments.segments.length === 0) return;
+
+        try {
+          const latestMsgs = await getMessages(ctx, threadId);
+          const msg: ChatMessage = {
+            id: generateId(),
+            threadId,
+            role: "assistant",
+            content: rebuilt,
+            metadata: followUp.segments,
+            createdAt: new Date().toISOString(),
+          };
+          latestMsgs.push(msg);
+          await saveMessages(ctx, threadId, latestMsgs);
+          ctx.logger.info("follow-up assistant turn persisted", {
+            threadId,
+            followUpRunId: followUp.runId,
+            len: rebuilt.length,
+          });
+        } catch (saveErr) {
+          ctx.logger.error("failed to persist follow-up message", {
+            threadId,
+            error: String(saveErr),
+          });
+        }
+      };
 
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -546,7 +619,78 @@ const plugin = definePlugin({
           pendingText = [];
         };
 
-        // Helper to process parsed stream events
+        const discardFollowUpPending = () => {
+          if (!followUp) return;
+          for (const entry of followUp.pendingText) {
+            const seg = followUp.segments.segments[entry.index];
+            if (seg && seg.kind === "text") seg.content = "";
+          }
+          followUp.pendingText = [];
+        };
+
+        const handleFollowUpParsed = (evt: ChatStreamEvent) => {
+          if (!followUp) resetFollowUp();
+          if (!followUp) return;
+
+          if (evt.type === "text" && evt.text) {
+            const last = followUp.segments.segments[followUp.segments.segments.length - 1];
+            if (last && last.kind === "text") {
+              last.content += evt.text;
+              const pending = followUp.pendingText[followUp.pendingText.length - 1];
+              if (pending && pending.index === followUp.segments.segments.length - 1) {
+                pending.content += evt.text;
+              }
+            } else {
+              followUp.segments.segments.push({ kind: "text", content: evt.text });
+              followUp.pendingText.push({
+                index: followUp.segments.segments.length - 1,
+                content: evt.text,
+              });
+            }
+            ctx.streams.emit(streamChannel, evt);
+            return;
+          }
+          if (evt.type === "tool_use") {
+            discardFollowUpPending();
+            followUp.segments.segments.push({
+              kind: "tool",
+              name: evt.name ?? "tool",
+              input: evt.input,
+              startedAt: Date.now(),
+            });
+            ctx.streams.emit(streamChannel, evt);
+            return;
+          }
+          if (evt.type === "tool_result") {
+            for (let i = followUp.segments.segments.length - 1; i >= 0; i--) {
+              const seg = followUp.segments.segments[i];
+              if (seg && seg.kind === "tool" && seg.result === undefined) {
+                seg.result = evt.content ?? "";
+                seg.isError = evt.isError ?? false;
+                seg.finishedAt = Date.now();
+                break;
+              }
+            }
+            ctx.streams.emit(streamChannel, evt);
+            return;
+          }
+          if (evt.type === "result" || evt.type === "error") {
+            // Persist this follow-up turn as a new assistant message,
+            // then reset state and keep the window armed so cascading
+            // runs (spawn → announce → spawn → …) all get their own
+            // message.
+            persistFollowUpMessage().finally(() => {
+              followUp = null;
+              armFollowUpTimer();
+            });
+            return;
+          }
+          ctx.streams.emit(streamChannel, evt);
+        };
+
+        const followUpParser = createStreamJsonParser(handleFollowUpParsed);
+
+        // Helper to process parsed stream events in primary phase
         const handleParsedEvent = (chatEvent: ChatStreamEvent) => {
           // Accumulate for persistence
           if (chatEvent.type === "text" && chatEvent.text) {
@@ -626,6 +770,8 @@ const plugin = definePlugin({
               segments.segments.push({ kind: "text", content: fullResponse });
             }
             clearTimeout(timer);
+            phase = "follow-up";
+            armFollowUpTimer();
             resolve();
           }
 
@@ -650,21 +796,25 @@ const plugin = definePlugin({
           // cloister MEMORY across users sharing the same thread id space.
           actorUserId: thread.createdBy ?? undefined,
           onEvent: (event: AgentSessionEvent) => {
+            // Reject everything after the follow-up window closes.
+            if (phase === "done") return;
+
+            const activeParser = phase === "primary" ? parser : followUpParser;
+            const activeHandler = phase === "primary" ? handleParsedEvent : handleFollowUpParsed;
+
             // The host forwards raw output chunks as "chunk" events.
             // Claude CLI uses stdout, OpenClaw Gateway routes its events through
             // the adapter log channel (stderr/system). We feed every stream to
             // the parser; the per-line regex matchers decide what to do.
             if (event.eventType === "chunk") {
-              if (event.message) {
-                parser.push(event.message);
-              }
+              if (event.message) activeParser.push(event.message);
               return;
             }
 
             // Terminal events from the host (run status changes)
             if (event.eventType === "done") {
-              parser.flush();
-              handleParsedEvent({
+              activeParser.flush();
+              activeHandler({
                 type: "result",
                 usage: event.payload?.usage as ChatStreamEvent["usage"],
                 costUsd: event.payload?.costUsd as number | undefined,
@@ -672,8 +822,8 @@ const plugin = definePlugin({
               return;
             }
             if (event.eventType === "error") {
-              parser.flush();
-              handleParsedEvent({ type: "error", text: event.message ?? "Unknown error" });
+              activeParser.flush();
+              activeHandler({ type: "error", text: event.message ?? "Unknown error" });
               return;
             }
             if (event.eventType === "status" && event.payload?.sessionId) {

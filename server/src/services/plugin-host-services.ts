@@ -1058,20 +1058,59 @@ export function buildHostServices(
         if (notifyWorker) {
           const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 
+          // Follow-up window: after the INITIAL run terminates we keep the
+          // subscription alive for a while so subagent_announce-triggered
+          // runs on the same agent/session (which OpenClaw runs as fresh
+          // heartbeat runs) can still be forwarded as additional chunks on
+          // the same plugin session. Without this the second assistant
+          // turn — the one that carries the real result — never reaches
+          // the plugin and the UI shows a stale placeholder.
+          const FOLLOW_UP_WINDOW_MS = 90 * 1000;
+
+          // Track every runId we have forwarded events for. Any new runId
+          // seen during the follow-up window that targets the same agent
+          // in the same company is assumed to be a continuation of this
+          // chat session and joins the set.
+          const knownRunIds = new Set<string>([run.id]);
+          let followUpTimer: NodeJS.Timeout | null = null;
+          let cleanupCalled = false;
+
           const cleanup = () => {
+            if (cleanupCalled) return;
+            cleanupCalled = true;
             unsubscribe();
             clearTimeout(timeoutTimer);
+            if (followUpTimer) clearTimeout(followUpTimer);
             activeSubscriptions.delete(entry);
+          };
+
+          const armFollowUpTimer = () => {
+            if (followUpTimer) clearTimeout(followUpTimer);
+            followUpTimer = setTimeout(() => {
+              cleanup();
+            }, FOLLOW_UP_WINDOW_MS);
           };
 
           const unsubscribe = subscribeCompanyLiveEvents(companyId, (event) => {
             const payload = event.payload as Record<string, unknown> | undefined;
-            if (!payload || payload.runId !== run.id) return;
+            if (!payload) return;
+            const eventRunId = payload.runId as string | undefined;
+            const eventAgentId = payload.agentId as string | undefined;
+            if (!eventRunId) return;
+
+            // Accept events from the original run, or from any additional
+            // run that targets the same agent in this company DURING the
+            // follow-up window (subagent_announce triggers those).
+            if (!knownRunIds.has(eventRunId)) {
+              if (!followUpTimer) return; // outside the follow-up window
+              if (eventAgentId && eventAgentId !== session.agentId) return;
+              knownRunIds.add(eventRunId);
+            }
 
             if (event.type === "heartbeat.run.log" || event.type === "heartbeat.run.event") {
               notifyWorker("agents.sessions.event", {
                 sessionId: params.sessionId,
-                runId: run.id,
+                runId: eventRunId,
                 seq: (payload.seq as number) ?? 0,
                 eventType: "chunk",
                 stream: (payload.stream as string) ?? null,
@@ -1083,18 +1122,21 @@ export function buildHostServices(
               if (TERMINAL_STATUSES.has(status)) {
                 notifyWorker("agents.sessions.event", {
                   sessionId: params.sessionId,
-                  runId: run.id,
+                  runId: eventRunId,
                   seq: 0,
                   eventType: status === "succeeded" ? "done" : "error",
                   stream: "system",
                   message: status === "succeeded" ? "Run completed" : `Run ${status}`,
                   payload: payload,
                 });
-                cleanup();
+                // First terminal = arm the follow-up window. Subsequent
+                // terminals (from cascading subagent_announce runs) reset
+                // it to give the chain room to breathe.
+                armFollowUpTimer();
               } else {
                 notifyWorker("agents.sessions.event", {
                   sessionId: params.sessionId,
-                  runId: run.id,
+                  runId: eventRunId,
                   seq: 0,
                   eventType: "status",
                   stream: "system",
