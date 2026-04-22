@@ -567,6 +567,9 @@ const plugin = definePlugin({
           if (chatEvent.type === "tool_use") {
             // Any text that accumulated before this tool call is retry
             // narration ("Let me try..."). Drop it from persistence.
+            // Only tool_use resets the window — tool_result alone does
+            // NOT, because a clean final answer after a tool_result (no
+            // further tool_use) is legitimate and must survive the filter.
             discardPendingText();
             segments.segments.push({
               kind: "tool",
@@ -576,8 +579,10 @@ const plugin = definePlugin({
             });
           }
           if (chatEvent.type === "tool_result") {
-            // A tool result also resets the "final answer" window.
-            discardPendingText();
+            // Attach the result to the most recent open tool segment.
+            // Intentionally do NOT discard pendingText: text emitted AFTER
+            // a tool result (with no following tool_use) is the final
+            // answer and must be kept.
             for (let i = segments.segments.length - 1; i >= 0; i--) {
               const seg = segments.segments[i];
               if (seg && seg.kind === "tool" && seg.result === undefined) {
