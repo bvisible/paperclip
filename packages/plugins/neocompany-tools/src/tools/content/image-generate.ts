@@ -36,7 +36,7 @@ interface Params {
 }
 
 const OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations";
-const DEFAULT_MODEL = "gpt-image-1.5";
+const DEFAULT_MODEL = "gpt-image-2";
 
 async function resolveSecret(
   ctx: PluginContext,
@@ -57,8 +57,9 @@ async function generateWithOpenAI(
   width: number,
   height: number,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-  // gpt-image-1.5 accepts the same sizes as gpt-image-1: "1024x1024",
-  // "1024x1536", "1536x1024", "auto". v1.5 is ~4x faster and 20% cheaper.
+  // gpt-image-2 supports up to 2K output, varied aspect ratios, and native
+  // thinking (slower than 1.5 but better text rendering + prompt adherence).
+  // Same size parameter shape as 1.5/1.
   const size = pickOpenAISize(width, height);
   const res = await ctx.http.fetch(OPENAI_IMAGE_URL, {
     method: "POST",

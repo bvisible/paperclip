@@ -476,7 +476,7 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: {
       displayName: "Generate image with AI",
       description:
-        "Generate a new image via an AI provider (OpenAI gpt-image-1.5 by default). If a templateId is provided, the brand template is composited on top of the raw image before saving. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
+        "Generate a new image via an AI provider (OpenAI gpt-image-2 by default). If a templateId is provided, the brand template is composited on top of the raw image before saving. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
       parametersSchema: {
         type: "object",
         properties: {

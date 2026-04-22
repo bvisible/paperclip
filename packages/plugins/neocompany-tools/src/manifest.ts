@@ -140,7 +140,7 @@ const manifest: PaperclipPluginManifestV1 = {
       openaiApiKeyRef: {
         type: "string",
         title: "OpenAI API Key",
-        description: "Secret reference to the OpenAI API key used by imageGenerate (gpt-image-1.5).",
+        description: "Secret reference to the OpenAI API key used by imageGenerate (gpt-image-2).",
         format: "secret-ref",
       },
       linkedinClientId: {
