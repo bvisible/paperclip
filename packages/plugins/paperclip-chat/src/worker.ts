@@ -537,7 +537,7 @@ const plugin = definePlugin({
       //  - "done"      : terminal — further events are ignored.
       let phase: "primary" | "follow-up" | "done" = "primary";
       let followUp: {
-        segments: ChatMessage["metadata"];
+        segments: NonNullable<ChatMessage["metadata"]>;
         fullResponse: string;
         pendingText: Array<{ index: number; content: string }>;
         runId: string | null;
