@@ -604,6 +604,13 @@ const plugin = definePlugin({
               .map((seg) => seg.content)
               .join("");
             pendingText = [];
+            // Fallback when the filter discarded everything and the model
+            // produced no final text — keep the UI from rendering an empty bubble.
+            if (!fullResponse.trim()) {
+              fullResponse =
+                "Je n'ai pas réussi à traiter cette demande. Peux-tu reformuler ou préciser ce que tu attends ?";
+              segments.segments.push({ kind: "text", content: fullResponse });
+            }
             clearTimeout(timer);
             resolve();
           }
