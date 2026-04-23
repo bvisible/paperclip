@@ -469,14 +469,38 @@ const plugin = definePlugin({
         typeof noraTraceIdRaw === "string" && noraTraceIdRaw.length > 0
           ? noraTraceIdRaw
           : undefined;
-      if (noraTraceId) {
-        ctx.logger.info("chat.sendMessage:start", {
-          threadId,
-          runId: undefined,
-          noraTraceId,
-          newSession: isNewSession,
-        });
-      }
+
+      // Structured trace emitter (same JSON shape as nora/utils/trace.py).
+      // Each line is prefixed with [trace=<id>] so journalctl scraping from
+      // nora.api.trace.show picks it up and extracts the JSON body. Silent
+      // no-op when no trace id is propagated (non-chat/paperclip runs).
+      const traceService = "paperclip-chat";
+      const emitTrace = (
+        event: string,
+        phase: "start" | "end" | "error",
+        extra: Record<string, unknown> = {},
+      ) => {
+        if (!noraTraceId) return;
+        const payload = {
+          ts: new Date().toISOString(),
+          trace_id: noraTraceId,
+          thread_id: threadId,
+          service: traceService,
+          event,
+          phase,
+          ...extra,
+        };
+        // `ctx.logger` goes to the plugin-host log; route through it and
+        // tag with the prefix so the `[trace=<id>]` regex in trace.show
+        // matches the line.
+        ctx.logger.info(`[trace=${noraTraceId}] ${JSON.stringify(payload)}`);
+      };
+
+      const traceSendStart = Date.now();
+      emitTrace("chat.sendMessage", "start", {
+        newSession: isNewSession,
+        msg_len: message.length,
+      });
 
       // Create or resume agent session
       let sessionId = thread.sessionId;
@@ -606,10 +630,19 @@ const plugin = definePlugin({
             followUpRunId: followUp.runId,
             len: rebuilt.length,
           });
+          emitTrace("chat.follow_up_turn", "end", {
+            status: "ok",
+            response_len: rebuilt.length,
+            segment_count: followUp.segments.segments.length,
+          });
         } catch (saveErr) {
           ctx.logger.error("failed to persist follow-up message", {
             threadId,
             error: String(saveErr),
+          });
+          emitTrace("chat.follow_up_turn", "error", {
+            status: "error",
+            error: String(saveErr).slice(0, 160),
           });
         }
       };
@@ -744,11 +777,15 @@ const plugin = definePlugin({
             // NOT, because a clean final answer after a tool_result (no
             // further tool_use) is legitimate and must survive the filter.
             discardPendingText();
+            const toolStart = Date.now();
             segments.segments.push({
               kind: "tool",
               name: chatEvent.name ?? "tool",
               input: chatEvent.input,
-              startedAt: Date.now(),
+              startedAt: toolStart,
+            });
+            emitTrace("chat.tool_use", "start", {
+              tool: chatEvent.name ?? "tool",
             });
           }
           if (chatEvent.type === "tool_result") {
@@ -762,6 +799,11 @@ const plugin = definePlugin({
                 seg.result = chatEvent.content ?? "";
                 seg.isError = chatEvent.isError ?? false;
                 seg.finishedAt = Date.now();
+                emitTrace("chat.tool_use", "end", {
+                  tool: seg.name,
+                  duration_ms: seg.finishedAt - (seg.startedAt ?? seg.finishedAt),
+                  status: chatEvent.isError ? "error" : "ok",
+                });
                 break;
               }
             }
@@ -774,6 +816,12 @@ const plugin = definePlugin({
           // Whatever text is still pending at this point IS the final
           // answer (no tool call followed it), so keep it.
           if (chatEvent.type === "result" || chatEvent.type === "error") {
+            const toolCount = segments.segments.filter((s) => s.kind === "tool").length;
+            emitTrace("chat.primary", "end", {
+              duration_ms: Date.now() - traceSendStart,
+              status: chatEvent.type === "error" ? "error" : "ok",
+              tool_count: toolCount,
+            });
             // Rebuild fullResponse from the retained text segments so it
             // matches what the UI will render.
             fullResponse = segments.segments
@@ -873,6 +921,11 @@ const plugin = definePlugin({
         const updatedMsgs = await getMessages(ctx, threadId);
         updatedMsgs.push(assistantMsg);
         await saveMessages(ctx, threadId, updatedMsgs);
+        emitTrace("chat.persist", "end", {
+          status: "ok",
+          response_len: fullResponse.length,
+          segment_count: segments.segments.length,
+        });
       }
 
       // Mark thread idle

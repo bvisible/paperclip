@@ -1254,6 +1254,52 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const logPrefix = noraTraceId ? `[trace=${noraTraceId}] ` : "";
   const traceLog = (stream: "stdout" | "stderr", message: string) =>
     ctx.onLog(stream, logPrefix + message);
+
+  // Emit a single structured JSON event (same shape as NORA Python's
+  // nora.utils.trace so `nora.api.trace.show` can fuse both timelines).
+  // No-op when the trace id is not propagated (non-chat runs).
+  const emitTrace = (
+    event: string,
+    phase: "start" | "end" | "error",
+    extra: Record<string, unknown> = {},
+  ) => {
+    if (!noraTraceId) return;
+    const payload = {
+      ts: new Date().toISOString(),
+      trace_id: noraTraceId,
+      service: "openclaw-gateway",
+      event,
+      phase,
+      ...extra,
+    };
+    void traceLog("stderr", JSON.stringify(payload) + "\n");
+  };
+
+  // Time + emit a span around a promise. Captures ok/error outcome and
+  // duration_ms automatically. The returned value is the promise result.
+  const traceSpan = async <T>(
+    event: string,
+    run: () => Promise<T>,
+    extraStart: Record<string, unknown> = {},
+  ): Promise<T> => {
+    emitTrace(event, "start", extraStart);
+    const startedAt = Date.now();
+    try {
+      const result = await run();
+      emitTrace(event, "end", {
+        duration_ms: Date.now() - startedAt,
+        status: "ok",
+      });
+      return result;
+    } catch (err) {
+      emitTrace(event, "error", {
+        duration_ms: Date.now() - startedAt,
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
@@ -1426,7 +1472,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
       await ctx.onLog("stdout", `[openclaw-gateway] connecting to ${parsedUrl.toString()}\n`);
 
-      const hello = await client.connect((nonce) => {
+      const hello = await traceSpan("gateway.connect", () => client.connect((nonce) => {
         const signedAtMs = Date.now();
         const connectParams: Record<string, unknown> = {
           minProtocol: PROTOCOL_VERSION,
@@ -1472,16 +1518,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           };
         }
         return connectParams;
-      }, connectTimeoutMs);
+      }, connectTimeoutMs));
 
       await ctx.onLog(
         "stdout",
         `[openclaw-gateway] connected protocol=${asNumber(asRecord(hello)?.protocol, PROTOCOL_VERSION)}\n`,
       );
 
-      const acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
-        timeoutMs: connectTimeoutMs,
-      });
+      const acceptedPayload = await traceSpan(
+        "gateway.agent.wake",
+        () => client.request<Record<string, unknown>>("agent", agentParams, {
+          timeoutMs: connectTimeoutMs,
+        }),
+        { agentId: nonEmpty(ctx.config.agentId), sessionKey },
+      );
 
       latestResultPayload = acceptedPayload;
 
@@ -1508,10 +1558,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
 
       if (acceptedStatus !== "ok") {
-        const waitPayload = await client.request<Record<string, unknown>>(
-          "agent.wait",
+        const waitPayload = await traceSpan(
+          "gateway.agent.wait",
+          () => client.request<Record<string, unknown>>(
+            "agent.wait",
+            { runId: acceptedRunId, timeoutMs: waitTimeoutMs },
+            { timeoutMs: waitTimeoutMs + connectTimeoutMs },
+          ),
           { runId: acceptedRunId, timeoutMs: waitTimeoutMs },
-          { timeoutMs: waitTimeoutMs + connectTimeoutMs },
         );
 
         latestResultPayload = waitPayload;
