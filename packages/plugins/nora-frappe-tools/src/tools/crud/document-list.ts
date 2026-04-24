@@ -12,6 +12,13 @@ const InputSchema = z.object({
 
 interface FrappeListResponse {
   success?: boolean;
+  // Frappe endpoint shape: {"success": true, "data": {"documents": [...], "count": N, ...}}.
+  // Legacy flat shape (items/count at root) kept for backward compat.
+  data?: {
+    documents?: Array<Record<string, unknown>>;
+    items?: Array<Record<string, unknown>>;
+    count?: number;
+  };
   items?: Array<Record<string, unknown>>;
   count?: number;
   error?: string;
@@ -86,7 +93,8 @@ export const frappeDocumentList: RegisteredToolEntry = {
     }
 
     if (parsed.success === false) return { error: parsed.error || "List failed" };
-    const items = parsed.items ?? [];
+    const items =
+      parsed.data?.documents ?? parsed.data?.items ?? parsed.items ?? [];
     return {
       content: `${items.length} ${input.doctype}(s) retournés.`,
       data: { items, count: items.length },

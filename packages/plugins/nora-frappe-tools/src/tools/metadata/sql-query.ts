@@ -8,6 +8,13 @@ const InputSchema = z.object({
 
 interface FrappeSqlResponse {
   success?: boolean;
+  // Frappe endpoint shape: {"success": true, "data": {"data": [...rows...]}, "message": "..."}.
+  // Legacy flat shape (rows at root) kept for backward compat.
+  data?: {
+    data?: Array<Record<string, unknown>>;
+    rows?: Array<Record<string, unknown>>;
+    columns?: string[];
+  };
   rows?: Array<Record<string, unknown>>;
   columns?: string[];
   error?: string;
@@ -53,10 +60,12 @@ export const frappeSqlQuery: RegisteredToolEntry = {
     }
 
     if (parsed.success === false) return { error: parsed.error || "SQL failed" };
-    const rows = parsed.rows ?? [];
+    const rows =
+      parsed.data?.data ?? parsed.data?.rows ?? parsed.rows ?? [];
+    const columns = parsed.data?.columns ?? parsed.columns;
     return {
       content: `${rows.length} ligne(s) retournées.`,
-      data: { rows, columns: parsed.columns },
+      data: { rows, columns },
     };
   },
 };
