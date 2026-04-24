@@ -7,9 +7,21 @@ const InputSchema = z.object({
   doctypes: z.array(z.string()).optional(),
 });
 
+interface FrappeSearchResult {
+  doctype: string;
+  name?: string;
+  value?: string;
+  label?: string;
+  description?: string;
+  score?: number;
+}
+
 interface FrappeSearchResponse {
   success?: boolean;
-  results?: Array<{ doctype: string; name: string; label?: string; score?: number }>;
+  // Frappe endpoint shape: {"success": true, "data": {"results": [...]}}.
+  // Legacy flat shape kept for backward compat.
+  data?: { results?: FrappeSearchResult[] };
+  results?: FrappeSearchResult[];
   error?: string;
 }
 
@@ -57,7 +69,7 @@ export const frappeSearchGlobal: RegisteredToolEntry = {
     }
 
     if (parsed.success === false) return { error: parsed.error || "Search failed" };
-    const results = parsed.results ?? [];
+    const results = parsed.data?.results ?? parsed.results ?? [];
     return {
       content: `${results.length} résultat(s) pour '${input.query}'.`,
       data: { results },
