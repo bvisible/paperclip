@@ -344,6 +344,13 @@ const plugin = definePlugin({
       const adapterType = (params.adapterType as string) ?? "openclaw_gateway";
       const model = (params.model as string) ?? "";
       const title = (params.title as string) ?? "New Chat";
+      // Optional: callers (e.g. NORA bridge) can target a specific agent by id
+      // instead of relying on the default CEO-pattern fallback in sendMessage.
+      // When provided, we validate it exists on the company and pin it on the
+      // thread so every sendMessage on this thread routes to that agent.
+      const explicitAgentId = typeof params.agentId === "string" && params.agentId.length > 0
+        ? params.agentId
+        : null;
       if (!companyId) throw new Error("companyId is required");
 
       // The bridge route injects `_actor: { userId }` into params when the
@@ -355,6 +362,20 @@ const plugin = definePlugin({
         ? actor.userId
         : null;
 
+      let pinnedAgentId: string | null = null;
+      let pinnedAgentName: string | null = null;
+      if (explicitAgentId) {
+        const agents = await ctx.agents.list({ companyId });
+        const found = agents.find((a) => a.id === explicitAgentId);
+        if (!found) {
+          throw new Error(
+            `agentId "${explicitAgentId}" not found on company "${companyId}"`,
+          );
+        }
+        pinnedAgentId = found.id;
+        pinnedAgentName = found.name;
+      }
+
       const thread: ChatThread = {
         id: generateId(),
         companyId,
@@ -362,6 +383,8 @@ const plugin = definePlugin({
         sessionId: null,
         adapterType,
         model,
+        agentId: pinnedAgentId,
+        agentName: pinnedAgentName,
         status: "idle",
         createdBy: actorUserId,
         createdAt: new Date().toISOString(),
@@ -505,20 +528,26 @@ const plugin = definePlugin({
       // Create or resume agent session
       let sessionId = thread.sessionId;
       if (!sessionId) {
-        // Look up a chat-suitable agent by adapter type
-        // Prefer agents with role "assistant" (dedicated chat agents) over task-oriented agents
+        // If the thread was created with a pinned agentId (NORA bridge),
+        // honor it and skip the CEO-pattern selection entirely. Otherwise
+        // fall back to the default preference order.
         const agents = await ctx.agents.list({ companyId });
         const matching = agents.filter((a) => a.adapterType === thread.adapterType);
-        // Preference order:
-        //   1. Explicit "Chat Assistant" named agent (NeoCompany convention)
-        //   2. CEO role (Neoffice CEO pattern — chat always routes to the coordinator)
-        //   3. Generic "general" role
-        //   4. First matching agent
-        const agent =
-          matching.find((a) => a.name === "Chat Assistant") ??
-          matching.find((a) => a.role === "ceo") ??
-          matching.find((a) => a.role === "general") ??
-          matching[0];
+        let agent = thread.agentId
+          ? matching.find((a) => a.id === thread.agentId)
+          : undefined;
+        if (!agent) {
+          // Preference order:
+          //   1. Explicit "Chat Assistant" named agent (NeoCompany convention)
+          //   2. CEO role (Neoffice CEO pattern — chat always routes to the coordinator)
+          //   3. Generic "general" role
+          //   4. First matching agent
+          agent =
+            matching.find((a) => a.name === "Chat Assistant") ??
+            matching.find((a) => a.role === "ceo") ??
+            matching.find((a) => a.role === "general") ??
+            matching[0];
+        }
         if (!agent) {
           throw new Error(`No agent found with adapter type "${thread.adapterType}". Available: ${agents.map((a) => `${a.name}(${a.adapterType})`).join(", ") || "none"}`);
         }
