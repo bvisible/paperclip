@@ -2,11 +2,17 @@ import { z } from "zod";
 import { frappeFetch } from "../../adapters/frappe.js";
 import type { RegisteredToolEntry } from "../types.js";
 
+// Hard cap at 50 to keep a list response well under the LLM context budget.
+// 100+ rows of JSON typically blow the assistant turn (no reply emitted) — for
+// counts/aggregates the agent should use frappeDocumentCount or frappeSqlQuery.
+const MAX_LIMIT = 50;
+const DEFAULT_LIMIT = 20;
+
 const InputSchema = z.object({
   doctype: z.string().min(1),
   filters: z.record(z.unknown()).optional(),
   fields: z.array(z.string()).optional(),
-  limit: z.number().int().positive().max(500).optional(),
+  limit: z.number().int().positive().max(MAX_LIMIT).optional(),
   order_by: z.string().optional(),
 });
 
@@ -51,9 +57,12 @@ export const frappeDocumentList: RegisteredToolEntry = {
         },
         limit: {
           type: "integer",
-          description: "Max rows, default 20, hard cap 500.",
+          description:
+            "Max rows. Default 20, hard cap 50 to fit the LLM context. " +
+            "For larger result sets use frappeDocumentCount or frappeSqlQuery " +
+            "with COUNT/SUM/GROUP BY aggregates.",
           minimum: 1,
-          maximum: 500,
+          maximum: MAX_LIMIT,
         },
         order_by: {
           type: "string",
@@ -67,9 +76,11 @@ export const frappeDocumentList: RegisteredToolEntry = {
     const input = InputSchema.parse(params);
     const config = await access.getFrappeConfig(runCtx.companyId);
 
+    const effectiveLimit = Math.min(input.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+
     const body: Record<string, unknown> = {
       doctype: input.doctype,
-      limit: input.limit ?? 20,
+      limit: effectiveLimit,
     };
     if (input.filters) body.filters = JSON.stringify(input.filters);
     if (input.fields) body.fields = JSON.stringify(input.fields);
@@ -95,9 +106,20 @@ export const frappeDocumentList: RegisteredToolEntry = {
     if (parsed.success === false) return { error: parsed.error || "List failed" };
     const items =
       parsed.data?.documents ?? parsed.data?.items ?? parsed.items ?? [];
+    const totalCount =
+      (parsed.data as { total_count?: number } | undefined)?.total_count ??
+      items.length;
+
+    let content = `${items.length} ${input.doctype}(s) retournés.`;
+    if (totalCount > items.length) {
+      content +=
+        ` (${totalCount} au total, limit=${effectiveLimit} appliquée — ` +
+        `utilise frappeDocumentCount ou frappeSqlQuery pour des aggregates).`;
+    }
+
     return {
-      content: `${items.length} ${input.doctype}(s) retournés.`,
-      data: { items, count: items.length },
+      content,
+      data: { items, count: items.length, total_count: totalCount },
     };
   },
 };
