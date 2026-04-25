@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RegisteredToolEntry } from "../types.js";
+import { notifyNoraWorkItemUpdate } from "./notify-nora.js";
 
 const InputSchema = z.object({
   work_item_id: z.string().uuid(),
@@ -46,6 +47,7 @@ export const noraWorkItemRequestApproval: RegisteredToolEntry = {
       { status: "in_review" },
       runCtx.companyId,
     );
+    notifyNoraWorkItemUpdate(ctx, runCtx.companyId, updated.id, "approval_requested");
 
     return {
       content:

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RegisteredToolEntry } from "../types.js";
+import { notifyNoraWorkItemUpdate } from "./notify-nora.js";
 
 const InputSchema = z.object({
   work_item_id: z.string().uuid(),
@@ -35,6 +36,7 @@ export const noraWorkItemCheckout: RegisteredToolEntry = {
       },
       runCtx.companyId,
     );
+    notifyNoraWorkItemUpdate(ctx, runCtx.companyId, updated.id, "checked_out");
     return {
       content: `Work item ${updated.identifier ?? updated.id} pris en charge (in_progress).`,
       data: { id: updated.id, status: updated.status, assigneeAgentId: updated.assigneeAgentId },
