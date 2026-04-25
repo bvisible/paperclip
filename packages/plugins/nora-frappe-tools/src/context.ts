@@ -19,6 +19,13 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 
 export interface ToolContextAccess {
   getFrappeConfig(companyId: string): Promise<FrappeConfig>;
+  /**
+   * Direct PluginContext for tools that need Paperclip-native APIs
+   * (e.g. WorkItem tools call ctx.issues.create / ctx.issues.update
+   * to surface agent work items in Quick Chat). Frappe tools should
+   * stick to getFrappeConfig + frappeFetch.
+   */
+  pluginCtx: PluginContext;
 }
 
 interface PlatformConfigShape {
@@ -82,6 +89,7 @@ async function readStateString(
 
 export function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
   return {
+    pluginCtx: ctx,
     async getFrappeConfig(companyId: string): Promise<FrappeConfig> {
       // 1. URL: company override → instance default → env.
       const url =

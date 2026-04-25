@@ -23,6 +23,12 @@ const manifest: PaperclipPluginManifestV1 = {
     "plugin.state.write",
     "secrets.read-ref",
     "activity.log.write",
+    // Wave 4 — work items (Paperclip issues backed)
+    "issues.read",
+    "issues.create",
+    "issues.update",
+    "issue.comments.read",
+    "issue.comments.create",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
