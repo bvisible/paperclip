@@ -35,6 +35,13 @@ import { frappeOutstandingPayables } from "./analytics/outstanding-payables.js";
 import { frappeEmailDraft } from "./email/email-draft.js";
 import { frappeEmailConfirm } from "./email/email-confirm.js";
 
+// Scheduling — Wave 2 (5)
+import { frappeReminderCreate } from "./scheduling/reminder-create.js";
+import { frappeAutomationList } from "./scheduling/automation-list.js";
+import { frappeAutomationCreate } from "./scheduling/automation-create.js";
+import { frappeAutomationUpdate } from "./scheduling/automation-update.js";
+import { frappeAutomationDelete } from "./scheduling/automation-delete.js";
+
 export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 1 smart
   frappeCustomerCreate,
@@ -58,6 +65,12 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 2 email
   frappeEmailDraft,
   frappeEmailConfirm,
+  // Wave 2 scheduling
+  frappeReminderCreate,
+  frappeAutomationList,
+  frappeAutomationCreate,
+  frappeAutomationUpdate,
+  frappeAutomationDelete,
 ];
 
 export type { RegisteredToolEntry } from "./types.js";
