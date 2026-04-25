@@ -42,6 +42,19 @@ import { frappeAutomationCreate } from "./scheduling/automation-create.js";
 import { frappeAutomationUpdate } from "./scheduling/automation-update.js";
 import { frappeAutomationDelete } from "./scheduling/automation-delete.js";
 
+// Metadata — Wave 3 (3)
+import { frappeDoctypeInfo } from "./metadata/doctype-info.js";
+import { frappeFieldInfo } from "./metadata/field-info.js";
+import { frappePermissions } from "./metadata/permissions.js";
+
+// Workflow — Wave 3 (2)
+import { frappeWorkflowAction } from "./workflow/workflow-action.js";
+import { frappeWorkflowStatus } from "./workflow/workflow-status.js";
+
+// Reports — Wave 3 (2)
+import { frappeReportList } from "./reports/report-list.js";
+import { frappeReportRun } from "./reports/report-run.js";
+
 export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 1 smart
   frappeCustomerCreate,
@@ -71,6 +84,16 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   frappeAutomationCreate,
   frappeAutomationUpdate,
   frappeAutomationDelete,
+  // Wave 3 metadata
+  frappeDoctypeInfo,
+  frappeFieldInfo,
+  frappePermissions,
+  // Wave 3 workflow
+  frappeWorkflowAction,
+  frappeWorkflowStatus,
+  // Wave 3 reports
+  frappeReportList,
+  frappeReportRun,
 ];
 
 export type { RegisteredToolEntry } from "./types.js";
