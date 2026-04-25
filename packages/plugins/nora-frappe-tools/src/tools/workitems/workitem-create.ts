@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RegisteredToolEntry } from "../types.js";
+import { notifyNoraWorkItemUpdate } from "./notify-nora.js";
 
 const PRIORITIES = ["critical", "high", "medium", "low"] as const;
 
@@ -60,6 +61,8 @@ export const noraWorkItemCreate: RegisteredToolEntry = {
       assigneeAgentId: input.assigneeAgentId ?? runCtx.agentId,
       parentId: input.parentId,
     });
+
+    notifyNoraWorkItemUpdate(ctx, runCtx.companyId, issue.id, "created");
 
     return {
       content:

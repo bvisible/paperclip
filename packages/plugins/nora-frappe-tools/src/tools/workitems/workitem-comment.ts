@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RegisteredToolEntry } from "../types.js";
+import { notifyNoraWorkItemUpdate } from "./notify-nora.js";
 
 const InputSchema = z.object({
   work_item_id: z.string().uuid(),
@@ -31,6 +32,7 @@ export const noraWorkItemComment: RegisteredToolEntry = {
       runCtx.companyId,
       { authorAgentId: runCtx.agentId },
     );
+    notifyNoraWorkItemUpdate(ctx, runCtx.companyId, input.work_item_id, "comment_added");
     return {
       content: `Commentaire ajouté au work item.`,
       data: { id: comment.id, issueId: comment.issueId, createdAt: comment.createdAt },
