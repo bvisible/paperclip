@@ -55,6 +55,13 @@ import { frappeWorkflowStatus } from "./workflow/workflow-status.js";
 import { frappeReportList } from "./reports/report-list.js";
 import { frappeReportRun } from "./reports/report-run.js";
 
+// Work items — Wave 4 (5) — Paperclip issues backed
+import { noraWorkItemCreate } from "./workitems/workitem-create.js";
+import { noraWorkItemCheckout } from "./workitems/workitem-checkout.js";
+import { noraWorkItemComplete } from "./workitems/workitem-complete.js";
+import { noraWorkItemComment } from "./workitems/workitem-comment.js";
+import { noraWorkItemRequestApproval } from "./workitems/workitem-request-approval.js";
+
 export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 1 smart
   frappeCustomerCreate,
@@ -94,6 +101,12 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 3 reports
   frappeReportList,
   frappeReportRun,
+  // Wave 4 work items (Paperclip issues)
+  noraWorkItemCreate,
+  noraWorkItemCheckout,
+  noraWorkItemComplete,
+  noraWorkItemComment,
+  noraWorkItemRequestApproval,
 ];
 
 export type { RegisteredToolEntry } from "./types.js";
