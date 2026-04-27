@@ -9,6 +9,32 @@ import type {
 
 const PLUGIN_NAME = "paperclip-chat";
 
+/**
+ * Defensive text accumulation for streamed chat events.
+ *
+ * The openclaw-gateway adapter is *supposed* to forward token-level
+ * deltas (`data.delta`), but in practice — observed on follow-up turns
+ * running on a thread that already has prior history (i.e. since
+ * NORA's Wave 7.1b externalId upsert started reusing threads across
+ * messages) — it sometimes forwards `data.text` with the cumulative
+ * snapshot of the assistant message instead. A naive `prev + incoming`
+ * accumulation then turns "Oui, je me souviens" into
+ * "OuiOui,, je je me me sou souviviensens..." — the visible bug
+ * Wave 7.1e was reported for.
+ *
+ * This helper tolerates both modes: if the incoming chunk starts with
+ * what we already have AND is strictly longer, we treat it as a full
+ * cumulative snapshot and replace; otherwise we treat it as a delta and
+ * append. Pure deltas keep working because they don't start with the
+ * existing content, so the fallback branch always fires for them.
+ */
+function accumulateText(prev: string, incoming: string): string {
+  if (incoming.length > prev.length && incoming.startsWith(prev)) {
+    return incoming;
+  }
+  return prev + incoming;
+}
+
 // ---------------------------------------------------------------------------
 // Claude stream-json parser
 // ---------------------------------------------------------------------------
@@ -751,10 +777,10 @@ const plugin = definePlugin({
           if (evt.type === "text" && evt.text) {
             const last = fu.segments.segments[fu.segments.segments.length - 1];
             if (last && last.kind === "text") {
-              last.content += evt.text;
+              last.content = accumulateText(last.content, evt.text);
               const pending = fu.pendingText[fu.pendingText.length - 1];
               if (pending && pending.index === fu.segments.segments.length - 1) {
-                pending.content += evt.text;
+                pending.content = accumulateText(pending.content, evt.text);
               }
             } else {
               fu.segments.segments.push({ kind: "text", content: evt.text });
@@ -812,10 +838,10 @@ const plugin = definePlugin({
           if (chatEvent.type === "text" && chatEvent.text) {
             const last = segments.segments[segments.segments.length - 1];
             if (last && last.kind === "text") {
-              last.content += chatEvent.text;
+              last.content = accumulateText(last.content, chatEvent.text);
               const pending = pendingText[pendingText.length - 1];
               if (pending && pending.index === segments.segments.length - 1) {
-                pending.content += chatEvent.text;
+                pending.content = accumulateText(pending.content, chatEvent.text);
               }
             } else {
               segments.segments.push({ kind: "text", content: chatEvent.text });
@@ -828,7 +854,7 @@ const plugin = definePlugin({
           if (chatEvent.type === "thinking" && chatEvent.text) {
             const last = segments.segments[segments.segments.length - 1];
             if (last && last.kind === "thinking") {
-              last.content += chatEvent.text;
+              last.content = accumulateText(last.content, chatEvent.text);
             } else {
               segments.segments.push({ kind: "thinking", content: chatEvent.text });
             }
