@@ -75,8 +75,10 @@ import { noraPayrollRun } from "./hr/payroll-run.js";
 import { noraDriveSearch } from "./drive/drive-search.js";
 import { noraDriveUpload } from "./drive/drive-upload.js";
 
-// OCR — Wave 5 (1) — trigger pipeline
+// OCR — Wave 5 (1) + Wave 5.5 (2) — trigger + DS get + sync flow
 import { noraOcrProcess } from "./ocr/ocr-process.js";
+import { noraDocumentScanGet } from "./ocr/document-scan-get.js";
+import { noraOcrAndSuggest } from "./ocr/ocr-and-suggest.js";
 
 // Work items — Wave 4 (5) — Paperclip issues backed
 import { noraWorkItemCreate } from "./workitems/workitem-create.js";
@@ -115,8 +117,10 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 5 Drive
   noraDriveSearch,
   noraDriveUpload,
-  // Wave 5 OCR
+  // Wave 5 OCR + Wave 5.5 enrichment
   noraOcrProcess,
+  noraDocumentScanGet,
+  noraOcrAndSuggest,
   // Wave 1 search + SQL
   frappeSearchGlobal,
   frappeSqlQuery,
