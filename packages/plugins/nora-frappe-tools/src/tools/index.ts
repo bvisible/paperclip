@@ -15,10 +15,14 @@ import { frappeQuotationCreate } from "./smart/quotation-create.js";
 import { frappePurchaseOrderCreate } from "./smart/purchase-order-create.js";
 import { frappeTransformDocument } from "./smart/transform-document.js";
 
-// CRUD — Wave 1 (3 of 6)
+// CRUD — Wave 1 (3 reads) + Wave 5 (4 writes)
 import { frappeDocumentList } from "./crud/document-list.js";
 import { frappeDocumentCount } from "./crud/document-count.js";
 import { frappeDocumentGet } from "./crud/document-get.js";
+import { frappeDocumentUpdate } from "./crud/document-update.js";
+import { frappeDocumentSubmit } from "./crud/document-submit.js";
+import { frappeDocumentCancel } from "./crud/document-cancel.js";
+import { frappeDocumentDelete } from "./crud/document-delete.js";
 
 // Search — Wave 1 (1 of 3)
 import { frappeSearchGlobal } from "./search/search-global.js";
@@ -55,6 +59,25 @@ import { frappeWorkflowStatus } from "./workflow/workflow-status.js";
 import { frappeReportList } from "./reports/report-list.js";
 import { frappeReportRun } from "./reports/report-run.js";
 
+// Files — Wave 5 (1) — multipart upload
+import { frappeFileUpload } from "./files/file-upload.js";
+
+// Accounting — Wave 5 (3) — payment entry + bank rec + tax filing
+import { frappePaymentEntryCreate } from "./accounting/payment-entry-create.js";
+import { frappeBankReconciliation } from "./accounting/bank-reconciliation.js";
+import { noraTaxFiling } from "./accounting/tax-filing.js";
+
+// HR — Wave 5 (2) — leave + payroll
+import { frappeLeaveApply } from "./hr/leave-apply.js";
+import { noraPayrollRun } from "./hr/payroll-run.js";
+
+// Drive — Wave 5 (2) — search + upload
+import { noraDriveSearch } from "./drive/drive-search.js";
+import { noraDriveUpload } from "./drive/drive-upload.js";
+
+// OCR — Wave 5 (1) — trigger pipeline
+import { noraOcrProcess } from "./ocr/ocr-process.js";
+
 // Work items — Wave 4 (5) — Paperclip issues backed
 import { noraWorkItemCreate } from "./workitems/workitem-create.js";
 import { noraWorkItemCheckout } from "./workitems/workitem-checkout.js";
@@ -71,10 +94,29 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   frappeQuotationCreate,
   frappePurchaseOrderCreate,
   frappeTransformDocument,
-  // Wave 1 CRUD
+  // Wave 1 CRUD reads
   frappeDocumentList,
   frappeDocumentCount,
   frappeDocumentGet,
+  // Wave 5 CRUD writes
+  frappeDocumentUpdate,
+  frappeDocumentSubmit,
+  frappeDocumentCancel,
+  frappeDocumentDelete,
+  // Wave 5 files (multipart upload)
+  frappeFileUpload,
+  // Wave 5 accounting smart ops
+  frappePaymentEntryCreate,
+  frappeBankReconciliation,
+  noraTaxFiling,
+  // Wave 5 HR smart ops
+  frappeLeaveApply,
+  noraPayrollRun,
+  // Wave 5 Drive
+  noraDriveSearch,
+  noraDriveUpload,
+  // Wave 5 OCR
+  noraOcrProcess,
   // Wave 1 search + SQL
   frappeSearchGlobal,
   frappeSqlQuery,
