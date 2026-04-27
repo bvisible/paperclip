@@ -16,6 +16,21 @@ export interface ChatThread {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Optional caller-supplied external identifier used for upsert semantics.
+   *
+   * When `createThread` is called with a non-empty `externalId`, the action
+   * looks for an existing thread on the same `(companyId, createdBy,
+   * agentId, externalId)` tuple and returns it instead of creating a new
+   * one. Lets backend channels (e.g. NORA WhatsApp/Webmail relay) keep a
+   * single long-lived Paperclip thread per (real user, channel) tuple
+   * without having to track threadIds on the caller side.
+   *
+   * The id is treated as opaque — Paperclip never parses it. Threads
+   * created by the standard UI path (without externalId) keep this field
+   * unset and behave like before.
+   */
+  externalId?: string | null;
 }
 
 /** A single chat message */

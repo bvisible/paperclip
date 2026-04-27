@@ -351,6 +351,17 @@ const plugin = definePlugin({
       const explicitAgentId = typeof params.agentId === "string" && params.agentId.length > 0
         ? params.agentId
         : null;
+      // Wave 7.1b — optional upsert key. Backend channels (NORA WhatsApp,
+      // Webmail, Collabora, mobile-legacy) pass an opaque identifier here
+      // (e.g. `nora:channel:whatsapp_+41...`) so we reuse the same thread
+      // across messages rather than spawning a fresh one each turn. The
+      // tuple matched on is (companyId, createdBy, agentId, externalId);
+      // including agentId means a Sophie thread and a Marc thread for the
+      // same user+channel stay separated, which matches the per-agent
+      // session isolation already enforced at the openclaw-gateway layer.
+      const externalId = typeof params.externalId === "string" && params.externalId.length > 0
+        ? params.externalId
+        : null;
       if (!companyId) throw new Error("companyId is required");
 
       // The bridge route injects `_actor: { userId }` into params when the
@@ -376,6 +387,28 @@ const plugin = definePlugin({
         pinnedAgentName = found.name;
       }
 
+      // Upsert by externalId — Wave 7.1b. We scan the company's thread
+      // list (small, capped by retention) and reuse the first match on the
+      // (createdBy, agentId, externalId) tuple. Linear scan is acceptable
+      // because the typical company has ≤ a few hundred threads; if that
+      // ever becomes a hot path we can index by externalId in plugin_state
+      // (key like `chat:thread-by-external:{companyId}:{externalId}`).
+      if (externalId) {
+        const ids = await getThreadList(ctx, companyId);
+        for (const id of ids) {
+          const existing = await getThread(ctx, id);
+          if (!existing) continue;
+          if (existing.externalId !== externalId) continue;
+          if (existing.createdBy !== actorUserId) continue;
+          if ((existing.agentId ?? null) !== pinnedAgentId) continue;
+          // Bump updatedAt so the recency-ordered thread list reflects this
+          // turn; otherwise we'd keep returning a stale "first thread".
+          existing.updatedAt = new Date().toISOString();
+          await saveThread(ctx, existing);
+          return existing;
+        }
+      }
+
       const thread: ChatThread = {
         id: generateId(),
         companyId,
@@ -389,6 +422,7 @@ const plugin = definePlugin({
         createdBy: actorUserId,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        externalId,
       };
 
       await saveThread(ctx, thread);
