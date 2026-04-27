@@ -29,6 +29,9 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.update",
     "issue.comments.read",
     "issue.comments.create",
+    // Wave 5 — outbound HTTP for file upload + OCR trigger
+    // (file.upload + ocr.process are NORA-side concerns; we only need http.outbound here)
+    "http.outbound",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
