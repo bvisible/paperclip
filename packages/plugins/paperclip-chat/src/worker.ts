@@ -765,40 +765,19 @@ const plugin = definePlugin({
           reject(new Error("Chat response timed out"));
         }, RUN_TIMEOUT_MS);
 
-        // Text emitted BEFORE a tool call is sometimes retry narration
-        // ("Let me try...", "That didn't work, let me..."), but it is also
-        // sometimes a legitimate first-attempt answer that the model
-        // wraps with a tool call to validate. We used to discard ALL
-        // pre-tool text on every tool_use, which produced empty bubbles
-        // and the "Je n'ai pas réussi à traiter cette demande" fallback
-        // whenever the agent didn't re-explain the result after the tool.
-        //
-        // NORA fix (2026-04-28): only discard pre-tool text that LOOKS
-        // LIKE retry narration. We check the heading of the accumulated
-        // text against a small set of retry markers in EN/FR. Anything
-        // else is preserved so the user still sees a useful reply.
+        // Text emitted BEFORE a tool call is a retry narration ("Let me
+        // try...", "That didn't work, let me..."), not part of the final
+        // answer. We only keep text that arrived after the last tool use
+        // or tool result — i.e. once the agent has stopped retrying and
+        // is producing the answer.
         let pendingText: Array<{ index: number; content: string }> = [];
-
-        const RETRY_NARRATION_PATTERNS = [
-          /^(?:let me|i'?ll|let's|i need to|i should|i'?m going to|trying|let me try|i'll try|that didn't work|that did not work|hmm|hm|wait,?|actually,?|sorry,?)/i,
-          /^(?:je vais|laisse[- ]moi|essayons|attendez,?|hmm|euh,?|en fait,?|désolé,?|je dois|j'ai besoin)/i,
-        ];
-
-        const looksLikeRetryNarration = (text: string): boolean => {
-          const trimmed = text.trim().slice(0, 80);
-          if (!trimmed) return true; // empty pre-tool segment, safe to drop
-          return RETRY_NARRATION_PATTERNS.some((re) => re.test(trimmed));
-        };
 
         const discardPendingText = () => {
           for (const entry of pendingText) {
             const seg = segments.segments[entry.index];
             if (seg && seg.kind === "text") {
-              // Only neutralise the segment if it actually looks like
-              // retry narration — keep first-attempt answers visible.
-              if (looksLikeRetryNarration(seg.content)) {
-                seg.content = "";
-              }
+              // Neutralise the segment so the UI does not render it.
+              seg.content = "";
             }
           }
           pendingText = [];
@@ -809,9 +788,7 @@ const plugin = definePlugin({
           if (!fu) return;
           for (const entry of fu.pendingText) {
             const seg = fu.segments.segments[entry.index];
-            if (seg && seg.kind === "text") {
-              if (looksLikeRetryNarration(seg.content)) seg.content = "";
-            }
+            if (seg && seg.kind === "text") seg.content = "";
           }
           fu.pendingText = [];
         };
