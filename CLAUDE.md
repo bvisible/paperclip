@@ -1,5 +1,24 @@
 # NeoCompany — Paperclip Fork
 
+## Obsidian Vault — Source de vérité long-terme
+
+Ce repo a **deux usages distincts** dans le vault :
+
+1. **NeoCompany SaaS** (app.neocompany.ch) → `~/Documents/Obsidian/Obsidian/Neocompany/`
+   - Hub : `Neocompany/neocompany.md`
+   - Plugin `neocompany-tools`, Melvyn agent, stratégie SAAS multi-tenant
+2. **Paperclip × Neoffice** (intégration Nora) → `~/Documents/Obsidian/Obsidian/Neoffice/NeoCompany/` + `~/Documents/Obsidian/Obsidian/NORA/08-paperclip-plan/`
+   - Architecture fork, 9 patches maison, sync upstream, plan refonte NORA
+
+**Lire d'abord**, **update après** (décision, gotcha, benchmark, config qui survit).
+
+- **Règles d'écriture** : `~/Documents/Obsidian/Obsidian/CLAUDE.md` (racine)
+- **Skill externe** : `obsidian-vault-writer`
+
+Les memories Claude (`~/.claude/projects/*/memory/`) sont **secondaires**. Le vault gagne en cas de conflit.
+
+---
+
 Fork of [Paperclip](https://github.com/paperclipai/paperclip) used as the
 foundation for **NeoCompany** — our multi-tenant AI business management
 platform. We replaced our previous Postiz-based stack with this after the
