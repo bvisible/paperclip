@@ -1357,9 +1357,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   {
     const rawCtxTools = (ctx.context as Record<string, unknown>).availableTools;
     const ctxToolsLen = Array.isArray(rawCtxTools) ? rawCtxTools.length : -1;
-    await ctx.onLog(
-      "stdout",
-      `[NORA-DEBUG] buildPaperclipToolsXml result: ctx.availableTools.length=${ctxToolsLen} toolsXml=${toolsXml === null ? "null" : `${toolsXml.length} chars`}\n`,
+    // eslint-disable-next-line no-console
+    console.log(
+      `[NORA-DEBUG] buildPaperclipToolsXml runId=${ctx.runId} ctx.availableTools.length=${ctxToolsLen} toolsXml=${toolsXml === null ? "null" : `${toolsXml.length} chars`}`,
     );
   }
   agentParams.extraSystemPrompt = toolsXml
@@ -1369,9 +1369,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   {
     const esp = agentParams.extraSystemPrompt;
     const espLen = typeof esp === "string" ? esp.length : -1;
-    await ctx.onLog(
-      "stdout",
-      `[NORA-DEBUG] extraSystemPrompt total length: ${espLen} chars (toolsXml present: ${toolsXml !== null})\n`,
+    // eslint-disable-next-line no-console
+    console.log(
+      `[NORA-DEBUG] extraSystemPrompt runId=${ctx.runId} total=${espLen} chars (toolsXml present: ${toolsXml !== null})`,
     );
   }
 
