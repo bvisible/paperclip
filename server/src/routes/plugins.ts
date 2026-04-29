@@ -808,11 +808,19 @@ export function pluginRoutes(
       const runId = req.actor.runId ?? (body.runContext as { runId?: string } | undefined)?.runId;
       // projectId is an optional scoping field — when an agent calls from a
       // run that isn't tied to a specific project (e.g. plugin chat sessions),
-      // we fall back to the companyId. The tool dispatcher only uses
-      // projectId opaquely so this keeps the contract well-formed without
-      // forcing the agent to discover a value it doesn't have.
-      const projectId =
-        (body.runContext as { projectId?: string } | undefined)?.projectId ?? companyId ?? undefined;
+      // the chat sessions don't carry a per-project context. Try the body
+      // first, then look up a project that belongs to this company. Falling
+      // back to companyId as the projectId (legacy behaviour) breaks
+      // validateToolRunContextScope, which checks projects.id == projectId.
+      let projectId = (body.runContext as { projectId?: string } | undefined)?.projectId;
+      if (!projectId && companyId) {
+        const [companyProject] = await db
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.companyId, companyId))
+          .limit(1);
+        projectId = companyProject?.id;
+      }
       if (!agentId || !companyId || !runId || !projectId) {
         res.status(400).json({
           error:
