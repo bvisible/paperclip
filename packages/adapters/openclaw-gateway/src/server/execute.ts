@@ -363,7 +363,22 @@ function buildWakeText(
   paperclipEnv: Record<string, string>,
   structuredWakePrompt: string,
   claimedApiKeyPath: string,
+  simpleMode: boolean,
 ): string {
+  // simpleMode: agents without HTTP-tooling rights (tools.allow=[]) shouldn't
+  // receive the procedural workflow — it leads them to emit unsupported
+  // tool_call payloads they can't follow. Send only the structured payload so
+  // they have the issue context and can reply in plain text. The runtime
+  // captures their assistantChunks as the comment automatically.
+  if (simpleMode) {
+    return [
+      `Paperclip wake event. Issue ${payload.issueId ?? ""}${payload.taskId && payload.taskId !== payload.issueId ? ` (task ${payload.taskId})` : ""}.`,
+      "",
+      "Reply in plain text. Do not call any tool — your reply will be posted as the issue's comment automatically.",
+      ...(structuredWakePrompt ? ["", structuredWakePrompt] : []),
+    ].join("\n");
+  }
+
   const orderedKeys = [
     "PAPERCLIP_RUN_ID",
     "PAPERCLIP_AGENT_ID",
@@ -1114,6 +1129,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ? joinWakePayloadSections(structuredWakePrompt, structuredWakeJson)
       : structuredWakePrompt,
     resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath),
+    parseBoolean(ctx.config.simpleWakeText, false),
   );
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
