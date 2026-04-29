@@ -309,8 +309,12 @@ interface PluginToolExecuteRequest {
   tool: string;
   /** Parameters matching the tool's declared JSON Schema. */
   parameters?: unknown;
-  /** Agent run context. */
-  runContext: ToolRunContext;
+  /**
+   * Agent run context. Required for board-authenticated callers. When the
+   * request is authenticated with an agent key, agentId/companyId/runId are
+   * derived from the actor and only projectId needs to be supplied.
+   */
+  runContext?: Partial<ToolRunContext>;
 }
 
 /**
@@ -761,7 +765,22 @@ export function pluginRoutes(
    * - 502 if the plugin worker is unavailable or the RPC call fails
    */
   router.post("/plugins/tools/execute", async (req, res) => {
-    assertBoardOrgAccess(req);
+    // This endpoint is callable by two kinds of actors:
+    //
+    //  - **Board users** (operators, CLI scripts, heartbeat) — runContext must
+    //    be passed in full and the board key needs access to the target company.
+    //    Upstream's assertBoardOrgAccess check is applied in the `else` branch
+    //    below so board callers retain the standard multi-user authz.
+    //  - **Agent keys** (OpenClaw callbacks, local agent JWTs) — NeoCompany
+    //    extension. We derive agentId + companyId + runId from the
+    //    authenticated actor instead of trusting the body, so an agent can
+    //    only ever call tools on its own behalf. The body only needs to
+    //    supply projectId (or we fall back to the agent's default project).
+    //    This is what lets the OpenClaw gateway agent (Melvyn et al.) invoke
+    //    plugin tools during a run without a board-scoped token.
+    if (req.actor.type !== "board" && req.actor.type !== "agent") {
+      throw forbidden("Board or agent access required");
+    }
 
     if (!toolDeps) {
       res.status(501).json({ error: "Plugin tool dispatch is not enabled" });
@@ -774,7 +793,7 @@ export function pluginRoutes(
       return;
     }
 
-    const { tool, parameters, runContext } = body;
+    const { tool, parameters } = body;
 
     // Validate required fields
     if (!tool || typeof tool !== "string") {
@@ -782,16 +801,54 @@ export function pluginRoutes(
       return;
     }
 
-    if (!runContext || typeof runContext !== "object") {
-      res.status(400).json({ error: '"runContext" is required and must be an object' });
-      return;
-    }
-
-    if (!runContext.agentId || !runContext.runId || !runContext.companyId || !runContext.projectId) {
-      res.status(400).json({
-        error: '"runContext" must include agentId, runId, companyId, and projectId',
-      });
-      return;
+    let runContext: { agentId: string; runId: string; companyId: string; projectId: string };
+    if (req.actor.type === "agent") {
+      const agentId = req.actor.agentId;
+      const companyId = req.actor.companyId;
+      const runId = req.actor.runId ?? (body.runContext as { runId?: string } | undefined)?.runId;
+      // projectId is an optional scoping field — when an agent calls from a
+      // run that isn't tied to a specific project (e.g. plugin chat sessions),
+      // the chat sessions don't carry a per-project context. Try the body
+      // first, then look up a project that belongs to this company. Falling
+      // back to companyId as the projectId (legacy behaviour) breaks
+      // validateToolRunContextScope, which checks projects.id == projectId.
+      let projectId = (body.runContext as { projectId?: string } | undefined)?.projectId;
+      if (!projectId && companyId) {
+        const [companyProject] = await db
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.companyId, companyId))
+          .limit(1);
+        projectId = companyProject?.id;
+      }
+      if (!agentId || !companyId || !runId || !projectId) {
+        res.status(400).json({
+          error:
+            "Agent-authenticated calls require agentId/companyId/runId from the session token (set X-Paperclip-Run-Id if the actor lacks a run)",
+        });
+        return;
+      }
+      runContext = { agentId, companyId, runId, projectId };
+    } else {
+      // Board caller: apply upstream's multi-user authz check before trusting
+      // runContext from the body.
+      assertBoardOrgAccess(req);
+      const bodyRunContext = body.runContext;
+      if (!bodyRunContext || typeof bodyRunContext !== "object") {
+        res.status(400).json({ error: '"runContext" is required and must be an object' });
+        return;
+      }
+      const { agentId, runId, companyId, projectId } = bodyRunContext;
+      if (!agentId || !runId || !companyId || !projectId) {
+        res.status(400).json({
+          error: '"runContext" must include agentId, runId, companyId, and projectId',
+        });
+        return;
+      }
+      // Prefer the X-Paperclip-Run-Id header when present — it carries
+      // the heartbeat run ID that the tool-event-bus is subscribed to,
+      // whereas body.runContext.runId may be the gateway's own run ID.
+      runContext = { agentId, runId: req.actor.runId ?? runId, companyId, projectId };
     }
 
     assertCompanyAccess(req, runContext.companyId);
@@ -1161,13 +1218,38 @@ export function pluginRoutes(
 
     assertPluginBridgeScope(req, body.companyId);
 
+    // Inject the authenticated board actor so plugins that need to know
+    // who is calling (e.g. paperclip-chat.createThread needs to stamp
+    // `createdBy` on the thread for later per-user session-key scoping)
+    // can read it from `params._actor`. The field is reserved — user
+    // plugins shouldn't populate it themselves.
+    const actorInjected =
+      req.actor.type === "board" && typeof req.actor.userId === "string" && req.actor.userId.length > 0
+        ? { userId: req.actor.userId, userName: req.actor.userName ?? null }
+        : null;
+    // Propagate NORA's end-to-end trace id when present. The header is
+    // stamped by the Quick Chat JS (nora_quick_chat.js) and forwarded by
+    // nora/integrations/paperclip/client.py. Anything downstream that
+    // reads `params._noraTraceId` (chat worker, plugin-host-services,
+    // openclaw-gateway adapter) will carry the same id into its own
+    // structured logs — one grep reconstructs the full request timeline.
+    const noraTraceId =
+      (req.headers["x-nora-trace-id"] as string | undefined) ??
+      (req.headers["X-Nora-Trace-Id" as unknown as string] as unknown as string | undefined) ??
+      null;
+    const enrichedParams = {
+      ...(body.params ?? {}),
+      _actor: actorInjected,
+      _noraTraceId: noraTraceId,
+    };
+
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "performAction",
         {
           key: body.key,
-          params: body.params ?? {},
+          params: enrichedParams,
           renderEnvironment: body.renderEnvironment ?? null,
         },
       );
