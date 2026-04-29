@@ -1353,9 +1353,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     claimedKeyPath,
     ctx.runId,
   );
+  // NORA-DEBUG 2026-04-29 — diagnose paperclip-tools injection in chat mode
+  {
+    const rawCtxTools = (ctx.context as Record<string, unknown>).availableTools;
+    const ctxToolsLen = Array.isArray(rawCtxTools) ? rawCtxTools.length : -1;
+    await ctx.onLog(
+      "stdout",
+      `[NORA-DEBUG] buildPaperclipToolsXml result: ctx.availableTools.length=${ctxToolsLen} toolsXml=${toolsXml === null ? "null" : `${toolsXml.length} chars`}\n`,
+    );
+  }
   agentParams.extraSystemPrompt = toolsXml
     ? `${paperclipContextXml}\n${toolsXml}`
     : paperclipContextXml;
+  // NORA-DEBUG 2026-04-29 — log size of extraSystemPrompt that goes to OpenClaw
+  {
+    const esp = agentParams.extraSystemPrompt;
+    const espLen = typeof esp === "string" ? esp.length : -1;
+    await ctx.onLog(
+      "stdout",
+      `[NORA-DEBUG] extraSystemPrompt total length: ${espLen} chars (toolsXml present: ${toolsXml !== null})\n`,
+    );
+  }
 
   const configuredAgentId = nonEmpty(ctx.config.agentId);
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
