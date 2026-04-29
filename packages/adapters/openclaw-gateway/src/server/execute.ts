@@ -1153,6 +1153,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     idempotencyKey: ctx.runId,
   };
   delete agentParams.text;
+  // simpleWakeText agents (e.g. text-only responders like main-v15) don't need
+  // OpenClaw to build the full coding-tools registry. Setting disableTools:
+  // true on the gateway request short-circuits createOpenClawCodingTools(),
+  // saving 13-15s per run on Osiris (measured via NORA-PROBE patch on
+  // node_modules/openclaw/dist/selection-D9uTvvsw.js around line 6181).
+  if (parseBoolean(ctx.config.simpleWakeText, false)) {
+    agentParams.disableTools = true;
+  }
   // Move paperclip context to extraSystemPrompt to avoid OpenClaw schema rejection
   // (OpenClaw uses additionalProperties: false and rejects unknown root-level fields)
   const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
