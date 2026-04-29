@@ -5479,9 +5479,26 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const dispatcher = getGlobalPluginToolDispatcher();
         if (dispatcher) {
           const availableTools = dispatcher.listToolsForAgent();
+          // NORA-DEBUG 2026-04-29 — diagnose paperclip-tools injection
+          logger.info(
+            {
+              runId: run.id,
+              agentId: agent.id,
+              adapterType: agent.adapterType,
+              toolCount: availableTools.length,
+              sample: availableTools.slice(0, 3).map((t) => t.name),
+            },
+            "[NORA-DEBUG] dispatcher.listToolsForAgent result",
+          );
           if (availableTools.length > 0) {
             context.availableTools = availableTools;
           }
+        } else {
+          // NORA-DEBUG 2026-04-29 — dispatcher unset at runtime
+          logger.info(
+            { runId: run.id, agentId: agent.id, adapterType: agent.adapterType },
+            "[NORA-DEBUG] getGlobalPluginToolDispatcher returned null/undefined",
+          );
         }
       } catch (err) {
         logger.warn(
