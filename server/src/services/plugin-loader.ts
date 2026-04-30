@@ -1826,7 +1826,10 @@ export function pluginLoader(
       // ------------------------------------------------------------------
       const toolDeclarations = manifest.tools ?? [];
       if (toolDeclarations.length > 0) {
-        toolDispatcher.registerPluginTools(pluginKey, manifest);
+        // pluginId is the DB UUID — required so the dispatcher can later
+        // call workerManager.isRunning(pluginDbId) and find the worker
+        // handle (which is keyed on the UUID, not the pluginKey).
+        toolDispatcher.registerPluginTools(pluginKey, manifest, pluginId);
         registered.tools = toolDeclarations.length;
 
         log.info(

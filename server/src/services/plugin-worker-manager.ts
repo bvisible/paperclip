@@ -1301,6 +1301,18 @@ export function createPluginWorkerManager(
 
     isRunning(pluginId: string): boolean {
       const handle = workers.get(pluginId);
+      // NORA DEBUG (temporary): log mismatch info while diagnosing dbId routing.
+      if (!handle || handle.status !== "running") {
+        log.info(
+          {
+            requestedPluginId: pluginId,
+            handleStatus: handle?.status ?? "no-handle",
+            mapSize: workers.size,
+            mapKeys: Array.from(workers.keys()),
+          },
+          "isRunning probe (mismatch)",
+        );
+      }
       return handle?.status === "running";
     },
 
