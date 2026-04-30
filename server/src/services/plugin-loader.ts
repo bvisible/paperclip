@@ -1663,7 +1663,37 @@ export function pluginLoader(
    * `error` in the database when activation fails.
    */
   async function activatePlugin(plugin: PluginRecord): Promise<PluginLoadResult> {
-    const manifest = plugin.manifestJson;
+    // NORA Phase 5 — refresh manifest from source dist when available so that
+    // tool descriptions, schemas and declarations reflect the latest build.
+    // Without this, the manifestJson cached at install time stays frozen
+    // forever and any change to a tool (e.g. tightening parameters or
+    // rewording the description so the LLM uses it correctly) would require
+    // a full uninstall+reinstall round-trip. We still fall back to the DB
+    // cache when the source isn't reachable (production installs that ship
+    // only the runtime, no build artefacts).
+    let manifest = plugin.manifestJson;
+    try {
+      const refreshRoot = resolvePluginPackageRoot(plugin, localPluginDir);
+      if (refreshRoot) {
+        const refreshPkgJson = await readPackageJson(refreshRoot);
+        if (refreshPkgJson) {
+          const refreshManifestPath = resolveManifestPath(refreshRoot, refreshPkgJson);
+          if (refreshManifestPath && existsSync(refreshManifestPath)) {
+            const fresh = await loadManifestFromPath(refreshManifestPath);
+            manifest = fresh;
+            log.debug(
+              { pluginId: plugin.id, pluginKey: plugin.pluginKey, source: refreshManifestPath },
+              "plugin-loader: refreshed manifest from source",
+            );
+          }
+        }
+      }
+    } catch (err) {
+      log.warn(
+        { pluginId: plugin.id, pluginKey: plugin.pluginKey, err: err instanceof Error ? err.message : String(err) },
+        "plugin-loader: manifest source refresh failed — falling back to DB cached manifestJson",
+      );
+    }
     const pluginId = plugin.id;
     const pluginKey = plugin.pluginKey;
 
