@@ -398,6 +398,7 @@ type AgentToolDescriptor = {
 async function fetchAvailableTools(
   apiUrl: string,
   apiKey: string,
+  toolFilter?: ReadonlySet<string>,
 ): Promise<AgentToolDescriptor[]> {
   const url = new URL("/api/plugins/tools", apiUrl).toString();
   const res = await fetch(url, {
@@ -407,7 +408,87 @@ async function fetchAvailableTools(
     throw new Error(`fetchAvailableTools failed: ${res.status} ${res.statusText}`);
   }
   const json = (await res.json()) as unknown;
-  return Array.isArray(json) ? (json as AgentToolDescriptor[]) : [];
+  const all = Array.isArray(json) ? (json as AgentToolDescriptor[]) : [];
+  // NORA Phase 5 — apply per-agent filter when provided. Without this all
+  // 48 plugin tools are sent to every agent and Qwen3.6 spends turns
+  // exploring tools that aren't relevant to the question (e.g. calling
+  // `frappeFieldInfo` four times before answering "how many customers"
+  // — each call returns ~18 KB and overflows the model context window).
+  if (!toolFilter || toolFilter.size === 0) return all;
+  return all.filter((t) => toolFilter.has(t.name));
+}
+
+/**
+ * Per-agent tool allow-list for native function-calling. Maps the OpenClaw
+ * agent id to the namespaced tool names that agent should see in its
+ * clientTools array. Adapter config can override via
+ * `clientToolAllowlist: string[]`.
+ */
+const DEFAULT_AGENT_TOOL_ALLOWLIST: Record<string, ReadonlySet<string>> = {
+  "main-v15": new Set<string>([]), // text-only orchestrator
+  "tools-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeDocumentInsert",
+    "nora-frappe-tools:frappeDocumentUpdate",
+    "nora-frappe-tools:frappeDocumentDelete",
+    "nora-frappe-tools:frappeReportRun",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "sales-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeCustomerCreate",
+    "nora-frappe-tools:frappeQuotationCreate",
+    "nora-frappe-tools:frappeSalesInvoiceCreate",
+    "nora-frappe-tools:frappeOutstandingReceivables",
+    "nora-frappe-tools:frappeRevenueSummary",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "accounting-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappePaymentEntryCreate",
+    "nora-frappe-tools:frappeBankReconciliation",
+    "nora-frappe-tools:noraTaxFiling",
+    "nora-frappe-tools:frappeOutstandingReceivables",
+    "nora-frappe-tools:frappeOutstandingPayables",
+    "nora-frappe-tools:frappeRevenueSummary",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "hr-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeLeaveApply",
+    "nora-frappe-tools:noraPayrollRun",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "purchasing-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeSupplierCreate",
+    "nora-frappe-tools:frappePurchaseOrderCreate",
+    "nora-frappe-tools:frappeOutstandingPayables",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+};
+
+function resolveAgentToolFilter(ctx: AdapterExecutionContext): ReadonlySet<string> | undefined {
+  // Adapter config has highest priority — operators can override the
+  // default allowlist per agent.
+  const cfgAllow = ctx.config.clientToolAllowlist;
+  if (Array.isArray(cfgAllow)) {
+    const names = cfgAllow.filter((v): v is string => typeof v === "string" && v.length > 0);
+    return new Set<string>(names);
+  }
+  const agentId = nonEmpty(ctx.agent?.id) ?? nonEmpty(ctx.config.agentId);
+  if (!agentId) return undefined;
+  return DEFAULT_AGENT_TOOL_ALLOWLIST[agentId];
 }
 
 type PluginToolExecuteResponse = {
@@ -1583,8 +1664,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (fcEnabled) {
         if (fcApiKey) {
           fcApiUrl = resolvePaperclipApiUrlForFetch(ctx);
+          const toolFilter = resolveAgentToolFilter(ctx);
           try {
-            const tools = await fetchAvailableTools(fcApiUrl, fcApiKey);
+            const tools = await fetchAvailableTools(fcApiUrl, fcApiKey, toolFilter);
             if (tools.length > 0) {
               agentParams.clientTools = toClientTools(tools);
               // NORA Phase 4 — pass a synchronous executor descriptor so
