@@ -407,21 +407,7 @@ async function fetchAvailableTools(
     throw new Error(`fetchAvailableTools failed: ${res.status} ${res.statusText}`);
   }
   const json = (await res.json()) as unknown;
-  const all = Array.isArray(json) ? (json as AgentToolDescriptor[]) : [];
-  // NORA Phase 5 — filter out work-item orchestration tools that the agent
-  // would otherwise call automatically at the end of every turn (e.g.
-  // `noraWorkItemComplete` was observed adding 35 s per request because the
-  // LLM "tidied up" by closing the issue after answering — which is the
-  // bridge runtime's job, not the agent's). The Q&A path is much faster
-  // when the LLM only sees data tools.
-  const ORCHESTRATION_DENY = new Set<string>([
-    "nora-frappe-tools:noraWorkItemComplete",
-    "nora-frappe-tools:noraWorkItemCheckout",
-    "nora-frappe-tools:noraWorkItemRequestApproval",
-    "nora-frappe-tools:noraWorkItemComment",
-    "nora-frappe-tools:noraWorkItemCreate",
-  ]);
-  return all.filter((t) => !ORCHESTRATION_DENY.has(t.name));
+  return Array.isArray(json) ? (json as AgentToolDescriptor[]) : [];
 }
 
 type PluginToolExecuteResponse = {
