@@ -469,7 +469,13 @@ type PendingToolCall = {
 };
 
 function extractPendingToolCalls(payload: unknown): PendingToolCall[] {
-  const meta = asRecord(asRecord(payload)?.meta);
+  // OpenClaw WS responds with `{ runId, status, result: { payloads, meta } }`
+  // (see src/gateway/server-methods/agent.ts:328 — the `result` field carries
+  // the runEmbeddedPiAgent return value). Falls back to top-level `meta` for
+  // older shapes / direct callers.
+  const root = asRecord(payload);
+  const meta =
+    asRecord(asRecord(root?.result)?.meta) ?? asRecord(root?.meta);
   if (!meta) return [];
   const stopReason = nonEmpty(meta.stopReason);
   if (stopReason !== "tool_calls") return [];
@@ -1672,8 +1678,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // to guard against runaway loops; gracefully exits if any tool fails.
       if (fcEnabled && fcApiKey && fcApiUrl) {
         // Diagnostic: dump meta so we can see why pendingToolCalls might be
-        // empty (stopReason mismatch, struct shape change, etc.).
-        const _diagMeta = asRecord(acceptedPayload?.meta);
+        // empty (stopReason mismatch, struct shape change, etc.). Look in
+        // both `payload.meta` (legacy) and `payload.result.meta` (current
+        // OpenClaw WS shape — see server-methods/agent.ts).
+        const _diagRoot = asRecord(acceptedPayload);
+        const _diagMeta =
+          asRecord(asRecord(_diagRoot?.result)?.meta) ?? asRecord(_diagRoot?.meta);
         await ctx.onLog(
           "stdout",
           `[openclaw-gateway] post-run meta dump: stopReason=${nonEmpty(_diagMeta?.stopReason) ?? "(none)"} pendingToolCalls=${JSON.stringify(_diagMeta?.pendingToolCalls ?? null).slice(0, 500)}\n`,
