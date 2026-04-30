@@ -12,6 +12,8 @@ import {
   stringifyPaperclipWakePayload,
 } from "@paperclipai/adapter-utils/server-utils";
 import crypto, { randomUUID } from "node:crypto";
+import { promises as fsPromises } from "node:fs";
+import { homedir } from "node:os";
 import { WebSocket } from "ws";
 
 type SessionKeyStrategy = "fixed" | "issue" | "run";
@@ -335,6 +337,166 @@ const DEFAULT_CLAIMED_API_KEY_PATH = "~/.openclaw/workspace/paperclip-claimed-ap
 function resolveClaimedApiKeyPath(value: unknown): string {
   return nonEmpty(value) ?? DEFAULT_CLAIMED_API_KEY_PATH;
 }
+
+// =============================================================================
+// NORA function-calls native — Phase 2.2
+// =============================================================================
+//
+// The adapter exposes plugin tools (e.g. nora-frappe-tools) as OpenAI-style
+// `clientTools` in the agent.run payload, so the LLM can invoke them via
+// native `tool_calls` instead of being asked to emit `<tool_call>` text or
+// shell out to `curl POST /api/plugins/tools/execute`.
+//
+// Flow on a wake event:
+//  1. Load the API key from the claim file written by the agent at first wake.
+//  2. GET /api/plugins/tools to list the tools available to this agent.
+//  3. Convert AgentToolDescriptor[] -> ClientToolDefinition[] and inject in
+//     agentParams.clientTools.
+//  4. Send agent.run via WebSocket. OpenClaw fork (>= dae7845) accepts the new
+//     `clientTools` field on AgentParamsSchema.
+//  5. If the run terminates with stopReason="tool_calls", iterate up to
+//     MAX_FUNCTION_CALL_ROUNDTRIPS times: execute the tool via
+//     POST /api/plugins/tools/execute and re-issue agent.run with the result
+//     embedded in the next message (Option A — see
+//     NORA/19-function-calls-natifs/04-...). When stopReason flips back to
+//     `end_turn` (or anything other than `tool_calls`), the final answer is in
+//     the assistant chunks / payloads, and we exit the loop.
+//
+// If the claim file is missing (first wake on a fresh workspace), or the API
+// is unreachable, the function returns null/empty arrays and the run proceeds
+// without clientTools — falling back to the legacy behaviour rather than
+// failing the wake.
+
+const MAX_FUNCTION_CALL_ROUNDTRIPS = 5;
+
+function expandHomePath(path: string): string {
+  if (path.startsWith("~/")) {
+    return `${homedir()}/${path.slice(2)}`;
+  }
+  return path;
+}
+
+async function loadClaimedApiKey(claimedApiKeyPath: string): Promise<string | null> {
+  try {
+    const expanded = expandHomePath(claimedApiKeyPath);
+    const content = await fsPromises.readFile(expanded, "utf8");
+    const json = JSON.parse(content) as { apiKey?: unknown };
+    return typeof json.apiKey === "string" && json.apiKey.length > 0 ? json.apiKey : null;
+  } catch {
+    return null;
+  }
+}
+
+type AgentToolDescriptor = {
+  name: string;
+  displayName?: string;
+  description: string;
+  parametersSchema: Record<string, unknown>;
+  pluginId?: string;
+};
+
+async function fetchAvailableTools(
+  apiUrl: string,
+  apiKey: string,
+): Promise<AgentToolDescriptor[]> {
+  const url = new URL("/api/plugins/tools", apiUrl).toString();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) {
+    throw new Error(`fetchAvailableTools failed: ${res.status} ${res.statusText}`);
+  }
+  const json = (await res.json()) as unknown;
+  return Array.isArray(json) ? (json as AgentToolDescriptor[]) : [];
+}
+
+type PluginToolExecuteResponse = {
+  result?: {
+    content?: string;
+    data?: unknown;
+    error?: unknown;
+  };
+};
+
+async function executePluginTool(
+  apiUrl: string,
+  apiKey: string,
+  runId: string,
+  tool: string,
+  parameters: unknown,
+): Promise<PluginToolExecuteResponse> {
+  const url = new URL("/api/plugins/tools/execute", apiUrl).toString();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "X-Paperclip-Run-Id": runId,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ tool, parameters }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`executePluginTool failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
+  }
+  return (await res.json()) as PluginToolExecuteResponse;
+}
+
+type ClientToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+};
+
+function toClientTools(tools: AgentToolDescriptor[]): ClientToolDefinition[] {
+  return tools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parametersSchema,
+    },
+  }));
+}
+
+type PendingToolCall = {
+  id: string;
+  name: string;
+  arguments: string;
+};
+
+function extractPendingToolCalls(payload: unknown): PendingToolCall[] {
+  const meta = asRecord(asRecord(payload)?.meta);
+  if (!meta) return [];
+  const stopReason = nonEmpty(meta.stopReason);
+  if (stopReason !== "tool_calls") return [];
+  const raw = meta.pendingToolCalls;
+  if (!Array.isArray(raw)) return [];
+  const calls: PendingToolCall[] = [];
+  for (const entry of raw) {
+    const r = asRecord(entry);
+    if (!r) continue;
+    const id = nonEmpty(r.id);
+    const name = nonEmpty(r.name);
+    const args = typeof r.arguments === "string" ? r.arguments : JSON.stringify(r.arguments ?? {});
+    if (id && name) {
+      calls.push({ id, name, arguments: args });
+    }
+  }
+  return calls;
+}
+
+function resolvePaperclipApiUrlForFetch(ctx: AdapterExecutionContext): string {
+  const override = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
+  if (override) return override;
+  const port = asNumber(ctx.config.paperclipApiPort, 3100);
+  return `http://127.0.0.1:${port}`;
+}
+
+// =============================================================================
 
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
   const paperclipApiUrlOverride = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
@@ -1372,7 +1534,47 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[openclaw-gateway] connected protocol=${asNumber(asRecord(hello)?.protocol, PROTOCOL_VERSION)}\n`,
       );
 
-      const acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
+      // NORA function-calls native — Phase 2.2 : inject plugin tools as
+      // OpenAI-style clientTools so the LLM can use native function-calling
+      // instead of emitting `<tool_call>` text or shelling out to curl.
+      // Falls back gracefully if the claim file is missing or the API is
+      // unreachable (preserves the legacy behaviour).
+      const fcEnabled = parseBoolean(ctx.config.useNativeFunctionCalls, true);
+      let fcApiKey: string | null = null;
+      let fcApiUrl: string | null = null;
+      if (fcEnabled) {
+        fcApiKey = await loadClaimedApiKey(resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath));
+        if (fcApiKey) {
+          fcApiUrl = resolvePaperclipApiUrlForFetch(ctx);
+          try {
+            const tools = await fetchAvailableTools(fcApiUrl, fcApiKey);
+            if (tools.length > 0) {
+              agentParams.clientTools = toClientTools(tools);
+              await ctx.onLog(
+                "stdout",
+                `[openclaw-gateway] injected ${tools.length} plugin tool(s) as clientTools (function-calling native)\n`,
+              );
+            } else {
+              await ctx.onLog(
+                "stdout",
+                "[openclaw-gateway] no plugin tools available, skipping clientTools injection\n",
+              );
+            }
+          } catch (err) {
+            await ctx.onLog(
+              "stdout",
+              `[openclaw-gateway] failed to inject clientTools (continuing without): ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+          }
+        } else {
+          await ctx.onLog(
+            "stdout",
+            "[openclaw-gateway] claim API key not found, skipping clientTools injection\n",
+          );
+        }
+      }
+
+      let acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
         timeoutMs: connectTimeoutMs,
       });
 
@@ -1444,6 +1646,125 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             errorCode: "openclaw_gateway_wait_status_unexpected",
             resultJson: waitPayload,
           };
+        }
+
+        acceptedPayload = waitPayload;
+      }
+
+      // NORA function-calls native — Phase 2.2 : roundtrip loop. When the LLM
+      // emits tool_calls (stopReason="tool_calls"), execute each pending tool
+      // via /api/plugins/tools/execute and re-issue agent.run with the result
+      // embedded in the next message. Bounded to MAX_FUNCTION_CALL_ROUNDTRIPS
+      // to guard against runaway loops; gracefully exits if any tool fails.
+      if (fcEnabled && fcApiKey && fcApiUrl) {
+        let roundtrips = 0;
+        let pendingToolCalls = extractPendingToolCalls(acceptedPayload);
+        while (pendingToolCalls.length > 0 && roundtrips < MAX_FUNCTION_CALL_ROUNDTRIPS) {
+          await ctx.onLog(
+            "stdout",
+            `[openclaw-gateway] tool_calls roundtrip ${roundtrips + 1}/${MAX_FUNCTION_CALL_ROUNDTRIPS} — executing ${pendingToolCalls.length} tool(s)\n`,
+          );
+
+          const toolResults: Array<{ id: string; name: string; content: string }> = [];
+          for (const call of pendingToolCalls) {
+            try {
+              const args = JSON.parse(call.arguments) as unknown;
+              const exec = await executePluginTool(fcApiUrl, fcApiKey, ctx.runId, call.name, args);
+              const content = JSON.stringify(exec.result ?? {});
+              toolResults.push({ id: call.id, name: call.name, content });
+              await ctx.onLog(
+                "stdout",
+                `[openclaw-gateway] tool ${call.name} -> ${content.slice(0, 200)}\n`,
+              );
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              toolResults.push({ id: call.id, name: call.name, content: JSON.stringify({ error: message }) });
+              await ctx.onLog(
+                "stderr",
+                `[openclaw-gateway] tool ${call.name} failed: ${message}\n`,
+              );
+            }
+          }
+
+          // Build the follow-up message containing tool results. Option A
+          // (simple text encoding) — see NORA/19-function-calls-natifs/04-...
+          // The agent already has the original user question + assistant
+          // tool_calls in its session history (sessionKey is preserved), so
+          // this user message is interpreted as "here are the results, now
+          // formulate the answer".
+          const toolResultsText = toolResults
+            .map((t) => `[tool:${t.name}#${t.id}] ${t.content}`)
+            .join("\n");
+          agentParams.message = `Tool results:\n${toolResultsText}\n\nFormulate the final response to the user using these results.`;
+          agentParams.idempotencyKey = randomUUID();
+
+          const nextPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
+            timeoutMs: connectTimeoutMs,
+          });
+          latestResultPayload = nextPayload;
+          acceptedPayload = nextPayload;
+
+          const nextStatus = nonEmpty(nextPayload?.status)?.toLowerCase() ?? "";
+          const nextRunId = nonEmpty(nextPayload?.runId) ?? acceptedRunId;
+          trackedRunIds.add(nextRunId);
+
+          if (nextStatus === "error") {
+            return {
+              exitCode: 1,
+              signal: null,
+              timedOut: false,
+              errorMessage:
+                nonEmpty(nextPayload?.summary) ??
+                lifecycleError ??
+                "OpenClaw gateway agent request failed during tool roundtrip",
+              errorCode: "openclaw_gateway_tool_roundtrip_error",
+              resultJson: nextPayload,
+            };
+          }
+
+          if (nextStatus !== "ok") {
+            const waitPayload = await client.request<Record<string, unknown>>(
+              "agent.wait",
+              { runId: nextRunId, timeoutMs: waitTimeoutMs },
+              { timeoutMs: waitTimeoutMs + connectTimeoutMs },
+            );
+            latestResultPayload = waitPayload;
+            acceptedPayload = waitPayload;
+            const waitStatus = nonEmpty(waitPayload?.status)?.toLowerCase() ?? "";
+            if (waitStatus === "timeout") {
+              return {
+                exitCode: 1,
+                signal: null,
+                timedOut: true,
+                errorMessage: `OpenClaw gateway run timed out after ${waitTimeoutMs}ms during tool roundtrip`,
+                errorCode: "openclaw_gateway_wait_timeout",
+                resultJson: waitPayload,
+              };
+            }
+            if (waitStatus === "error" || (waitStatus && waitStatus !== "ok")) {
+              return {
+                exitCode: 1,
+                signal: null,
+                timedOut: false,
+                errorMessage:
+                  nonEmpty(waitPayload?.error) ??
+                  lifecycleError ??
+                  `OpenClaw gateway run failed during tool roundtrip (status=${waitStatus})`,
+                errorCode: "openclaw_gateway_wait_error",
+                resultJson: waitPayload,
+              };
+            }
+          }
+
+          roundtrips++;
+          pendingToolCalls = extractPendingToolCalls(acceptedPayload);
+        }
+
+        if (pendingToolCalls.length > 0) {
+          await ctx.onLog(
+            "stderr",
+            `[openclaw-gateway] tool_calls roundtrip exhausted (${MAX_FUNCTION_CALL_ROUNDTRIPS}), giving up with ${pendingToolCalls.length} tool(s) still pending\n`,
+          );
         }
       }
 
