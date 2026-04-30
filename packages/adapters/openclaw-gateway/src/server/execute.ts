@@ -1723,9 +1723,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // but we MUST NOT re-execute via the legacy roundtrip path — that
       // would duplicate every tool call and double the latency. Skip the
       // loop entirely when the sync executor is in use.
-      const shouldRunRoundtripLoop =
-        fcEnabled && fcApiKey && fcApiUrl && !agentParams.clientToolExecutor;
-      if (shouldRunRoundtripLoop) {
+      if (fcEnabled && fcApiKey && fcApiUrl && !agentParams.clientToolExecutor) {
         // Diagnostic: dump meta so we can see why pendingToolCalls might be
         // empty (stopReason mismatch, struct shape change, etc.). Look in
         // both `payload.meta` (legacy) and `payload.result.meta` (current
