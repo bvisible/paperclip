@@ -1095,7 +1095,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 120)));
   const timeoutMs = timeoutSec > 0 ? timeoutSec * 1000 : 0;
-  const connectTimeoutMs = timeoutMs > 0 ? Math.min(timeoutMs, 15_000) : 10_000;
+  // Allow agents whose runs legitimately take >15s (LLM with long prompts,
+  // first cold call after gateway boot, contended Olares slot…) to keep
+  // the WS open handshake permissive. Cap defaults to 60s (plenty for a
+  // healthy WS handshake), but the agent can override via
+  // adapter_config.connectTimeoutMs when it expects longer cold starts.
+  const connectTimeoutMs =
+    parseOptionalPositiveInteger(ctx.config.connectTimeoutMs) ??
+    (timeoutMs > 0 ? Math.min(timeoutMs, 60_000) : 10_000);
   const waitTimeoutMs = parseOptionalPositiveInteger(ctx.config.waitTimeoutMs) ?? (timeoutMs > 0 ? timeoutMs : 30_000);
 
   const payloadTemplate = parseObject(ctx.config.payloadTemplate);
