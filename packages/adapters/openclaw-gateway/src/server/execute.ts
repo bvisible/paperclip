@@ -1168,6 +1168,31 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
   agentParams.extraSystemPrompt = paperclipContextXml;
 
+  // NORA Phase 7 — Prompt size optimization. OpenClaw's protocol schema
+  // (packages/.../protocol-Hjar_s3V.js:209) accepts an optional
+  // `promptMode: "full" | "minimal" | "none"` agent param that drastically
+  // changes the system prompt size:
+  //   - "full"    (default): ~24K chars (skills bundled + tooling list +
+  //                          gateway CLI ref + execution bias + safety + …)
+  //   - "minimal" (auto when `tools.allow` is non-empty): ~5-8K chars
+  //   - "none"  : 1 line ("You are a personal assistant running inside OpenClaw.")
+  //
+  // We expose this via adapterConfig so each agent can opt in. main-v15
+  // (text-only orchestrator with `tools.allow:[]`) sets promptMode="none"
+  // to drop the 24K → 1 line, which removes the irrelevant tooling/skills
+  // catalog and keeps the prompt prefix STABLE between runs (so Olares
+  // KV-cache hits — gain ~99% on warm calls).
+  //
+  // Reference: NORA/18-reset-2026-04-29/29-plan-recuperation-tools-agents-skills-memory.md
+  const promptModeRaw = nonEmpty(ctx.config.promptMode);
+  if (
+    promptModeRaw === "none" ||
+    promptModeRaw === "minimal" ||
+    promptModeRaw === "full"
+  ) {
+    agentParams.promptMode = promptModeRaw;
+  }
+
   const configuredAgentId = nonEmpty(ctx.config.agentId);
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
     agentParams.agentId = configuredAgentId;
