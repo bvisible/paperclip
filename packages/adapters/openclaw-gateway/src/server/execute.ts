@@ -1716,7 +1716,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // via /api/plugins/tools/execute and re-issue agent.run with the result
       // embedded in the next message. Bounded to MAX_FUNCTION_CALL_ROUNDTRIPS
       // to guard against runaway loops; gracefully exits if any tool fails.
-      if (fcEnabled && fcApiKey && fcApiUrl) {
+      // NORA Phase 5 — when the sync executor is wired (patch 7), tool calls
+      // are executed inline by the runner during the LLM turn. The runtime
+      // may still terminate with stopReason="tool_calls" (Qwen / Olares emit
+      // that natively whenever a function-call is in the assistant message),
+      // but we MUST NOT re-execute via the legacy roundtrip path — that
+      // would duplicate every tool call and double the latency. Skip the
+      // loop entirely when the sync executor is in use.
+      const shouldRunRoundtripLoop =
+        fcEnabled && fcApiKey && fcApiUrl && !agentParams.clientToolExecutor;
+      if (shouldRunRoundtripLoop) {
         // Diagnostic: dump meta so we can see why pendingToolCalls might be
         // empty (stopReason mismatch, struct shape change, etc.). Look in
         // both `payload.meta` (legacy) and `payload.result.meta` (current
