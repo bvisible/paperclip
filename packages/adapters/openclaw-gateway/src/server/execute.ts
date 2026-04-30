@@ -1291,14 +1291,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const paperclipEnv = buildPaperclipEnvForWake(ctx, wakePayload);
   const structuredWakePrompt = renderPaperclipWakePrompt(ctx.context.paperclipWake);
   const structuredWakeJson = stringifyPaperclipWakePayload(ctx.context.paperclipWake);
+  // NORA function-calls native — Phase 2.2 : pre-resolve whether we will
+  // inject clientTools so we can drop the verbose curl-procedure preamble
+  // from the wake text. When the claim API key is loadable AND the feature
+  // is on, we can safely assume the LLM will see plugin tools as native
+  // OpenAI function-calls (no need to teach it the HTTP procedure).
+  const fcUseNativeFunctionCalls = parseBoolean(ctx.config.useNativeFunctionCalls, true);
+  const claimedApiKeyPathResolved = resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath);
+  const fcPreloadedApiKey = fcUseNativeFunctionCalls
+    ? await loadClaimedApiKey(claimedApiKeyPathResolved)
+    : null;
+  const wakeTextSimpleMode =
+    parseBoolean(ctx.config.simpleWakeText, false) ||
+    (fcUseNativeFunctionCalls && fcPreloadedApiKey !== null);
   const wakeText = buildWakeText(
     wakePayload,
     paperclipEnv,
     structuredWakeJson
       ? joinWakePayloadSections(structuredWakePrompt, structuredWakeJson)
       : structuredWakePrompt,
-    resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath),
-    parseBoolean(ctx.config.simpleWakeText, false),
+    claimedApiKeyPathResolved,
+    wakeTextSimpleMode,
   );
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
@@ -1539,11 +1552,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // instead of emitting `<tool_call>` text or shelling out to curl.
       // Falls back gracefully if the claim file is missing or the API is
       // unreachable (preserves the legacy behaviour).
-      const fcEnabled = parseBoolean(ctx.config.useNativeFunctionCalls, true);
-      let fcApiKey: string | null = null;
+      // The API key was already resolved up top (so the wake text could
+      // drop the curl-procedure preamble), reuse it here.
+      const fcEnabled = fcUseNativeFunctionCalls;
+      const fcApiKey = fcPreloadedApiKey;
       let fcApiUrl: string | null = null;
       if (fcEnabled) {
-        fcApiKey = await loadClaimedApiKey(resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath));
         if (fcApiKey) {
           fcApiUrl = resolvePaperclipApiUrlForFetch(ctx);
           try {
