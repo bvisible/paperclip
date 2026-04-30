@@ -1594,8 +1594,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         }
       }
 
+      // When clientTools are injected we need the FINAL gateway frame
+      // (status="ok" with `result.meta.stopReason` populated), not the
+      // intermediate `accepted` ack — otherwise the roundtrip loop never
+      // sees `pendingToolCalls`. expectFinal: true makes the WS client
+      // skip the `accepted` ack frame and wait for the second frame
+      // (same RPC id) that the gateway sends once
+      // `agentCommandFromIngress` resolves
+      // (server-methods/agent.ts:328-345).
+      const expectFinalForRun = fcEnabled && fcApiKey !== null;
       let acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
-        timeoutMs: connectTimeoutMs,
+        timeoutMs: expectFinalForRun ? waitTimeoutMs : connectTimeoutMs,
+        expectFinal: expectFinalForRun,
       });
 
       latestResultPayload = acceptedPayload;
@@ -1729,8 +1739,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           agentParams.message = `Tool results:\n${toolResultsText}\n\nFormulate the final response to the user using these results.`;
           agentParams.idempotencyKey = randomUUID();
 
+          // Same expectFinal contract as the initial call — wait for the
+          // resolved frame so we can read `result.meta` and detect any
+          // follow-up tool_calls in this turn.
           const nextPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
-            timeoutMs: connectTimeoutMs,
+            timeoutMs: waitTimeoutMs,
+            expectFinal: true,
           });
           latestResultPayload = nextPayload;
           acceptedPayload = nextPayload;
