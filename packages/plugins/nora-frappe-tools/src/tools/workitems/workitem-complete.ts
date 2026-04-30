@@ -57,6 +57,20 @@ export const noraWorkItemComplete: RegisteredToolEntry = {
     },
   },
   async run(params, runCtx, ctx) {
+    // Diag: log the raw params so we can see what the LLM is actually
+    // passing as `result`. Strip later in Phase 5 cleanup.
+    try {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[noraWorkItemComplete:diag] raw params keys=${Object.keys(params as object).join(",")} result_preview=${
+          typeof (params as { result?: unknown }).result === "string"
+            ? `"${((params as { result: string }).result).slice(0, 200)}"`
+            : typeof (params as { result?: unknown }).result
+        }`,
+      );
+    } catch {
+      /* swallow */
+    }
     const input = InputSchema.parse(params);
 
     await ctx.pluginCtx.issues.createComment(
