@@ -532,7 +532,22 @@ function buildWakeText(
   structuredWakePrompt: string,
   claimedApiKeyPath: string,
   simpleMode: boolean,
+  nativeFunctionCalls = false,
 ): string {
+  // NORA Phase 4 — when native function-calls are wired the LLM has access to
+  // plugin tools as native OpenAI tool_calls (executed inline by the runner
+  // via patch 7's clientToolExecutor). The wake message must NOT forbid tool
+  // calls; it should encourage them. Drop the long curl-procedure preamble
+  // (irrelevant when tools are native) and just let the LLM plan its tool
+  // calls naturally.
+  if (nativeFunctionCalls) {
+    return [
+      `Paperclip wake event. Issue ${payload.issueId ?? ""}${payload.taskId && payload.taskId !== payload.issueId ? ` (task ${payload.taskId})` : ""}.`,
+      "",
+      "Use the tools available to you to answer or progress the issue. Each tool call is executed and its result returned in the same turn — formulate the final response based on the real result(s) you receive.",
+      ...(structuredWakePrompt ? ["", structuredWakePrompt] : []),
+    ].join("\n");
+  }
   // simpleMode: agents without HTTP-tooling rights (tools.allow=[]) shouldn't
   // receive the procedural workflow — it leads them to emit unsupported
   // tool_call payloads they can't follow. Send only the structured payload so
@@ -1307,9 +1322,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const fcPreloadedApiKey = fcUseNativeFunctionCalls
     ? await loadClaimedApiKey(claimedApiKeyPathResolved)
     : null;
+  const wakeTextNativeFunctionCalls =
+    fcUseNativeFunctionCalls && fcPreloadedApiKey !== null;
   const wakeTextSimpleMode =
-    parseBoolean(ctx.config.simpleWakeText, false) ||
-    (fcUseNativeFunctionCalls && fcPreloadedApiKey !== null);
+    !wakeTextNativeFunctionCalls && parseBoolean(ctx.config.simpleWakeText, false);
   const wakeText = buildWakeText(
     wakePayload,
     paperclipEnv,
@@ -1318,6 +1334,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       : structuredWakePrompt,
     claimedApiKeyPathResolved,
     wakeTextSimpleMode,
+    wakeTextNativeFunctionCalls,
   );
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
