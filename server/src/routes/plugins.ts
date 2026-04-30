@@ -728,10 +728,24 @@ export function pluginRoutes(
    * - `pluginId` (optional): Filter to tools from a specific plugin
    *
    * Response: `AgentToolDescriptor[]`
-   * Errors: 501 if tool dispatcher is not configured
+   * Errors:
+   * - 403 if neither board nor agent access is granted
+   * - 501 if tool dispatcher is not configured
+   *
+   * Auth: same dual-actor rule as `POST /plugins/tools/execute` — the catalog
+   * is what the agent will need to construct its system prompt or to expose
+   * native function-calls to the LLM, so agent-authenticated callers (e.g. the
+   * openclaw-gateway adapter discovering tools right before sending an
+   * `agent.run`) must be allowed without a board-scoped token. Board callers
+   * still go through the standard multi-user authz check.
    */
   router.get("/plugins/tools", async (req, res) => {
-    assertBoardOrgAccess(req);
+    if (req.actor.type !== "board" && req.actor.type !== "agent") {
+      throw forbidden("Board or agent access required");
+    }
+    if (req.actor.type === "board") {
+      assertBoardOrgAccess(req);
+    }
 
     if (!toolDeps) {
       res.status(501).json({ error: "Plugin tool dispatch is not enabled" });
