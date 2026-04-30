@@ -1671,6 +1671,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // embedded in the next message. Bounded to MAX_FUNCTION_CALL_ROUNDTRIPS
       // to guard against runaway loops; gracefully exits if any tool fails.
       if (fcEnabled && fcApiKey && fcApiUrl) {
+        // Diagnostic: dump meta so we can see why pendingToolCalls might be
+        // empty (stopReason mismatch, struct shape change, etc.).
+        const _diagMeta = asRecord(acceptedPayload?.meta);
+        await ctx.onLog(
+          "stdout",
+          `[openclaw-gateway] post-run meta dump: stopReason=${nonEmpty(_diagMeta?.stopReason) ?? "(none)"} pendingToolCalls=${JSON.stringify(_diagMeta?.pendingToolCalls ?? null).slice(0, 500)}\n`,
+        );
         let roundtrips = 0;
         let pendingToolCalls = extractPendingToolCalls(acceptedPayload);
         while (pendingToolCalls.length > 0 && roundtrips < MAX_FUNCTION_CALL_ROUNDTRIPS) {

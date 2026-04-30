@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-04-13T11:28:59.544Z",
+  "apiBase": "https://app.neocompany.ch",
+  "found": [
+    {
+      "env": "GOOGLE_CLIENT_ID",
+      "platform": "googleClientId",
+      "valueLen": 72
+    },
+    {
+      "env": "GOOGLE_CLIENT_SECRET",
+      "platform": "googleClientSecretRef",
+      "secretId": "1a4e4db6-35e8-4c11-968e-1caf424e4bbd"
+    },
+    {
+      "env": "GOOGLE_PSI_API_KEY",
+      "platform": "googlePsiApiKeyRef",
+      "secretId": "074c5f91-b610-4073-89a6-68afb8f6aafd"
+    }
+  ],
+  "missing": [],
+  "errors": []
+}
