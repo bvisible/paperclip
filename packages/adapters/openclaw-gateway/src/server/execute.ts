@@ -1570,9 +1570,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             const tools = await fetchAvailableTools(fcApiUrl, fcApiKey);
             if (tools.length > 0) {
               agentParams.clientTools = toClientTools(tools);
+              // NORA Phase 4 — pass a synchronous executor descriptor so
+              // OpenClaw fork (>= bb7022c2 / patch 7) executes plugin tools
+              // INLINE during the LLM turn instead of returning a sentinel
+              // that Qwen-class models ignore. With this in place there is
+              // no need for the roundtrip loop below — tool results land
+              // back in the same turn and the LLM produces a grounded
+              // final answer in one shot.
+              agentParams.clientToolExecutor = {
+                url: new URL("/api/plugins/tools/execute", fcApiUrl).toString(),
+                apiKey: fcApiKey,
+                runId: ctx.runId,
+                timeoutMs: 30_000,
+              };
               await ctx.onLog(
                 "stdout",
-                `[openclaw-gateway] injected ${tools.length} plugin tool(s) as clientTools (function-calling native)\n`,
+                `[openclaw-gateway] injected ${tools.length} plugin tool(s) as clientTools + sync executor (function-calling native)\n`,
               );
             } else {
               await ctx.onLog(
