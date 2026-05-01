@@ -57,19 +57,28 @@ export const noraWorkItemComplete: RegisteredToolEntry = {
     },
   },
   async run(params, runCtx, ctx) {
-    // Diag: log the raw params so we can see what the LLM is actually
-    // passing as `result`. Strip later in Phase 5 cleanup.
-    try {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[noraWorkItemComplete:diag] raw params keys=${Object.keys(params as object).join(",")} result_preview=${
-          typeof (params as { result?: unknown }).result === "string"
-            ? `"${((params as { result: string }).result).slice(0, 200)}"`
-            : typeof (params as { result?: unknown }).result
-        }`,
-      );
-    } catch {
-      /* swallow */
+    // NORA Phase 6 — diagnostic gated by NORA_DEBUG env. Helps see what the
+    // LLM passes as `result` when the Zod refine rejects a placeholder.
+    // The plugin worker runs in a separate process so we can't share the
+    // adapter-utils helper directly; replicate the env check inline.
+    if (
+      process.env.NORA_DEBUG === "1" ||
+      process.env.NORA_DEBUG === "true" ||
+      process.env.NORA_DEBUG === "yes" ||
+      process.env.NORA_DEBUG === "on"
+    ) {
+      try {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[NORA-DIAG][noraWorkItemComplete] raw params keys=${Object.keys(params as object).join(",")} result_preview=${
+            typeof (params as { result?: unknown }).result === "string"
+              ? `"${((params as { result: string }).result).slice(0, 200)}"`
+              : typeof (params as { result?: unknown }).result
+          }`,
+        );
+      } catch {
+        /* swallow */
+      }
     }
     const input = InputSchema.parse(params);
 

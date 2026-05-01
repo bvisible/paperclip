@@ -54,3 +54,5 @@ export {
   redactTranscriptEntryPaths,
 } from "./log-redaction.js";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
+export { isNoraDebugEnabled, noraDiag } from "./nora-debug.js";
+export type { NoraDiagSink } from "./nora-debug.js";

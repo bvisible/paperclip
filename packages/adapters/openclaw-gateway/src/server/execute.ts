@@ -367,8 +367,6 @@ function resolveClaimedApiKeyPath(value: unknown): string {
 // without clientTools — falling back to the legacy behaviour rather than
 // failing the wake.
 
-const MAX_FUNCTION_CALL_ROUNDTRIPS = 5;
-
 function expandHomePath(path: string): string {
   if (path.startsWith("~/")) {
     return `${homedir()}/${path.slice(2)}`;
@@ -491,38 +489,6 @@ function resolveAgentToolFilter(ctx: AdapterExecutionContext): ReadonlySet<strin
   return DEFAULT_AGENT_TOOL_ALLOWLIST[agentId];
 }
 
-type PluginToolExecuteResponse = {
-  result?: {
-    content?: string;
-    data?: unknown;
-    error?: unknown;
-  };
-};
-
-async function executePluginTool(
-  apiUrl: string,
-  apiKey: string,
-  runId: string,
-  tool: string,
-  parameters: unknown,
-): Promise<PluginToolExecuteResponse> {
-  const url = new URL("/api/plugins/tools/execute", apiUrl).toString();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "X-Paperclip-Run-Id": runId,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ tool, parameters }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`executePluginTool failed: ${res.status} ${res.statusText} ${body.slice(0, 200)}`);
-  }
-  return (await res.json()) as PluginToolExecuteResponse;
-}
-
 type ClientToolDefinition = {
   type: "function";
   function: {
@@ -541,39 +507,6 @@ function toClientTools(tools: AgentToolDescriptor[]): ClientToolDefinition[] {
       parameters: t.parametersSchema,
     },
   }));
-}
-
-type PendingToolCall = {
-  id: string;
-  name: string;
-  arguments: string;
-};
-
-function extractPendingToolCalls(payload: unknown): PendingToolCall[] {
-  // OpenClaw WS responds with `{ runId, status, result: { payloads, meta } }`
-  // (see src/gateway/server-methods/agent.ts:328 — the `result` field carries
-  // the runEmbeddedPiAgent return value). Falls back to top-level `meta` for
-  // older shapes / direct callers.
-  const root = asRecord(payload);
-  const meta =
-    asRecord(asRecord(root?.result)?.meta) ?? asRecord(root?.meta);
-  if (!meta) return [];
-  const stopReason = nonEmpty(meta.stopReason);
-  if (stopReason !== "tool_calls") return [];
-  const raw = meta.pendingToolCalls;
-  if (!Array.isArray(raw)) return [];
-  const calls: PendingToolCall[] = [];
-  for (const entry of raw) {
-    const r = asRecord(entry);
-    if (!r) continue;
-    const id = nonEmpty(r.id);
-    const name = nonEmpty(r.name);
-    const args = typeof r.arguments === "string" ? r.arguments : JSON.stringify(r.arguments ?? {});
-    if (id && name) {
-      calls.push({ id, name, arguments: args });
-    }
-  }
-  return calls;
 }
 
 function resolvePaperclipApiUrlForFetch(ctx: AdapterExecutionContext): string {
@@ -1798,139 +1731,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // via /api/plugins/tools/execute and re-issue agent.run with the result
       // embedded in the next message. Bounded to MAX_FUNCTION_CALL_ROUNDTRIPS
       // to guard against runaway loops; gracefully exits if any tool fails.
-      // NORA Phase 5 — when the sync executor is wired (patch 7), tool calls
-      // are executed inline by the runner during the LLM turn. The runtime
-      // may still terminate with stopReason="tool_calls" (Qwen / Olares emit
-      // that natively whenever a function-call is in the assistant message),
-      // but we MUST NOT re-execute via the legacy roundtrip path — that
-      // would duplicate every tool call and double the latency. Skip the
-      // loop entirely when the sync executor is in use.
-      if (fcEnabled && fcApiKey && fcApiUrl && !agentParams.clientToolExecutor) {
-        // Diagnostic: dump meta so we can see why pendingToolCalls might be
-        // empty (stopReason mismatch, struct shape change, etc.). Look in
-        // both `payload.meta` (legacy) and `payload.result.meta` (current
-        // OpenClaw WS shape — see server-methods/agent.ts).
-        const _diagRoot = asRecord(acceptedPayload);
-        const _diagMeta =
-          asRecord(asRecord(_diagRoot?.result)?.meta) ?? asRecord(_diagRoot?.meta);
-        await ctx.onLog(
-          "stdout",
-          `[openclaw-gateway] post-run meta dump: stopReason=${nonEmpty(_diagMeta?.stopReason) ?? "(none)"} pendingToolCalls=${JSON.stringify(_diagMeta?.pendingToolCalls ?? null).slice(0, 500)}\n`,
-        );
-        let roundtrips = 0;
-        let pendingToolCalls = extractPendingToolCalls(acceptedPayload);
-        while (pendingToolCalls.length > 0 && roundtrips < MAX_FUNCTION_CALL_ROUNDTRIPS) {
-          await ctx.onLog(
-            "stdout",
-            `[openclaw-gateway] tool_calls roundtrip ${roundtrips + 1}/${MAX_FUNCTION_CALL_ROUNDTRIPS} — executing ${pendingToolCalls.length} tool(s)\n`,
-          );
-
-          const toolResults: Array<{ id: string; name: string; content: string }> = [];
-          for (const call of pendingToolCalls) {
-            try {
-              const args = JSON.parse(call.arguments) as unknown;
-              const exec = await executePluginTool(fcApiUrl, fcApiKey, ctx.runId, call.name, args);
-              const content = JSON.stringify(exec.result ?? {});
-              toolResults.push({ id: call.id, name: call.name, content });
-              await ctx.onLog(
-                "stdout",
-                `[openclaw-gateway] tool ${call.name} -> ${content.slice(0, 200)}\n`,
-              );
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              toolResults.push({ id: call.id, name: call.name, content: JSON.stringify({ error: message }) });
-              await ctx.onLog(
-                "stderr",
-                `[openclaw-gateway] tool ${call.name} failed: ${message}\n`,
-              );
-            }
-          }
-
-          // Build the follow-up message containing tool results. Option A
-          // (simple text encoding) — see NORA/19-function-calls-natifs/04-...
-          // The agent already has the original user question + assistant
-          // tool_calls in its session history (sessionKey is preserved), so
-          // this user message is interpreted as "here are the results, now
-          // formulate the answer".
-          const toolResultsText = toolResults
-            .map((t) => `[tool:${t.name}#${t.id}] ${t.content}`)
-            .join("\n");
-          agentParams.message = `Tool results:\n${toolResultsText}\n\nFormulate the final response to the user using these results.`;
-          agentParams.idempotencyKey = randomUUID();
-
-          // Same expectFinal contract as the initial call — wait for the
-          // resolved frame so we can read `result.meta` and detect any
-          // follow-up tool_calls in this turn.
-          const nextPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
-            timeoutMs: waitTimeoutMs,
-            expectFinal: true,
-          });
-          latestResultPayload = nextPayload;
-          acceptedPayload = nextPayload;
-
-          const nextStatus = nonEmpty(nextPayload?.status)?.toLowerCase() ?? "";
-          const nextRunId = nonEmpty(nextPayload?.runId) ?? acceptedRunId;
-          trackedRunIds.add(nextRunId);
-
-          if (nextStatus === "error") {
-            return {
-              exitCode: 1,
-              signal: null,
-              timedOut: false,
-              errorMessage:
-                nonEmpty(nextPayload?.summary) ??
-                lifecycleError ??
-                "OpenClaw gateway agent request failed during tool roundtrip",
-              errorCode: "openclaw_gateway_tool_roundtrip_error",
-              resultJson: nextPayload,
-            };
-          }
-
-          if (nextStatus !== "ok") {
-            const waitPayload = await client.request<Record<string, unknown>>(
-              "agent.wait",
-              { runId: nextRunId, timeoutMs: waitTimeoutMs },
-              { timeoutMs: waitTimeoutMs + connectTimeoutMs },
-            );
-            latestResultPayload = waitPayload;
-            acceptedPayload = waitPayload;
-            const waitStatus = nonEmpty(waitPayload?.status)?.toLowerCase() ?? "";
-            if (waitStatus === "timeout") {
-              return {
-                exitCode: 1,
-                signal: null,
-                timedOut: true,
-                errorMessage: `OpenClaw gateway run timed out after ${waitTimeoutMs}ms during tool roundtrip`,
-                errorCode: "openclaw_gateway_wait_timeout",
-                resultJson: waitPayload,
-              };
-            }
-            if (waitStatus === "error" || (waitStatus && waitStatus !== "ok")) {
-              return {
-                exitCode: 1,
-                signal: null,
-                timedOut: false,
-                errorMessage:
-                  nonEmpty(waitPayload?.error) ??
-                  lifecycleError ??
-                  `OpenClaw gateway run failed during tool roundtrip (status=${waitStatus})`,
-                errorCode: "openclaw_gateway_wait_error",
-                resultJson: waitPayload,
-              };
-            }
-          }
-
-          roundtrips++;
-          pendingToolCalls = extractPendingToolCalls(acceptedPayload);
-        }
-
-        if (pendingToolCalls.length > 0) {
-          await ctx.onLog(
-            "stderr",
-            `[openclaw-gateway] tool_calls roundtrip exhausted (${MAX_FUNCTION_CALL_ROUNDTRIPS}), giving up with ${pendingToolCalls.length} tool(s) still pending\n`,
-          );
-        }
-      }
+      // NORA Phase 6 — Phase 2.2 roundtrip loop removed. With patch 7's sync
+      // executor (clientToolExecutor in agentParams), tool calls execute
+      // inline during the LLM turn and the run terminates with the final
+      // answer in the assistant chunks. The legacy roundtrip path used to
+      // re-execute every tool externally and follow up with a second
+      // agent.run; it became dead code once `agentParams.clientToolExecutor`
+      // was always set. Removing it (commit history: a062527d → 9b8c5503)
+      // eliminates ~140 lines of dead code on the happy path. If for any
+      // reason a future agent ships without an executor, the LLM will get
+      // the patch-6 sentinel ("STOP your turn immediately…") which is the
+      // documented OpenResponses fallback.
 
       const summaryFromEvents = assistantChunks.join("").trim();
       const summaryFromPayload =
