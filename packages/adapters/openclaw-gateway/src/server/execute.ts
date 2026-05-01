@@ -474,6 +474,36 @@ const DEFAULT_AGENT_TOOL_ALLOWLIST: Record<string, ReadonlySet<string>> = {
     "nora-frappe-tools:frappeOutstandingPayables",
     "nora-frappe-tools:noraWorkItemComplete",
   ]),
+  "documents-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeSearchGlobal",
+    "nora-frappe-tools:frappeFileUpload",
+    "nora-frappe-tools:noraDriveSearch",
+    "nora-frappe-tools:noraDriveUpload",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "webmail-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeSearchGlobal",
+    "nora-frappe-tools:frappeEmailDraft",
+    "nora-frappe-tools:frappeEmailConfirm",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "insights-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeReportList",
+    "nora-frappe-tools:frappeReportRun",
+    "nora-frappe-tools:frappeRevenueSummary",
+    "nora-frappe-tools:frappeOutstandingReceivables",
+    "nora-frappe-tools:frappeOutstandingPayables",
+    "nora-frappe-tools:frappeSqlQuery",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
 };
 
 function resolveAgentToolFilter(ctx: AdapterExecutionContext): ReadonlySet<string> | undefined {
