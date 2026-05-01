@@ -484,9 +484,19 @@ function resolveAgentToolFilter(ctx: AdapterExecutionContext): ReadonlySet<strin
     const names = cfgAllow.filter((v): v is string => typeof v === "string" && v.length > 0);
     return new Set<string>(names);
   }
-  const agentId = nonEmpty(ctx.agent?.id) ?? nonEmpty(ctx.config.agentId);
-  if (!agentId) return undefined;
-  return DEFAULT_AGENT_TOOL_ALLOWLIST[agentId];
+  // ctx.agent.id is a Paperclip DB UUID, not the OpenClaw agent name. Match
+  // by `name` first (e.g. "sales-v15"), then fall back to id, then to the
+  // explicit `agentId` adapter config (which IS the OpenClaw name —
+  // see openclaw.json `agents.list[*].id`).
+  const agentName = nonEmpty(ctx.agent?.name);
+  if (agentName && DEFAULT_AGENT_TOOL_ALLOWLIST[agentName]) {
+    return DEFAULT_AGENT_TOOL_ALLOWLIST[agentName];
+  }
+  const agentConfigId = nonEmpty(ctx.config.agentId);
+  if (agentConfigId && DEFAULT_AGENT_TOOL_ALLOWLIST[agentConfigId]) {
+    return DEFAULT_AGENT_TOOL_ALLOWLIST[agentConfigId];
+  }
+  return undefined;
 }
 
 type ClientToolDefinition = {
