@@ -21,7 +21,30 @@ import {
 } from "../lib/inbox";
 
 const INBOX_ISSUE_STATUSES = "backlog,todo,in_progress,in_review,blocked,done";
-const INBOX_BADGE_ISSUE_LIMIT = 500;
+//// Neoffice Modification: nora-inbox-badge-limit-cap
+//// Why: This hook is mounted in Sidebar.tsx (every page renders it) and
+////      MobileBottomNav.tsx. With the upstream limit of 500 every page
+////      load — and every React-Query refetch on window focus / reconnect
+////      / 502-retry — fetched 500 fully-projected issues from
+////      /api/companies/:id/issues just to compute a badge count and a
+////      handful of recent-touched rows.
+////
+////      Stack two browser tabs and let one go through a transient 502
+////      and you get the perf incident observed on Osiris 2026-05-04:
+////      hundreds of /issues calls per minute, the connection pool
+////      saturates, every query in the system queues behind a 17-min
+////      base64-decorated SELECT.
+////
+////      Cap the limit to 50 — getRecentTouchedIssues() only displays a
+////      handful of rows in the badge dropdown anyway, and the badge
+////      itself only needs the count. If a future feature needs more it
+////      should switch to a dedicated count endpoint rather than fetching
+////      full rows.
+//// Date: 2026-05-04
+//// Refs: NORA #27 follow-up — see [[NORA/27-paperclip-neoffice-embed/README]]
+////       Companion fix: services/issues.ts ISSUE_LIST_DEFAULT_LIMIT capped to 50
+const INBOX_BADGE_ISSUE_LIMIT = 50;
+//// End Neoffice Modification: nora-inbox-badge-limit-cap
 const INBOX_BADGE_HEARTBEAT_RUN_LIMIT = 200;
 
 export function useDismissedInboxAlerts() {

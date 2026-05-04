@@ -56,7 +56,35 @@ import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
-export const ISSUE_LIST_DEFAULT_LIMIT = 500;
+//// Neoffice Modification: nora-issue-list-default-limit-cap
+//// Why: The upstream default of 500 issues per /api/companies/:id/issues
+////      call is the root cause behind a recurring perf issue on Osiris.
+////      `issueListSelect` (services/issues.ts:1383) base64-encodes a
+////      preview of every `description`, fans out to 5 parallel JOINs
+////      (labels, runs, comment stats, read stats, blocked-by) and the
+////      Drizzle/postgres.js path can take seconds even on a healthy
+////      box. Six UI components call `issuesApi.list(companyId)` with no
+////      explicit limit (CommandPalette, IssueProperties, ActiveAgentsPanel,
+////      Dashboard's inbox panel, etc.) — every page render or React-Query
+////      refetch fires a 500-row fetch. Stack a few open browser tabs
+////      polling at the same time and the connection pool collapses.
+////
+////      Cap the default to 50, which:
+////        - matches what UI lists actually render in the viewport (we have
+////          virtualised lists for >50 anyway),
+////        - keeps the pagination contract intact (`offset` + explicit
+////          `limit` requests still work for the rare callers that need
+////          more, capped by ISSUE_LIST_MAX_LIMIT=1000 unchanged),
+////        - benefits standalone Paperclip too (500-by-default was a
+////          smell upstream — drizzle ORM materialising 500 rows ×
+////          base64 description on every dashboard render is never the
+////          right answer).
+////      If a future caller really needs >50 it must opt in via `?limit=`.
+//// Date: 2026-05-04
+//// Refs: NORA #27 follow-up — see [[NORA/27-paperclip-neoffice-embed/README]]
+////       Stack history: NORA #26 audit + NORA #27 Phase I (inbox-lite fastpath)
+export const ISSUE_LIST_DEFAULT_LIMIT = 50;
+//// End Neoffice Modification: nora-issue-list-default-limit-cap
 export const ISSUE_LIST_MAX_LIMIT = 1000;
 const ISSUE_LIST_RELATED_QUERY_CHUNK_SIZE = 500;
 export const MAX_CHILD_ISSUES_CREATED_BY_HELPER = 25;
