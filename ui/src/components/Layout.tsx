@@ -19,6 +19,20 @@ import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { useDialogActions } from "../context/DialogContext";
+//// Neoffice Modification: neoffice-embed-hide-chrome
+//// Why: Hide CompanyRail (the left vertical 80px icon strip) and
+////      SidebarAccountMenu (the bottom workspace/account chip) when embedded
+////      in a Neoffice tenant. Both expose Paperclip-only affordances:
+////        - CompanyRail = company switcher (we have a single company per
+////          Neoffice instance, so the icon column is dead weight + visual
+////          noise duplicating the Frappe Desk left rail).
+////        - SidebarAccountMenu = "Local workspace board" / version badge /
+////          sign-in flow that does not match the Frappe-authenticated user.
+////      The user pointed both as red zones in the 2026-05-04 mockup.
+//// Date: 2026-05-04
+//// Refs: NORA #27 Phase B — see [[NORA/27-paperclip-neoffice-embed/README]]
+import { IS_NEOFFICE } from "@/lib/deployment";
+//// End Neoffice Modification: neoffice-embed-hide-chrome
 import { GeneralSettingsProvider } from "../context/GeneralSettingsContext";
 import { usePanel } from "../context/PanelContext";
 import { useCompany } from "../context/CompanyContext";
@@ -336,7 +350,9 @@ export function Layout() {
             )}
           >
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <CompanyRail />
+              {/*//// Neoffice Modification: neoffice-embed-hide-chrome */}
+              {!IS_NEOFFICE && <CompanyRail />}
+              {/*//// End Neoffice Modification: neoffice-embed-hide-chrome */}
               {isInstanceSettingsRoute ? (
                 <InstanceSidebar />
               ) : isCompanySettingsRoute ? (
@@ -345,16 +361,22 @@ export function Layout() {
                 <Sidebar />
               )}
             </div>
-            <SidebarAccountMenu
-              deploymentMode={health?.deploymentMode}
-              instanceSettingsTarget={instanceSettingsTarget}
-              version={health?.version}
-            />
+            {/*//// Neoffice Modification: neoffice-embed-hide-chrome */}
+            {!IS_NEOFFICE && (
+              <SidebarAccountMenu
+                deploymentMode={health?.deploymentMode}
+                instanceSettingsTarget={instanceSettingsTarget}
+                version={health?.version}
+              />
+            )}
+            {/*//// End Neoffice Modification: neoffice-embed-hide-chrome */}
           </div>
         ) : (
           <div className="flex h-full flex-col shrink-0">
             <div className="flex flex-1 min-h-0">
-              <CompanyRail />
+              {/*//// Neoffice Modification: neoffice-embed-hide-chrome */}
+              {!IS_NEOFFICE && <CompanyRail />}
+              {/*//// End Neoffice Modification: neoffice-embed-hide-chrome */}
               <div
                 className={cn(
                   "overflow-hidden transition-[width] duration-100 ease-out",
@@ -370,11 +392,15 @@ export function Layout() {
                 )}
               </div>
             </div>
-            <SidebarAccountMenu
-              deploymentMode={health?.deploymentMode}
-              instanceSettingsTarget={instanceSettingsTarget}
-              version={health?.version}
-            />
+            {/*//// Neoffice Modification: neoffice-embed-hide-chrome */}
+            {!IS_NEOFFICE && (
+              <SidebarAccountMenu
+                deploymentMode={health?.deploymentMode}
+                instanceSettingsTarget={instanceSettingsTarget}
+                version={health?.version}
+              />
+            )}
+            {/*//// End Neoffice Modification: neoffice-embed-hide-chrome */}
           </div>
         )}
 

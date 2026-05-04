@@ -27,6 +27,16 @@ import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
+//// Neoffice Modification: neoffice-embed-hide-chrome
+//// Why: In Neoffice mode there is exactly ONE company per tenant
+////      (auto-provisioned at install), so the company picker dropdown at the
+////      top of the sidebar is dead UI. Hiding it also removes the strikethrough
+////      "Neoffice Osiris" entry that the user marked in red on the 2026-05-04
+////      mockup.
+//// Date: 2026-05-04
+//// Refs: NORA #27 Phase B
+import { IS_NEOFFICE } from "@/lib/deployment";
+//// End Neoffice Modification: neoffice-embed-hide-chrome
 
 export function Sidebar() {
   const { openNewIssue } = useDialogActions();
@@ -58,7 +68,9 @@ export function Sidebar() {
     <aside className="w-60 h-full min-h-0 border-r border-border bg-background flex flex-col">
       {/* Top bar: Company name (bold) + Search — aligned with top sections (no visible border) */}
       <div className="flex items-center gap-1 px-3 h-12 shrink-0">
-        <SidebarCompanyMenu />
+        {/*//// Neoffice Modification: neoffice-embed-hide-chrome */}
+        {!IS_NEOFFICE && <SidebarCompanyMenu />}
+        {/*//// End Neoffice Modification: neoffice-embed-hide-chrome */}
         <Button
           variant="ghost"
           size="icon-sm"
