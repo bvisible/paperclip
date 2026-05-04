@@ -2306,6 +2306,24 @@ export function issueService(db: Db) {
       }
 
       const issueIds = withRuns.map((row) => row.id);
+      //// Neoffice Modification: nora-issues-skip-last-activity-stats
+      //// Why: lastActivityStatsForIssues runs `MAX(created_at)` correlated
+      ////      subqueries against issue_comments AND activity_log for every
+      ////      issue in the batch. With 1.09M comments + 1.09M activity_log
+      ////      rows on Osiris these scans hit LWLock BufferIO contention
+      ////      under any concurrent polling. Inbox.tsx fans out 5+ parallel
+      ////      fetches on every visit, each producing two heavy MAX scans.
+      ////
+      ////      In Neoffice mode, fall back to `latestIssueActivityAt(
+      ////      updatedAt, null, null) = updatedAt` for every row. The Inbox
+      ////      sort/grouping by activity recency stays meaningful because
+      ////      `issues.updated_at` is bumped on every comment / heartbeat
+      ////      write through the bridge (NORA #25 perf instrumentation
+      ////      confirmed this). Standalone Paperclip still gets the precise
+      ////      max-of-three computation.
+      //// Date: 2026-05-04
+      //// Refs: NORA #27 Phase M follow-up
+      const NEOFFICE_DEPLOYMENT_LASTACT = process.env.PAPERCLIP_DEPLOYMENT === "neoffice";
       const [statsRows, readRows, lastActivityRows, blockedByMap] = await Promise.all([
         contextUserId
           ? userCommentStatsForIssues(db, companyId, contextUserId, issueIds)
@@ -2313,7 +2331,9 @@ export function issueService(db: Db) {
         contextUserId
           ? userReadStatsForIssues(db, companyId, contextUserId, issueIds)
           : Promise.resolve([]),
-        lastActivityStatsForIssues(db, companyId, issueIds),
+        NEOFFICE_DEPLOYMENT_LASTACT
+          ? Promise.resolve([] as Awaited<ReturnType<typeof lastActivityStatsForIssues>>)
+          : lastActivityStatsForIssues(db, companyId, issueIds),
         includeBlockedBy
           ? blockedByMapForIssues(db, companyId, issueIds)
           : Promise.resolve(new Map<string, IssueRelationIssueSummary[]>()),
