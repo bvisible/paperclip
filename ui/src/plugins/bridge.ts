@@ -33,7 +33,7 @@ import type {
   PluginLauncherRenderEnvironment,
 } from "@paperclipai/shared";
 import { pluginsApi } from "@/api/plugins";
-import { ApiError } from "@/api/client";
+import { ApiError, API_BASE } from "@/api/client";
 import { useToastActions, type ToastInput } from "@/context/ToastContext";
 
 // ---------------------------------------------------------------------------
@@ -421,7 +421,7 @@ export function usePluginStream<T = unknown>(
 
     const params = new URLSearchParams({ companyId: effectiveCompanyId });
     const source = new EventSource(
-      `/api/plugins/${encodeURIComponent(pluginId)}/bridge/stream/${encodeURIComponent(channel)}?${params.toString()}`,
+      `${API_BASE}/plugins/${encodeURIComponent(pluginId)}/bridge/stream/${encodeURIComponent(channel)}?${params.toString()}`,
       { withCredentials: true },
     );
     sourceRef.current = source;

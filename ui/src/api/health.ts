@@ -26,9 +26,11 @@ export type HealthStatus = {
   devServer?: DevServerHealthStatus;
 };
 
+import { API_BASE } from "./client";
+
 export const healthApi = {
   get: async (): Promise<HealthStatus> => {
-    const res = await fetch("/api/health", {
+    const res = await fetch(`${API_BASE}/health`, {
       credentials: "include",
       headers: { Accept: "application/json" },
     });

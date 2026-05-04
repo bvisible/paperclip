@@ -1,4 +1,16 @@
-const BASE = "/api";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: When Paperclip is served under /paperclip/ on Neoffice, fetch("/api/...")
+////      hits Frappe instead of Paperclip's Express server. Prefix all client-side
+////      API calls (REST, EventSource, WebSocket) with import.meta.env.BASE_URL so
+////      they resolve to /paperclip/api/... when deployed sub-path.
+//// Date: 2026-05-04
+//// Refs: NORA #26 — sub-path Vite deployment
+const RAW_BASE = import.meta.env.BASE_URL || "/";
+const NORMALIZED_BASE = RAW_BASE.endsWith("/") ? RAW_BASE : `${RAW_BASE}/`;
+export const API_BASE = `${NORMALIZED_BASE}api`;
+//// End Neoffice Modification: vite-base-paperclip-prefix
+
+const BASE = API_BASE;
 
 export class ApiError extends Error {
   status: number;

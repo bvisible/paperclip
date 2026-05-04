@@ -1,3 +1,4 @@
+import { API_BASE } from "./client";
 import {
   authSessionSchema,
   currentUserProfileSchema,
@@ -90,7 +91,7 @@ async function authPatch<T>(path: string, body: Record<string, unknown>, parse: 
 
 export const authApi = {
   getSession: async (): Promise<AuthSession | null> => {
-    const res = await fetch("/api/auth/get-session", {
+    const res = await fetch(`${API_BASE}/auth/get-session`, {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
@@ -114,7 +115,7 @@ export const authApi = {
   },
 
   getProfile: async (): Promise<CurrentUserProfile> => {
-    const res = await fetch("/api/auth/profile", {
+    const res = await fetch(`${API_BASE}/auth/profile`, {
       credentials: "include",
       headers: { Accept: "application/json" },
     });
