@@ -1548,20 +1548,71 @@ export function agentRoutes(
       return;
     }
 
+    //// Neoffice Modification: nora-inbox-lite-fastpath
+    //// Why: Upstream calls `issuesSvc.list()` which uses `issueListSelect`,
+    ////      a heavy projection that base64-encodes a substring of every
+    ////      `description` (`encode(substring(convert_to(description, …)))`)
+    ////      AND fans out to 5 parallel JOINs (labels, active runs, comment
+    ////      stats, read stats, blocked-by). With ISSUE_LIST_DEFAULT_LIMIT=500
+    ////      and 9 NORA agents polling this endpoint every heartbeat tick
+    ////      (~10 s), this saturates the Postgres connection pool — 14+
+    ////      concurrent active backends running for 20+ minutes each on
+    ////      Osiris, load average 15-18 on 2 vCPUs. The kicker: the response
+    ////      doesn't even include `description` — the base64 work is pure
+    ////      waste.
+    ////
+    ////      Replace with a tight, denormalised fastpath:
+    ////        - SELECT only the 9 columns the response actually needs
+    ////        - LIMIT 50 (an agent with 500 active assignments would have
+    ////          a different problem than what inbox-lite solves)
+    ////        - Drop the 5 JOINs — `activeRun` is dropped (not consumed
+    ////          by the heartbeat skill, see SKILL.md step 3) and
+    ////          `dependencyReadiness` is still computed because callers
+    ////          (NORA agents prioritising work) rely on it.
+    ////
+    ////      Standalone Paperclip builds running upstream still get the
+    ////      full `issuesSvc.list` path through the regular issues
+    ////      endpoints — only this NORA-hot endpoint takes the fastpath.
+    //// Date: 2026-05-04
+    //// Refs: NORA #27 follow-up — see [[NORA/27-paperclip-neoffice-embed/README]]
+    ////       Cause root: server/src/services/issues.ts:1383 (issueListSelect)
+    ////       Symptom: pool saturation observed 2026-05-04 on Osiris
+    const NORA_INBOX_LITE_LIMIT = 50;
+    const inboxRows = await db
+      .select({
+        id: issuesTable.id,
+        identifier: issuesTable.identifier,
+        title: issuesTable.title,
+        status: issuesTable.status,
+        priority: issuesTable.priority,
+        projectId: issuesTable.projectId,
+        goalId: issuesTable.goalId,
+        parentId: issuesTable.parentId,
+        updatedAt: issuesTable.updatedAt,
+      })
+      .from(issuesTable)
+      .where(
+        and(
+          eq(issuesTable.companyId, req.actor.companyId),
+          eq(issuesTable.assigneeAgentId, req.actor.agentId),
+          inArray(issuesTable.status, ["todo", "in_progress", "blocked"]),
+          sql`${issuesTable.hiddenAt} IS NULL`,
+        ),
+      )
+      .orderBy(
+        sql`CASE ${issuesTable.priority} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`,
+        desc(issuesTable.updatedAt),
+      )
+      .limit(NORA_INBOX_LITE_LIMIT);
+
     const issuesSvc = issueService(db);
-    const rows = await issuesSvc.list(req.actor.companyId, {
-      assigneeAgentId: req.actor.agentId,
-      status: "todo,in_progress,blocked",
-      includeRoutineExecutions: true,
-      limit: ISSUE_LIST_DEFAULT_LIMIT,
-    });
     const dependencyReadiness = await issuesSvc.listDependencyReadiness(
       req.actor.companyId,
-      rows.map((issue) => issue.id),
+      inboxRows.map((issue) => issue.id),
     );
 
     res.json(
-      rows.map((issue) => ({
+      inboxRows.map((issue) => ({
         id: issue.id,
         identifier: issue.identifier,
         title: issue.title,
@@ -1571,12 +1622,16 @@ export function agentRoutes(
         goalId: issue.goalId,
         parentId: issue.parentId,
         updatedAt: issue.updatedAt,
-        activeRun: issue.activeRun,
+        // activeRun intentionally dropped — not consumed by the heartbeat
+        // skill flow (see skills/paperclip/SKILL.md step 3) and would force
+        // an extra JOIN that defeats the purpose of this fastpath.
+        activeRun: null,
         dependencyReady: dependencyReadiness.get(issue.id)?.isDependencyReady ?? true,
         unresolvedBlockerCount: dependencyReadiness.get(issue.id)?.unresolvedBlockerCount ?? 0,
         unresolvedBlockerIssueIds: dependencyReadiness.get(issue.id)?.unresolvedBlockerIssueIds ?? [],
       })),
     );
+    //// End Neoffice Modification: nora-inbox-lite-fastpath
   });
 
   router.get("/agents/me/inbox/mine", async (req, res) => {
