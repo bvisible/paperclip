@@ -706,12 +706,30 @@ export async function startServer(): Promise<StartedServer> {
           logger.warn({ ...scanned }, "startup active-run output watchdog created review work");
         }
       })
+      //// Neoffice Modification: nora-disable-productivity-reviews
+      //// Why: reconcileProductivityReviews is an upstream Paperclip feature
+      ////      that auto-creates "Review productivity for {sourceIssue}"
+      ////      issues for every completed issue with heartbeat runs. On
+      ////      Osiris that meant ~644 review issues per startup + per
+      ////      tick (every 10 s), flooding the Inbox with `just now`
+      ////      updates and bloating activity_log to 1M+ rows. The Neoffice
+      ////      NORA flow does not use these review issues — agents are
+      ////      monitored via Hindsight memory + perfPersist traces, not
+      ////      via meta-issues.
+      ////
+      ////      Skip the startup + periodic reconciliation when
+      ////      PAPERCLIP_DEPLOYMENT=neoffice. Standalone Paperclip keeps
+      ////      the upstream behaviour.
+      //// Date: 2026-05-04
+      //// Refs: NORA #27 Phase P — see [[NORA/27-paperclip-neoffice-embed/README]]
       .then(async () => {
+        if (process.env.PAPERCLIP_DEPLOYMENT === "neoffice") return;
         const reviewed = await heartbeat.reconcileProductivityReviews();
         if (reviewed.created > 0 || reviewed.updated > 0 || reviewed.failed > 0) {
           logger.warn({ ...reviewed }, "startup productivity reconciliation created or updated review work");
         }
       })
+      //// End Neoffice Modification: nora-disable-productivity-reviews
       .catch((err) => {
         logger.error({ err }, "startup heartbeat recovery failed");
       });
@@ -771,12 +789,18 @@ export async function startServer(): Promise<StartedServer> {
             logger.warn({ ...scanned }, "periodic active-run output watchdog created review work");
           }
         })
+        //// Neoffice Modification: nora-disable-productivity-reviews
+        //// Why: see startup block above. Same gate on the periodic tick
+        //// (runs every heartbeatSchedulerIntervalMs = 10 s on Osiris).
+        //// Refs: NORA #27 Phase P
         .then(async () => {
+          if (process.env.PAPERCLIP_DEPLOYMENT === "neoffice") return;
           const reviewed = await heartbeat.reconcileProductivityReviews();
           if (reviewed.created > 0 || reviewed.updated > 0 || reviewed.failed > 0) {
             logger.warn({ ...reviewed }, "periodic productivity reconciliation created or updated review work");
           }
         })
+        //// End Neoffice Modification: nora-disable-productivity-reviews
         .catch((err) => {
           logger.error({ err }, "periodic heartbeat recovery failed");
         });
