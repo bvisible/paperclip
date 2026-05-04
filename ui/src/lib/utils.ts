@@ -2,14 +2,39 @@ import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { deriveAgentUrlKey, deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "@paperclipai/shared";
 import type { BillingType, FinanceDirection, FinanceEventKind } from "@paperclipai/shared";
+//// Neoffice Modification: neoffice-currency-chf
+//// Why: All Neoffice tenants are Swiss-based SMEs invoicing in CHF.
+////      The upstream `formatCents` hardcodes "$" + en-US locale, which
+////      shows up everywhere costs/budgets are rendered (Dashboard
+////      "Month Spend", AgentDetail run cost, Costs page). Switch to
+////      CHF with the de-CH locale (apostrophe thousand separator,
+////      comma decimal) when the embed flag is set. Standalone /
+////      NeoCompany builds keep the upstream USD format byte-for-byte.
+//// Date: 2026-05-04
+//// Refs: NORA #27 — see [[NORA/27-paperclip-neoffice-embed/README]]
+import { IS_NEOFFICE } from "@/lib/deployment";
+//// End Neoffice Modification: neoffice-currency-chf
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+//// Neoffice Modification: neoffice-currency-chf
+//// Why: see import block above. The function still takes cents and the
+////      output shape (one short string, no leading sign for positive
+////      amounts) is unchanged — only the symbol + locale change in
+////      Neoffice mode, so callers don't need to know the difference.
+//// Refs: NORA #27 Phase G (currency)
 export function formatCents(cents: number): string {
+  if (IS_NEOFFICE) {
+    return `${(cents / 100).toLocaleString("de-CH", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} CHF`;
+  }
   return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+//// End Neoffice Modification: neoffice-currency-chf
 
 export function formatNumber(n: number): string {
   return n.toLocaleString("en-US");

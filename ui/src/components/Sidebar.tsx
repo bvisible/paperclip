@@ -127,7 +127,17 @@ export function Sidebar() {
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
           <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
           <SidebarNavItem to="/activity" label="Activity" icon={History} />
-          <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+          {/*//// Neoffice Modification: neoffice-embed-hide-chrome */}
+          {/* Why: Neoffice tenants must not let end-users edit Paperclip
+              company settings (status flag, attachment limits, agent
+              hire approval, branding, etc.). Branding/colour decisions
+              come from the Frappe Desk shell; the rest are operator-
+              only knobs that would surface confusing options for an
+              employee. */}
+          {!IS_NEOFFICE && (
+            <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+          )}
+          {/*//// End Neoffice Modification: neoffice-embed-hide-chrome */}
         </SidebarSection>
 
         <PluginSlotOutlet
