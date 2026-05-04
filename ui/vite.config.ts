@@ -29,6 +29,32 @@ const base = process.env.PAPERCLIP_BASE_URL || "/";
 const paperclipDeployment = process.env.VITE_PAPERCLIP_DEPLOYMENT || "";
 //// End Neoffice Modification: neoffice-embed-mode
 
+//// Neoffice Modification: neoffice-html-branding
+//// Why: index.html ships hardcoded "Paperclip" in <title>, in the
+////      apple-mobile-web-app-title meta, and in the runtime branding
+////      placeholder. On Neoffice tenants the user-facing brand is NORA,
+////      so the browser tab and PWA install prompt should read NORA.
+////      Vite doesn't run `define` substitution on index.html — instead
+////      it exposes a transformIndexHtml hook in the plugin pipeline.
+////      We register a tiny in-line plugin that performs the swap only
+////      when the deployment flag is "neoffice", so standalone builds
+////      keep the upstream HTML byte-for-byte.
+//// Date: 2026-05-04
+//// Refs: NORA #27 Phase J follow-up — see [[NORA/27-paperclip-neoffice-embed/README]]
+const neofficeHtmlBranding = {
+  name: "neoffice-html-branding",
+  transformIndexHtml(html: string): string {
+    if (paperclipDeployment !== "neoffice") return html;
+    return html
+      .replace(/<title>Paperclip<\/title>/, "<title>NORA</title>")
+      .replace(
+        /apple-mobile-web-app-title" content="Paperclip"/,
+        'apple-mobile-web-app-title" content="NORA"',
+      );
+  },
+};
+//// End Neoffice Modification: neoffice-html-branding
+
 export default defineConfig(({ mode }) => ({
   base,
   //// Neoffice Modification: neoffice-embed-mode
@@ -41,7 +67,7 @@ export default defineConfig(({ mode }) => ({
     "import.meta.env.VITE_PAPERCLIP_DEPLOYMENT": JSON.stringify(paperclipDeployment),
   },
   //// End Neoffice Modification: neoffice-embed-mode
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), neofficeHtmlBranding],
   build: {
     minify: "esbuild",
   },
