@@ -22,9 +22,25 @@ import "./index.css";
 
 initPluginBridge(React, ReactDOM);
 
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: When Paperclip is served under a sub-path (e.g. /paperclip/ on Neoffice),
+////      React-Router needs to know the base so it strips it before matching routes.
+////      Without this, location.pathname stays "/paperclip/dashboard" and the
+////      :companyPrefix segment in routes captures "paperclip" → all sidebar links
+////      become "/PAPERCLIP/dashboard" (invalid prefix, broken navigation).
+////      BrowserRouter expects a basename without trailing slash; "/" stays unset.
+////      Same fix for the service worker URL: register from BASE_URL not "/".
+//// Date: 2026-05-04
+//// Refs: NORA #26 — sub-path Vite deployment
+const routerBasename =
+  import.meta.env.BASE_URL && import.meta.env.BASE_URL !== "/"
+    ? import.meta.env.BASE_URL.replace(/\/$/, "")
+    : undefined;
+//// End Neoffice Modification: vite-base-paperclip-prefix
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js");
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`);
   });
 }
 
@@ -41,7 +57,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <BrowserRouter>
+        <BrowserRouter basename={routerBasename}>
           <CompanyProvider>
             <EditorAutocompleteProvider>
               <ToastProvider>
