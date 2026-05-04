@@ -12,7 +12,7 @@ import {
 } from "../utils.js";
 
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
-  const { runId, agent, config, onLog, onMeta } = ctx;
+  const { runId, agent, config, context, onLog, onMeta } = ctx;
   const command = asString(config.command, "");
   if (!command) throw new Error("Process adapter missing command");
 
@@ -23,6 +23,24 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   for (const [k, v] of Object.entries(envConfig)) {
     if (typeof v === "string") env[k] = v;
   }
+
+  //// Neoffice Modification: pass-issue-id-to-process-runner
+  //// Why: avoids the 2.5s findActiveIssue listing for agents with many
+  //// historical issues (NORA main: 60 issues → 2.5s p50 vs specialists with
+  //// 1-2 issues → 228ms). The scheduler already pre-resolves the issue and
+  //// stores it on ctx.context.paperclipIssue, but the built-in process
+  //// adapter doesn't expose it as env. We forward it so subprocess runners
+  //// can fetch /api/issues/<id> directly instead of paginating the assignee
+  //// list. Placed AFTER config.env merge so configured env cannot override
+  //// the scheduler's canonical issue id.
+  //// Date: 2026-05-04
+  //// Refs: NORA [[NORA/25-perf-optimization/05-execution-plan#Phase D]]
+  const currentIssue = parseObject(context?.paperclipIssue);
+  if (typeof currentIssue.id === "string" && currentIssue.id) {
+    env.PAPERCLIP_ISSUE_ID = currentIssue.id;
+  }
+  //// End Neoffice Modification: pass-issue-id-to-process-runner
+
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
   const loggedEnv = buildInvocationEnvForLogs(env, {
