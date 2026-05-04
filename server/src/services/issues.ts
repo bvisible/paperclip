@@ -2251,7 +2251,34 @@ export function issueService(db: Db) {
           ELSE 6
         END
       `;
-      const canonicalLastActivityAt = issueCanonicalLastActivityAtExpr(companyId);
+      //// Neoffice Modification: nora-issues-orderby-skip-canonical
+      //// Why: `canonicalLastActivityAt` = GREATEST(updated_at, MAX(comments),
+      ////      MAX(activity_log)) is a correlated subquery that runs PER row
+      ////      against issue_comments (1.09M rows on Osiris) and activity_log.
+      ////      EXPLAIN shows ~207 ms even with LIMIT 50 (the LIMIT is applied
+      ////      AFTER the ORDER BY materialises every row), and the cost shoots
+      ////      up super-linearly when several requests run concurrently —
+      ////      Postgres backends start contending on `LWLock BufferMapping`
+      ////      (observed live on Osiris 2026-05-04: queries stuck 1-3 minutes
+      ////      while the UI poll fires every few seconds).
+      ////
+      ////      For the standard NORA list views (Issues, Inbox, sidebar badge,
+      ////      Active Agents Panel) ordering by `updated_at` is sufficient —
+      ////      the rows that get bumped by a comment also get bumped by their
+      ////      `updated_at` via the bridge / heartbeat write paths. We keep
+      ////      `priority` first so 'critical' / 'high' bubble up regardless,
+      ////      then fall back on `updated_at` (indexed by the standard PK
+      ////      indexes) and `id` (ditto). Standalone Paperclip running
+      ////      upstream still sees the canonical-last-activity ORDER BY
+      ////      because the flag-gated branch keeps the upstream behaviour.
+      //// Date: 2026-05-04
+      //// Refs: NORA #27 follow-up — see [[NORA/27-paperclip-neoffice-embed/README]]
+      ////       Companion fixes: ISSUE_LIST_DEFAULT_LIMIT 500→50,
+      ////                        useInboxBadge INBOX_BADGE_ISSUE_LIMIT 500→50
+      const NEOFFICE_DEPLOYMENT = process.env.PAPERCLIP_DEPLOYMENT === "neoffice";
+      const orderByActivity = NEOFFICE_DEPLOYMENT
+        ? desc(issues.updatedAt)
+        : desc(issueCanonicalLastActivityAtExpr(companyId));
       const baseQuery = db
         .select(issueListSelect)
         .from(issues)
@@ -2259,10 +2286,11 @@ export function issueService(db: Db) {
         .orderBy(
           hasSearch ? asc(searchOrder) : asc(priorityOrder),
           asc(priorityOrder),
-          desc(canonicalLastActivityAt),
+          orderByActivity,
           desc(issues.updatedAt),
           desc(issues.id),
         );
+      //// End Neoffice Modification: nora-issues-orderby-skip-canonical
       const pageQuery = offset > 0
         ? (limit === undefined ? baseQuery.offset(offset) : baseQuery.limit(limit).offset(offset))
         : (limit === undefined ? baseQuery : baseQuery.limit(limit));
