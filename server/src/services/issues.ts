@@ -2320,10 +2320,28 @@ export function issueService(db: Db) {
       ]);
       const statsByIssueId = new Map(statsRows.map((row) => [row.issueId, row]));
       const lastActivityByIssueId = new Map(lastActivityRows.map((row) => [row.issueId, row]));
-      const [blockerAttentionByIssueId, productivityReviewByIssueId] = await Promise.all([
-        listIssueBlockerAttentionMap(db, companyId, withRuns),
-        listIssueProductivityReviewMap(db, companyId, issueIds),
-      ]);
+      //// Neoffice Modification: nora-issues-skip-attention-and-productivity
+      //// Why: listIssueBlockerAttentionMap and listIssueProductivityReviewMap
+      ////      both scan activity_log (1M+ rows on Osiris) without a LIMIT
+      ////      to compute Inbox-only badges (attention markers, productivity
+      ////      review triggers). Neoffice's NORA UI does not surface these
+      ////      badges — the user sees Issues / Inbox / Org panels that ignore
+      ////      the fields entirely. Skipping the two queries on Neoffice
+      ////      cuts ~80 % of the post-list scan time and prevents BufferIO
+      ////      contention when several /api/companies/:id/issues calls run
+      ////      concurrently (live perf incident 2026-05-04).
+      ////      Standalone Paperclip keeps both helpers — its Inbox UI uses
+      ////      the data.
+      //// Date: 2026-05-04
+      //// Refs: NORA #27 Phase M — see [[NORA/27-paperclip-neoffice-embed/README]]
+      const NEOFFICE_DEPLOYMENT_ATTN = process.env.PAPERCLIP_DEPLOYMENT === "neoffice";
+      const [blockerAttentionByIssueId, productivityReviewByIssueId] = NEOFFICE_DEPLOYMENT_ATTN
+        ? [new Map(), new Map()]
+        : await Promise.all([
+            listIssueBlockerAttentionMap(db, companyId, withRuns),
+            listIssueProductivityReviewMap(db, companyId, issueIds),
+          ]);
+      //// End Neoffice Modification: nora-issues-skip-attention-and-productivity
 
       if (!contextUserId) {
         return withRuns.map((row) => {
