@@ -1,4 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+//// Neoffice Modification: neoffice-html-branding
+//// Why: BreadcrumbContext rewrites `document.title` on every navigation
+////      (e.g. "Dashboard · Paperclip"), which overrides the static
+////      <title>NORA</title> emitted by the index.html transform plugin.
+////      Switch the suffix to "NORA" when running embedded.
+//// Date: 2026-05-04
+//// Refs: NORA #27 Phase J follow-up
+import { IS_NEOFFICE } from "@/lib/deployment";
+
+const TITLE_BRAND = IS_NEOFFICE ? "NORA" : "Paperclip";
+//// End Neoffice Modification: neoffice-html-branding
 
 export interface Breadcrumb {
   label: string;
@@ -39,10 +50,10 @@ export function BreadcrumbProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (breadcrumbs.length === 0) {
-      document.title = "Paperclip";
+      document.title = TITLE_BRAND;
     } else {
       const parts = [...breadcrumbs].reverse().map((b) => b.label);
-      document.title = `${parts.join(" · ")} · Paperclip`;
+      document.title = `${parts.join(" · ")} · ${TITLE_BRAND}`;
     }
   }, [breadcrumbs]);
 
