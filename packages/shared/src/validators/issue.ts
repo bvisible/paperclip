@@ -153,6 +153,24 @@ export const createIssueSchema = z.object({
   executionWorkspacePreference: z.enum(ISSUE_EXECUTION_WORKSPACE_PREFERENCES).optional().nullable(),
   executionWorkspaceSettings: issueExecutionWorkspaceSettingsSchema.optional().nullable(),
   labelIds: z.array(z.string().uuid()).optional(),
+  //// Neoffice Modification: accept-origin-fields-on-issue-create
+  //// Why: External callers (NORA Quick Chat bridge `nora.api.v2.chat.send`,
+  ////      and similar surfaces such as the upcoming mobile chat passthrough)
+  ////      need to tag the issue with origin metadata so the Hindsight
+  ////      Paperclip integration can derive a user-scoped memory bank from
+  ////      the Frappe user identity. Without these, Zod's default "strip"
+  ////      mode drops the keys silently and every Quick Chat issue lands
+  ////      with origin_id NULL, breaking memory continuity ("Bonjour" reply
+  ////      to "oui" — PRI-696/697/698 incident).
+  ////      The DB columns already exist (`issues.origin_kind`, `issues.origin_id`)
+  ////      and `issueListSelect` already returns them — only the create
+  ////      surface validation needs to admit them. Strict format checks
+  ////      keep the data clean.
+  //// Date: 2026-05-05
+  //// Refs: NORA [[27-paperclip-neoffice-embed/README]] Phase R
+  originKind: z.string().min(1).max(120).optional().nullable(),
+  originId: z.string().min(1).max(255).optional().nullable(),
+  //// End Neoffice Modification: accept-origin-fields-on-issue-create
 });
 
 export type CreateIssue = z.infer<typeof createIssueSchema>;
