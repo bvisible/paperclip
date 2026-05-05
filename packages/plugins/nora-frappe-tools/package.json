@@ -1,0 +1,33 @@
+{
+  "name": "@paperclipai/plugin-nora-frappe-tools",
+  "version": "0.1.0",
+  "description": "Neoffice/Frappe ERP tools exposed to NORA agents via Paperclip. Typed Zod schemas, zero JSON escaping, direct HTTP to Frappe whitelisted methods.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "prebuild": "node ../../../scripts/ensure-plugin-build-deps.mjs",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "pnpm --filter @paperclipai/plugin-sdk build && tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.7.3"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ]
+}
