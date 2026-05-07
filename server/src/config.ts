@@ -330,7 +330,17 @@ export function loadConfig(): Config {
     feedbackExportBackendUrl,
     feedbackExportBackendToken,
     heartbeatSchedulerEnabled: process.env.HEARTBEAT_SCHEDULER_ENABLED !== "false",
-    heartbeatSchedulerIntervalMs: Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
+    //// Neoffice Modification: lower-heartbeat-floor
+    //// Why: NORA #27 R-V15.9 — the 10s floor put a 0–10s random pickup
+    //// delay between webhook receipt and runner spawn (mean ~5s), which
+    //// dominates the WhatsApp end-to-end latency (target 7s, observed 20s).
+    //// 1s floor lets per-instance drop-ins set HEARTBEAT_SCHEDULER_INTERVAL_MS=2000
+    //// (sensible compromise between reactivity and tickTimers CPU cost).
+    //// Default stays 30s when no env var is set, so non-Neoffice deploys
+    //// keep upstream behaviour.
+    //// Refs: NORA [[27-paperclip-neoffice-embed/R-V15-plan]] R-V15.9 P1.1
+    heartbeatSchedulerIntervalMs: Math.max(1000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000),
+    //// End Neoffice Modification: lower-heartbeat-floor
     companyDeletionEnabled,
     telemetryEnabled: fileConfig?.telemetry?.enabled ?? true,
   };
