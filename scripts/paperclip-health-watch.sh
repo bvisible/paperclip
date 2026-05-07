@@ -37,10 +37,18 @@ METRICS_CSV="/var/log/paperclip-health.metrics.csv"
 LAST_ALERT_FILE="/var/run/paperclip-health-watch.last-alert"
 
 # ---- thresholds (warn, critical) ------------------------------------------
-ACTIVITY_LOG_WARN_MB=200
-ACTIVITY_LOG_CRIT_MB=500
-ISSUE_COMMENTS_WARN_MB=100
-ISSUE_COMMENTS_CRIT_MB=300
+# These thresholds are calibrated for a Neoffice-tenant Paperclip instance at
+# steady state. On Osiris we observed (post-ANALYZE) ~1.1M rows in both
+# activity_log (with 30 d retention) and issue_comments (no retention, business
+# data). At ~750-920 bytes per row that gives ~1 GB tables in normal operation,
+# so warn/crit must be set above the equilibrium, not below it. Earlier values
+# (200/500 for activity_log, 100/300 for issue_comments) were based on
+# pg_stat_user_tables stats that hadn't been ANALYZE'd in months and reported
+# 837/59 rows when the tables actually held over a million each.
+ACTIVITY_LOG_WARN_MB=1500
+ACTIVITY_LOG_CRIT_MB=3000
+ISSUE_COMMENTS_WARN_MB=1500
+ISSUE_COMMENTS_CRIT_MB=3000
 PG_CONN_WARN=8
 PG_CONN_CRIT=12
 NODE_RSS_WARN_MB=600
