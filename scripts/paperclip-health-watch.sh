@@ -24,7 +24,11 @@ fi
 
 PG_DB="${PAPERCLIP_PG_DB:-paperclip}"
 PG_USER="${PAPERCLIP_PG_USER:-postgres}"
-PROCESS_PATTERN="${PAPERCLIP_PROCESS_PATTERN:-paperclip|node.*server}"
+# Match the Paperclip server entrypoint specifically. The previous broader
+# pattern caught Frappe socketio + plugin workers and produced false-positive
+# Node RSS readings (~2 GB instead of ~270 MB). Override via env if the install
+# layout differs.
+PROCESS_PATTERN="${PAPERCLIP_PROCESS_PATTERN:-paperclip/server/src/index.ts}"
 ALERT_EMAIL="${PAPERCLIP_ALERT_EMAIL:-jeremy@bvisible.ch}"
 HYSTERESIS_S="${PAPERCLIP_ALERT_HYSTERESIS_S:-3600}"
 HOSTNAME_SHORT="$(hostname -s)"
