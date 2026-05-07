@@ -41,6 +41,25 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   }
   //// End Neoffice Modification: pass-issue-id-to-process-runner
 
+  //// Neoffice Modification: pass-run-id-to-process-runner
+  //// Why: NORA #27 R-V15.9 P2.4 — the runner script needs the runId to send
+  //// the X-Paperclip-Run-Id header on /api/plugins/tools/execute (otherwise
+  //// the route rejects with 400 "Agent-authenticated calls require
+  //// agentId/companyId/runId"). Until now the runner queried
+  //// /api/companies/<cid>/live-runs at startup to discover its own runId,
+  //// which (a) added a 1s round-trip and (b) raced against the heartbeat
+  //// scheduler creating the run row → "could not resolve a running heartbeat
+  //// run for this agent" → tools fail → exit code 1 → ghost loop. The
+  //// scheduler already knows the runId at adapter dispatch time, so we
+  //// just forward it. Same placement rule as PAPERCLIP_ISSUE_ID — after
+  //// config.env so it can't be overridden.
+  //// Date: 2026-05-07
+  //// Refs: NORA [[27-paperclip-neoffice-embed/R-V15-plan]] R-V15.9 P2.4
+  if (runId) {
+    env.PAPERCLIP_RUN_ID = runId;
+  }
+  //// End Neoffice Modification: pass-run-id-to-process-runner
+
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
   const resolvedCommand = await resolveCommandForLogs(command, cwd, runtimeEnv);
   const loggedEnv = buildInvocationEnvForLogs(env, {
