@@ -3542,57 +3542,81 @@ export function issueRoutes(
       userId: actor.actorType === "user" ? actor.actorId : undefined,
       runId: actor.runId,
     });
-    await issueReferencesSvc.syncComment(comment.id);
-    const commentReferenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(currentIssue.id);
-    const commentReferenceDiff = issueReferencesSvc.diffIssueReferenceSummary(
-      commentReferenceSummaryBefore,
-      commentReferenceSummaryAfter,
-    );
 
-    if (actor.runId) {
-      await heartbeat.reportRunActivity(actor.runId).catch((err) =>
-        logger.warn({ err, runId: actor.runId }, "failed to clear detached run warning after issue comment"));
-    }
+    // NORA #27 R-V15.14 — return the comment ASAP. The bookkeeping below
+    // (issue references sync, activity_log, request confirmations expiry)
+    // adds ~5s of synchronous Postgres roundtrips that the runner does not
+    // need to wait on: it only consumes the comment id to mark progress,
+    // and the wakeups for downstream agents are already fire-and-forget.
+    // Trade-off: the live comment view sees the references diff + the
+    // request_confirmation transitions a beat later (typically <2s), which
+    // is acceptable for back-office UI consumers. WhatsApp/Quick Chat users
+    // are unaffected since they read the answer through the runner sendText
+    // path, not the Paperclip comment record.
+    res.status(201).json(comment);
 
-    await logActivity(db, {
-      companyId: currentIssue.companyId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "issue.comment_added",
-      entityType: "issue",
-      entityId: currentIssue.id,
-      details: {
-        commentId: comment.id,
-        bodySnippet: comment.body.slice(0, 120),
-        identifier: currentIssue.identifier,
-        issueTitle: currentIssue.title,
-        ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
-        ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
-        ...(interruptedRunId ? { interruptedRunId } : {}),
-        ...summarizeIssueReferenceActivityDetails({
-          addedReferencedIssues: commentReferenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
-          removedReferencedIssues: commentReferenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
-          currentReferencedIssues: commentReferenceDiff.currentReferencedIssues.map(summarizeIssueRelationForActivity),
-        }),
-      },
-    });
+    // Background bookkeeping. Errors are logged but never thrown — the
+    // response is already on its way to the client.
+    void (async () => {
+      try {
+        await issueReferencesSvc.syncComment(comment.id);
+        const commentReferenceSummaryAfter = await issueReferencesSvc.listIssueReferenceSummary(currentIssue.id);
+        const commentReferenceDiff = issueReferencesSvc.diffIssueReferenceSummary(
+          commentReferenceSummaryBefore,
+          commentReferenceSummaryAfter,
+        );
 
-    const expiredInteractions = await issueThreadInteractionService(db).expireRequestConfirmationsSupersededByComment(
-      currentIssue,
-      comment,
-      {
-        agentId: actor.agentId,
-        userId: actor.actorType === "user" ? actor.actorId : null,
-      },
-    );
-    await logExpiredRequestConfirmations({
-      issue: currentIssue,
-      interactions: expiredInteractions,
-      actor,
-      source: "issue.comment",
-    });
+        if (actor.runId) {
+          await heartbeat.reportRunActivity(actor.runId).catch((err) =>
+            logger.warn({ err, runId: actor.runId }, "failed to clear detached run warning after issue comment"));
+        }
+
+        await logActivity(db, {
+          companyId: currentIssue.companyId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
+          agentId: actor.agentId,
+          runId: actor.runId,
+          action: "issue.comment_added",
+          entityType: "issue",
+          entityId: currentIssue.id,
+          details: {
+            commentId: comment.id,
+            bodySnippet: comment.body.slice(0, 120),
+            identifier: currentIssue.identifier,
+            issueTitle: currentIssue.title,
+            ...(resumeRequested === true ? { resumeIntent: true, followUpRequested: true } : {}),
+            ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
+            ...(interruptedRunId ? { interruptedRunId } : {}),
+            ...summarizeIssueReferenceActivityDetails({
+              addedReferencedIssues: commentReferenceDiff.addedReferencedIssues.map(summarizeIssueRelationForActivity),
+              removedReferencedIssues: commentReferenceDiff.removedReferencedIssues.map(summarizeIssueRelationForActivity),
+              currentReferencedIssues: commentReferenceDiff.currentReferencedIssues.map(summarizeIssueRelationForActivity),
+            }),
+          },
+        });
+
+        const expiredInteractions = await issueThreadInteractionService(db).expireRequestConfirmationsSupersededByComment(
+          currentIssue,
+          comment,
+          {
+            agentId: actor.agentId,
+            userId: actor.actorType === "user" ? actor.actorId : null,
+          },
+        );
+        await logExpiredRequestConfirmations({
+          issue: currentIssue,
+          interactions: expiredInteractions,
+          actor,
+          source: "issue.comment",
+        });
+      } catch (err) {
+        logger.warn(
+          { err, issueId: id, commentId: comment.id },
+          "post-comment background bookkeeping failed (non-fatal)",
+        );
+      }
+    })();
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
@@ -3692,7 +3716,8 @@ export function issueRoutes(
       }
     })();
 
-    res.status(201).json(comment);
+    // R-V15.14 — response already sent above (line ~3552) right after
+    // svc.addComment so the bookkeeping does not gate the runner.
   });
 
   router.post("/issues/:id/feedback-votes", validate(upsertIssueFeedbackVoteSchema), async (req, res) => {
