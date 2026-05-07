@@ -35,6 +35,9 @@ import {
   reconcilePersistedRuntimeServicesOnStartup,
   routineService,
 } from "./services/index.js";
+import { startActivityLogRetention } from "./services/activity-log-retention.js";
+import { startPluginLogRetention } from "./services/plugin-log-retention.js";
+import { applyMaintenanceIndexes } from "./services/maintenance-indexes.js";
 import { createFeedbackTraceShareClientFromConfig } from "./services/feedback-share-client.js";
 import { buildRuntimeApiCandidateUrls, choosePrimaryRuntimeApiUrl } from "./runtime-api.js";
 import { createPluginWorkerManager } from "./services/plugin-worker-manager.js";
@@ -668,7 +671,17 @@ export async function startServer(): Promise<StartedServer> {
     .catch((err) => {
       logger.error({ err }, "startup reconciliation of persisted runtime services failed");
     });
-  
+
+  // Maintenance: idempotent index optimisations + retention sweeps for the
+  // activity_log and plugin_logs tables. Both retention services log only
+  // when they actually delete rows, and they swallow errors so a transient
+  // DB hiccup never aborts boot.
+  void applyMaintenanceIndexes(db as any).catch((err) => {
+    logger.warn({ err }, "Maintenance indexes step failed (non-fatal)");
+  });
+  startPluginLogRetention(db as any);
+  startActivityLogRetention(db as any);
+
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any, { pluginWorkerManager });
     const routines = routineService(db as any, { pluginWorkerManager });

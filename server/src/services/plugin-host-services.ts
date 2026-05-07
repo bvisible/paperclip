@@ -66,6 +66,37 @@ const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 const TELEMETRY_EVENT_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
 
+// Defensive cap on plugin-supplied issue body content (comments + documents).
+// Without this, plugins can inject multi-MB JSON/HTML payloads which then
+// blow up issue_comments storage and the body trigram index (we observed
+// ~7 MB average bodies on Osiris). 100 KB is roughly 25k tokens — far above
+// what humans write in practice and wide enough for code-block payloads.
+const MAX_PLUGIN_ISSUE_BODY_BYTES = 100_000;
+const PLUGIN_ISSUE_BODY_TRUNCATION_NOTICE =
+  "\n\n[truncated by paperclip plugin host: original body exceeded the " +
+  `${MAX_PLUGIN_ISSUE_BODY_BYTES} byte cap]`;
+
+function capPluginIssueBody(body: string | null | undefined): string {
+  if (!body) return "";
+  if (Buffer.byteLength(body, "utf8") <= MAX_PLUGIN_ISSUE_BODY_BYTES) return body;
+  let truncated = body;
+  while (
+    Buffer.byteLength(truncated + PLUGIN_ISSUE_BODY_TRUNCATION_NOTICE, "utf8") >
+    MAX_PLUGIN_ISSUE_BODY_BYTES
+  ) {
+    truncated = truncated.slice(0, Math.max(0, truncated.length - 1024));
+    if (truncated.length === 0) break;
+  }
+  logger.warn(
+    {
+      originalBytes: Buffer.byteLength(body, "utf8"),
+      cap: MAX_PLUGIN_ISSUE_BODY_BYTES,
+    },
+    "Plugin tried to write an issue body above the size cap; truncating",
+  );
+  return truncated + PLUGIN_ISSUE_BODY_TRUNCATION_NOTICE;
+}
+
 /**
  * Check if an IP address is in a private/reserved range (RFC 1918, loopback,
  * link-local, etc.) that plugins should never be able to reach.
@@ -1492,9 +1523,10 @@ export function buildHostServices(
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
         const issue = requireInCompany("Issue", await issues.getById(params.issueId), companyId);
+        const sanitizedBody = capPluginIssueBody(params.body);
         const comment = (await issues.addComment(
           params.issueId,
-          params.body,
+          sanitizedBody,
           { agentId: params.authorAgentId },
         )) as IssueComment;
         await logPluginActivity({
@@ -1558,7 +1590,7 @@ export function buildHostServices(
         const result = await documents.upsertIssueDocument({
           issueId: params.issueId,
           key: params.key,
-          body: params.body,
+          body: capPluginIssueBody(params.body),
           title: params.title ?? null,
           format: params.format ?? "markdown",
           changeSummary: params.changeSummary ?? null,

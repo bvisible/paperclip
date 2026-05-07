@@ -104,9 +104,12 @@ export function Layout() {
     retry: false,
     refetchInterval: (query) => {
       const data = query.state.data as { devServer?: { enabled?: boolean } } | undefined;
-      return data?.devServer?.enabled ? 2000 : false;
+      // 5s instead of 2s, and only when the tab is foregrounded (refetchIntervalInBackground=false).
+      // Each tick triggers a count(*) on heartbeat_runs server-side; with multiple tabs idle in
+      // background we used to multiply that load with no user benefit.
+      return data?.devServer?.enabled ? 5000 : false;
     },
-    refetchIntervalInBackground: true,
+    refetchIntervalInBackground: false,
   });
   const keyboardShortcutsEnabled = useQuery({
     queryKey: queryKeys.instance.generalSettings,

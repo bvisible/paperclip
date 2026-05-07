@@ -17,6 +17,26 @@ function shouldExposeFullHealthDetails(
   return actorType === "board" || actorType === "agent";
 }
 
+// Cache the active-run count to avoid hammering Postgres with a count(*) on
+// heartbeat_runs every time the UI polls /health (it polls per browser tab).
+// 5 s is short enough that "queued/running" never feels stale to the dev panel.
+const ACTIVE_RUN_COUNT_TTL_MS = 5_000;
+let cachedActiveRunCount: { value: number; expiresAt: number } | null = null;
+
+async function getCachedActiveRunCount(db: Db): Promise<number> {
+  const now = Date.now();
+  if (cachedActiveRunCount && cachedActiveRunCount.expiresAt > now) {
+    return cachedActiveRunCount.value;
+  }
+  const value = await db
+    .select({ count: count() })
+    .from(heartbeatRuns)
+    .where(inArray(heartbeatRuns.status, ["queued", "running"]))
+    .then((rows) => Number(rows[0]?.count ?? 0));
+  cachedActiveRunCount = { value, expiresAt: now + ACTIVE_RUN_COUNT_TTL_MS };
+  return value;
+}
+
 function hasDevServerStatusToken(providedToken: string | undefined) {
   const expectedToken = process.env.PAPERCLIP_DEV_SERVER_STATUS_TOKEN?.trim();
   const token = providedToken?.trim();
@@ -107,11 +127,7 @@ export function healthRoutes(
     if (exposeDevServerDetails && persistedDevServerStatus && typeof (db as { select?: unknown }).select === "function") {
       const instanceSettings = instanceSettingsService(db);
       const experimentalSettings = await instanceSettings.getExperimental();
-      const activeRunCount = await db
-        .select({ count: count() })
-        .from(heartbeatRuns)
-        .where(inArray(heartbeatRuns.status, ["queued", "running"]))
-        .then((rows) => Number(rows[0]?.count ?? 0));
+      const activeRunCount = await getCachedActiveRunCount(db);
 
       devServer = toDevServerHealthStatus(persistedDevServerStatus, {
         autoRestartEnabled: experimentalSettings.autoRestartDevServerWhenIdle ?? false,

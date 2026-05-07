@@ -148,6 +148,23 @@ function summarizeIssueRelationForActivity(relation: {
   };
 }
 
+// Cap the per-row payload that lands in activity_log.details. Each list
+// element is ~50 bytes; without a cap, a comment touching 1000 cross-issue
+// references would store ~50 KB × 3 = 150 KB just from the diff snapshot.
+// Multiplied by hundreds of comments per day this is what caused activity_log
+// to reach 1.2 MB/row on Osiris.
+const MAX_REFERENCED_ISSUES_IN_ACTIVITY_DETAILS = 25;
+
+function truncateActivityRelationList(list: ActivityIssueRelationSummary[]) {
+  if (list.length <= MAX_REFERENCED_ISSUES_IN_ACTIVITY_DETAILS) {
+    return { items: list, totalCount: list.length };
+  }
+  return {
+    items: list.slice(0, MAX_REFERENCED_ISSUES_IN_ACTIVITY_DETAILS),
+    totalCount: list.length,
+  };
+}
+
 function summarizeIssueReferenceActivityDetails(input:
   | {
       addedReferencedIssues: ActivityIssueRelationSummary[];
@@ -158,10 +175,28 @@ function summarizeIssueReferenceActivityDetails(input:
   | undefined,
 ) {
   if (!input) return {};
+  const added = truncateActivityRelationList(input.addedReferencedIssues);
+  const removed = truncateActivityRelationList(input.removedReferencedIssues);
+  const current = truncateActivityRelationList(input.currentReferencedIssues);
   return {
-    ...(input.addedReferencedIssues.length > 0 ? { addedReferencedIssues: input.addedReferencedIssues } : {}),
-    ...(input.removedReferencedIssues.length > 0 ? { removedReferencedIssues: input.removedReferencedIssues } : {}),
-    ...(input.currentReferencedIssues.length > 0 ? { currentReferencedIssues: input.currentReferencedIssues } : {}),
+    ...(added.items.length > 0
+      ? {
+          addedReferencedIssues: added.items,
+          ...(added.totalCount > added.items.length ? { addedReferencedIssuesTotal: added.totalCount } : {}),
+        }
+      : {}),
+    ...(removed.items.length > 0
+      ? {
+          removedReferencedIssues: removed.items,
+          ...(removed.totalCount > removed.items.length ? { removedReferencedIssuesTotal: removed.totalCount } : {}),
+        }
+      : {}),
+    ...(current.items.length > 0
+      ? {
+          currentReferencedIssues: current.items,
+          ...(current.totalCount > current.items.length ? { currentReferencedIssuesTotal: current.totalCount } : {}),
+        }
+      : {}),
   };
 }
 

@@ -45,8 +45,30 @@ export type MigrationState =
       reason: "no-migration-journal-empty-db" | "no-migration-journal-non-empty-db" | "pending-migrations";
     };
 
+// Pool sizing for the application client.
+// Defaults to a tight pool with idle connection reaping so the postgres.js
+// client does not retain idle backends indefinitely (postgres.js's default
+// `idle_timeout = 0` keeps connections forever, which on small instances like
+// Osiris translates to ~70 MB of resident Postgres memory per backend that
+// never gets reclaimed).
+//
+// Override via env: PAPERCLIP_DB_POOL_MAX, PAPERCLIP_DB_IDLE_TIMEOUT_S,
+// PAPERCLIP_DB_MAX_LIFETIME_S, PAPERCLIP_DB_CONNECT_TIMEOUT_S.
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
 export function createDb(url: string) {
-  const sql = postgres(url);
+  const sql = postgres(url, {
+    max: readPositiveIntEnv("PAPERCLIP_DB_POOL_MAX", 6),
+    idle_timeout: readPositiveIntEnv("PAPERCLIP_DB_IDLE_TIMEOUT_S", 60),
+    max_lifetime: readPositiveIntEnv("PAPERCLIP_DB_MAX_LIFETIME_S", 1800),
+    connect_timeout: readPositiveIntEnv("PAPERCLIP_DB_CONNECT_TIMEOUT_S", 30),
+  });
   return drizzlePg(sql, { schema });
 }
 
