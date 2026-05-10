@@ -1,4 +1,4 @@
-//// Neoffice Modification — fork-modified file (NeoCompany)
+//// Neocompany Modification — fork-modified file (NeoCompany)
 //// patches #1 (paperclip-context XML wrap) + #2 (chatPrompt passthrough)
 //// Edits are scattered throughout this file. See FORK_PATCHES.md at repo root
 //// for the catalogue + migration paths. When merging upstream, expect conflicts

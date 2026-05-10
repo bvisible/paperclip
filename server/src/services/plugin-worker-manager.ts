@@ -54,7 +54,7 @@ import { logger } from "../middleware/logger.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-//// Neoffice Modification — patch #3 (raise RPC timeout for Codex CLI image gen)
+//// Neocompany Modification — patch #3 (raise RPC timeout for Codex CLI image gen)
 // Default RPC timeout was 30 s and the hard cap was 5 min. NeoCompany's
 // imageGenerate tool calls codex-cli which routinely takes 30-120 s and can
 // hit 3-5 min on retries. We raise both to 15 min so legitimate long-running
@@ -67,7 +67,7 @@ const DEFAULT_RPC_TIMEOUT_MS = 15 * 60 * 1_000;
 
 /** Hard upper bound for any RPC timeout. Raised to 15 min (NeoCompany). */
 const MAX_RPC_TIMEOUT_MS = 15 * 60 * 1_000;
-//// End Neoffice Modification
+//// End Neocompany Modification
 
 /** Timeout for the initialize RPC call. */
 const INITIALIZE_TIMEOUT_MS = 15_000;

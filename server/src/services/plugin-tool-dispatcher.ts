@@ -1,4 +1,4 @@
-//// Neoffice Modification — fork-modified file (NeoCompany)
+//// Neocompany Modification — fork-modified file (NeoCompany)
 //// Adds neocompany-tools allowlist cache + agent-mode tool dispatching.
 //// See FORK_PATCHES.md (related to #10).
 

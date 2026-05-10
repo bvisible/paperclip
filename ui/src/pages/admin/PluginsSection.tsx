@@ -1,4 +1,4 @@
-//// Neoffice Modification — pure addition (Neocompany fork on top of paperclipai/paperclip)
+//// Neocompany Modification — pure addition (Neocompany fork on top of paperclipai/paperclip)
 //// This file does not exist upstream. Safe across upstream merges.
 
 import { useEffect } from "react";

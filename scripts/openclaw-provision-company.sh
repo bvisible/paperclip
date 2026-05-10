@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# //// Neoffice Modification — pure addition (Neocompany fork on top of paperclipai/paperclip)
+# //// Neocompany Modification — pure addition (Neocompany fork on top of paperclipai/paperclip)
 # //// This file does not exist upstream. Safe across upstream merges.
 # Provision OpenClaw isolated agents for a NeoCompany company.
 #

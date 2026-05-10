@@ -20,10 +20,10 @@ NeoCompany work — `master` is now a strict mirror of upstream and the
 NeoCompany fork lives on its own `neocompany` branch. See
 `Neocompany/fork/cleanup-master-2026-05-10.md` in the Obsidian vault.
 
-**Convention** : every fork edit is wrapped in `//// Neoffice Modification`
-/ `//// End Neoffice Modification` markers in code (or, for fully-rewritten
-files, a `//// Neoffice Modification — fork-modified file` header at the
-top). Grep for `Neoffice Modification` to enumerate every fork-specific
+**Convention** : every fork edit is wrapped in `//// Neocompany Modification`
+/ `//// End Neocompany Modification` markers in code (or, for fully-rewritten
+files, a `//// Neocompany Modification — fork-modified file` header at the
+top). Grep for `Neocompany Modification` to enumerate every fork-specific
 edit before merging upstream.
 
 ## Active patches

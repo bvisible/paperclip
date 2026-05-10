@@ -12,14 +12,14 @@ import {
   Repeat,
   GitBranch,
   Settings,
-  //// Neoffice Modification — patch #7 (icons for Content section)
+  //// Neocompany Modification — patch #7 (icons for Content section)
   Palette,
   Images,
   Share2,
   CheckSquare,
   CalendarDays,
   LayoutGrid,
-  //// End Neoffice Modification
+  //// End Neocompany Modification
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { NavLink } from "@/lib/router";
@@ -35,9 +35,9 @@ import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
-//// Neoffice Modification — patch #7 (render plugin launchers natively in sidebar)
+//// Neocompany Modification — patch #7 (render plugin launchers natively in sidebar)
 import { PluginLauncherOutlet } from "@/plugins/launchers";
-//// End Neoffice Modification
+//// End Neocompany Modification
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 
 export function Sidebar() {
@@ -107,17 +107,17 @@ export function Sidebar() {
             itemClassName="text-[13px] font-medium"
             missingBehavior="placeholder"
           />
-          {/* //// Neoffice Modification — patch #7 (PluginLauncherOutlet for sidebar launchers like paperclip-chat) */}
+          {/* //// Neocompany Modification — patch #7 (PluginLauncherOutlet for sidebar launchers like paperclip-chat) */}
           <PluginLauncherOutlet
             placementZones={["sidebar"]}
             context={pluginContext}
             className="flex flex-col gap-0.5"
             itemClassName="w-full"
           />
-          {/* //// End Neoffice Modification */}
+          {/* //// End Neocompany Modification */}
         </div>
 
-        {/* //// Neoffice Modification — Content section (NeoCompany editorial pipeline) */}
+        {/* //// Neocompany Modification — Content section (NeoCompany editorial pipeline) */}
         {/* These routes are served by the neocompany-tools plugin via page slots
             (templates, image stock, channels, strategy, approvals, calendar). */}
         <SidebarSection label="Content">
@@ -129,7 +129,7 @@ export function Sidebar() {
           <SidebarNavItem to="/content/approvals" label="Approvals" icon={CheckSquare} />
           <SidebarNavItem to="/content/calendar" label="Calendar" icon={CalendarDays} />
         </SidebarSection>
-        {/* //// End Neoffice Modification */}
+        {/* //// End Neocompany Modification */}
 
         <SidebarSection label="Work">
           <SidebarNavItem to="/issues" label="Issues" icon={CircleDot} />

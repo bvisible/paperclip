@@ -16,9 +16,9 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
-//// Neoffice Modification — patch #8 (icon mapping for known plugin launchers)
+//// Neocompany Modification — patch #8 (icon mapping for known plugin launchers)
 import { MessageCircle, Puzzle } from "lucide-react";
-//// End Neoffice Modification
+//// End Neocompany Modification
 import { PLUGIN_LAUNCHER_BOUNDS } from "@paperclipai/shared";
 import type {
   PluginLauncherBounds,
@@ -198,12 +198,12 @@ function launcherTriggerClassName(placementZone: PluginLauncherPlacementZone): s
       return "justify-start h-7 w-full px-2 text-xs font-normal";
     case "sidebar":
     case "sidebarPanel":
-      //// Neoffice Modification — patch #8 cosmetic (sidebar launcher styling)
+      //// Neocompany Modification — patch #8 cosmetic (sidebar launcher styling)
       // Match native nav-item styling so plugin launchers blend in with the
       // rest of the sidebar nav (paperclip-chat shows up alongside Inbox,
       // Issues, Projects, etc.).
       return "justify-start w-full h-auto px-3 py-2 text-[13px] font-medium text-foreground/80 hover:bg-accent/50 hover:text-foreground border-0 rounded-none";
-      //// End Neoffice Modification
+      //// End Neocompany Modification
     case "toolbarButton":
     case "globalToolbarButton":
       return "h-8";
@@ -429,10 +429,10 @@ function LauncherRenderContent({
     if (renderEnvironment.environment === "iframe") {
       return (
         <iframe
-          //// Neoffice Modification — respect Vite BASE_URL for iframe sources
+          //// Neocompany Modification — respect Vite BASE_URL for iframe sources
           // Some deployments serve Paperclip under a non-root path; without
           // BASE_URL the iframe src would be absolute-rooted and 404.
-          //// End Neoffice Modification
+          //// End Neocompany Modification
           src={`${(import.meta.env.BASE_URL || "/").replace(/\/$/, "")}/_plugins/${encodeURIComponent(instance.launcher.pluginId)}/ui/${instance.launcher.action.target}`}
           title={`${instance.launcher.pluginDisplayName} ${instance.launcher.displayName}`}
           className="h-full min-h-[24rem] w-full rounded-md border border-border bg-background"
@@ -662,7 +662,7 @@ export function PluginLauncherProvider({ children }: { children: ReactNode }) {
       contribution: PluginUiContribution,
       sourceEl?: HTMLElement | null,
     ) => {
-      //// Neoffice Modification — patch #5 (resolve nav target against company prefix)
+      //// Neocompany Modification — patch #5 (resolve nav target against company prefix)
       // Plugin launchers can use simple paths like "plugins/paperclip-chat".
       // Without this resolver, navigate("plugins/paperclip-chat") would land on
       // a global /plugins/paperclip-chat route — but our app mounts plugins
@@ -675,7 +675,7 @@ export function PluginLauncherProvider({ children }: { children: ReactNode }) {
         if (prefix) return `/${prefix}/${target}`;
         return `/${target}`;
       };
-      //// End Neoffice Modification
+      //// End Neocompany Modification
       switch (launcher.action.type) {
         case "navigate":
           navigate(resolveNavTarget(launcher.action.target));
@@ -750,7 +750,7 @@ export function usePluginLauncherRuntime(): PluginLauncherRuntimeContextValue {
   return value;
 }
 
-//// Neoffice Modification — patch #8 (icon mapping for known plugin launchers)
+//// Neocompany Modification — patch #8 (icon mapping for known plugin launchers)
 // Map known plugin launchers to a friendly Lucide icon. Unknown launchers
 // fall back to a neutral puzzle-piece so they line up visually with native
 // nav items (Inbox, Issues, etc.) which all have icons.
@@ -760,7 +760,7 @@ function pickLauncherIcon(launcher: ResolvedPluginLauncher) {
   if (launcher.pluginKey === "paperclip-chat" || launcher.id === "chat-nav") return MessageCircle;
   return Puzzle;
 }
-//// End Neoffice Modification
+//// End Neocompany Modification
 
 function DefaultLauncherTrigger({
   launcher,
@@ -771,10 +771,10 @@ function DefaultLauncherTrigger({
   placementZone: PluginLauncherPlacementZone;
   onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
 }) {
-  //// Neoffice Modification — patch #8 (render sidebar launcher with icon)
+  //// Neocompany Modification — patch #8 (render sidebar launcher with icon)
   const Icon = pickLauncherIcon(launcher);
   const isSidebar = placementZone === "sidebar" || placementZone === "sidebarPanel";
-  //// End Neoffice Modification
+  //// End Neocompany Modification
   return (
     <Button
       type="button"
@@ -783,7 +783,7 @@ function DefaultLauncherTrigger({
       className={launcherTriggerClassName(placementZone)}
       onClick={onClick}
     >
-      {/* //// Neoffice Modification — patch #8 (sidebar shows icon + label, others unchanged) */}
+      {/* //// Neocompany Modification — patch #8 (sidebar shows icon + label, others unchanged) */}
       {isSidebar ? (
         <span className="flex items-center gap-2.5 w-full">
           <Icon className="h-4 w-4 shrink-0" />
@@ -792,7 +792,7 @@ function DefaultLauncherTrigger({
       ) : (
         launcher.displayName
       )}
-      {/* //// End Neoffice Modification */}
+      {/* //// End Neocompany Modification */}
     </Button>
   );
 }

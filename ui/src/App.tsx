@@ -53,7 +53,7 @@ import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { JoinRequestQueue } from "./pages/JoinRequestQueue";
 import { NotFoundPage } from "./pages/NotFound";
-//// Neoffice Modification — patch #11 (NeoCompany /content + /admin routes)
+//// Neocompany Modification — patch #11 (NeoCompany /content + /admin routes)
 import { ContentDashboard } from "./pages/ContentDashboard";
 import { ContentTemplates } from "./pages/ContentTemplates";
 import { ContentTemplateEditor } from "./pages/ContentTemplateEditor";
@@ -67,7 +67,7 @@ import { CompaniesSection } from "./pages/admin/CompaniesSection";
 import { PluginsSection } from "./pages/admin/PluginsSection";
 import { ToolsConfigSection } from "./pages/admin/ToolsConfigSection";
 import { GeneralSection } from "./pages/admin/GeneralSection";
-//// End Neoffice Modification
+//// End Neocompany Modification
 import { useCompany } from "./context/CompanyContext";
 import { useDialogActions } from "./context/DialogContext";
 import { loadLastInboxTab } from "./lib/inbox";
@@ -88,7 +88,7 @@ function boardRoutes() {
       <Route path="company/export/*" element={<CompanyExport />} />
       <Route path="company/import" element={<CompanyImport />} />
       <Route path="company/settings/secrets" element={<Secrets />} />
-      {/* //// Neoffice Modification — patch #11 (NeoCompany content routes, served by neocompany-tools plugin) */}
+      {/* //// Neocompany Modification — patch #11 (NeoCompany content routes, served by neocompany-tools plugin) */}
       <Route path="content" element={<ContentDashboard />} />
       <Route path="content/templates" element={<ContentTemplates />} />
       <Route path="content/templates/:templateId" element={<ContentTemplateEditor />} />
@@ -97,7 +97,7 @@ function boardRoutes() {
       <Route path="content/strategy" element={<ContentStrategy />} />
       <Route path="content/approvals" element={<ContentApprovals />} />
       <Route path="content/calendar" element={<ContentCalendar />} />
-      {/* //// End Neoffice Modification */}
+      {/* //// End Neocompany Modification */}
       <Route path="skills/*" element={<CompanySkills />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
@@ -298,7 +298,7 @@ export function App() {
         <Route element={<CloudAccessGate />}>
           <Route index element={<CompanyRootRedirect />} />
           <Route path="onboarding" element={<OnboardingRoutePage />} />
-          {/* //// Neoffice Modification — patch #11 (NeoCompany SuperAdmin /admin/* dashboard) */}
+          {/* //// Neocompany Modification — patch #11 (NeoCompany SuperAdmin /admin/* dashboard) */}
           {/* Coexists with upstream's /instance/settings/* (multi-user, plugins, adapters). */}
           {/* /admin/* is the NeoCompany product surface for SaaS operators (global API */}
           {/* keys per-tool, plugin install flow per company, etc.). */}
@@ -310,7 +310,7 @@ export function App() {
             <Route path="tools" element={<ToolsConfigSection />} />
             <Route path="general" element={<GeneralSection />} />
           </Route>
-          {/* //// End Neoffice Modification */}
+          {/* //// End Neocompany Modification */}
           <Route path="instance" element={<Navigate to="/instance/settings/general" replace />} />
           <Route path="instance/settings" element={<Layout />}>
             <Route index element={<Navigate to="general" replace />} />

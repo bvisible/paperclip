@@ -604,11 +604,11 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           });
         },
 
-        //// Neoffice Modification — entities.delete RPC (NeoCompany)
+        //// Neocompany Modification — entities.delete RPC (NeoCompany)
         async delete(input) {
           return callHost("entities.delete", { id: input.id });
         },
-        //// End Neoffice Modification
+        //// End Neocompany Modification
       },
 
       projects: {

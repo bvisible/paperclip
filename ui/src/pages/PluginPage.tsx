@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { Navigate, useParams } from "@/lib/router"; //// Neoffice Modification — patch #9 (Link no longer used after chromeless layout)
+import { Navigate, useParams } from "@/lib/router"; //// Neocompany Modification — patch #9 (Link no longer used after chromeless layout)
 import { useQuery } from "@tanstack/react-query";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
@@ -10,10 +10,10 @@ import {
   resolveRouteSidebarSlot,
   type ResolvedPluginSlot,
 } from "@/plugins/slots";
-//// Neoffice Modification — patch #9 (Button + ArrowLeft no longer used after chromeless layout)
+//// Neocompany Modification — patch #9 (Button + ArrowLeft no longer used after chromeless layout)
 // import { Button } from "@/components/ui/button";
 // import { ArrowLeft } from "lucide-react";
-//// End Neoffice Modification
+//// End Neocompany Modification
 import { NotFoundPage } from "./NotFound";
 
 /**
@@ -62,14 +62,14 @@ export function PluginPage() {
   const pageSlot = useMemo(() => {
     if (!contributions) return null;
     if (pluginId) {
-      //// Neoffice Modification — patch #6 (lookup by pluginKey first, UUID fallback)
+      //// Neocompany Modification — patch #6 (lookup by pluginKey first, UUID fallback)
       // URL-friendly plugin keys (e.g. "paperclip-chat") should resolve before
       // raw UUIDs so /:companyPrefix/plugins/paperclip-chat works as a public link.
       // Migration path: PR upstream — universal multi-company UX improvement.
       const contribution =
         contributions.find((c) => c.pluginKey === pluginId) ??
         contributions.find((c) => c.pluginId === pluginId);
-      //// End Neoffice Modification
+      //// End Neocompany Modification
       if (!contribution) return null;
       const slot = contribution.slots.find((s) => s.type === "page");
       if (!slot) return null;
@@ -170,7 +170,7 @@ export function PluginPage() {
     return <Navigate to={settingsPath} replace />;
   }
 
-  //// Neoffice Modification — patch #9 (chromeless plugin pages)
+  //// Neocompany Modification — patch #9 (chromeless plugin pages)
   // Drop the wrapper "Back" button + padding so plugin pages use the full
   // viewport. Plugins like paperclip-chat / content-templates need the entire
   // canvas (chat composer, template editor, etc.) without ambient chrome.
@@ -186,7 +186,7 @@ export function PluginPage() {
       />
     </div>
   );
-  //// End Neoffice Modification
+  //// End Neocompany Modification
 }
 
 function resolveRouteSidebarPageTitle(pageSlot: ResolvedPluginSlot, routeSplat: string | undefined): string {

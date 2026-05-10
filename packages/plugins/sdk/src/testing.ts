@@ -822,7 +822,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (query.limit) out = out.slice(0, query.limit);
         return out;
       },
-      //// Neoffice Modification — entities.delete RPC (NeoCompany) — testing harness
+      //// Neocompany Modification — entities.delete RPC (NeoCompany) — testing harness
       async delete(input: { id: string }) {
         const existing = entities.get(input.id);
         if (!existing) return null;
@@ -833,7 +833,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         }
         return existing;
       },
-      //// End Neoffice Modification
+      //// End Neocompany Modification
     },
     projects: {
       async list(input) {

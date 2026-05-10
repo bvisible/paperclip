@@ -1,4 +1,4 @@
-//// Neoffice Modification — fork-modified file (NeoCompany)
+//// Neocompany Modification — fork-modified file (NeoCompany)
 //// patch #2 (chatPrompt injection in sessions.sendMessage)
 //// Edits are scattered throughout this file. See FORK_PATCHES.md at repo root
 //// for the catalogue + migration paths. When merging upstream, expect conflicts
@@ -467,12 +467,12 @@ export function buildHostServices(
   pluginKey: string,
   eventBus: PluginEventBus,
   notifyWorker?: (method: string, params: unknown) => void,
-  //// Neoffice Modification — accept (and ignore) `manifest` option for upstream compat.
+  //// Neocompany Modification — accept (and ignore) `manifest` option for upstream compat.
   // Upstream PR #5597 (LLM Wiki plugin host support) added a `manifest` option
   // that the LLM Wiki feature consumes downstream. Our vendored buildHostServices
   // does not currently use it, but we accept it so app.ts compiles.
   options: { pluginWorkerManager?: PluginWorkerManager; manifest?: unknown } = {},
-  //// End Neoffice Modification
+  //// End Neocompany Modification
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
   const stateStore = pluginStateStore(db);
@@ -764,7 +764,7 @@ export function buildHostServices(
       },
     },
 
-    //// Neoffice Modification — stub sections added upstream (NeoCompany fork)
+    //// Neocompany Modification — stub sections added upstream (NeoCompany fork)
     // Upstream PRs (post v2026.427.0) added:
     //   - localFolders.* — trusted company-scoped local folder helpers
     //   - routines.managed.* — managed-routines sync
@@ -794,7 +794,7 @@ export function buildHostServices(
       async managedReconcile(_params) { throw new Error("skills.managed.reconcile not implemented in NeoCompany fork"); },
       async managedReset(_params) { throw new Error("skills.managed.reset not implemented in NeoCompany fork"); },
     },
-    //// End Neoffice Modification
+    //// End Neocompany Modification
 
     state: {
       async get(params) {
@@ -1060,7 +1060,7 @@ export function buildHostServices(
           updatedAt: (row?.updatedAt ?? project.updatedAt).toISOString(),
         };
       },
-      //// Neoffice Modification — managed-projects RPC stubs (NeoCompany fork)
+      //// Neocompany Modification — managed-projects RPC stubs (NeoCompany fork)
       // Upstream added managed-entities sync RPCs (projects.managed.*) for
       // plugins that own a project hierarchy declaratively. Our fork does
       // not consume these yet — stubs throw a clear error so callers fail
@@ -1075,7 +1075,7 @@ export function buildHostServices(
       async resetManaged(_params) {
         throw new Error("projects.managed.reset not implemented in NeoCompany fork");
       },
-      //// End Neoffice Modification
+      //// End Neocompany Modification
     },
 
     issues: {
@@ -1704,7 +1704,7 @@ export function buildHostServices(
         if (!run) throw new Error("Agent wakeup was skipped by heartbeat policy");
         return { runId: run.id };
       },
-      //// Neoffice Modification — managed-agents RPC stubs (NeoCompany fork)
+      //// Neocompany Modification — managed-agents RPC stubs (NeoCompany fork)
       // Upstream added managed-entities sync RPCs (agents.managed.*) for
       // plugins that own an agent fleet declaratively (e.g. seed-agents).
       // Our fork seeds agents via server/src/services/seed-agents.ts at
@@ -1719,7 +1719,7 @@ export function buildHostServices(
       async managedReset(_params) {
         throw new Error("agents.managed.reset not implemented in NeoCompany fork");
       },
-      //// End Neoffice Modification
+      //// End Neocompany Modification
     },
 
     goals: {
