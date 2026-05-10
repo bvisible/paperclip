@@ -16,6 +16,9 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery } from "@tanstack/react-query";
+//// Neoffice Modification — patch #8 (icon mapping for known plugin launchers)
+import { MessageCircle, Puzzle } from "lucide-react";
+//// End Neoffice Modification
 import { PLUGIN_LAUNCHER_BOUNDS } from "@paperclipai/shared";
 import type {
   PluginLauncherBounds,
@@ -195,7 +198,12 @@ function launcherTriggerClassName(placementZone: PluginLauncherPlacementZone): s
       return "justify-start h-7 w-full px-2 text-xs font-normal";
     case "sidebar":
     case "sidebarPanel":
-      return "justify-start h-8 w-full";
+      //// Neoffice Modification — patch #8 cosmetic (sidebar launcher styling)
+      // Match native nav-item styling so plugin launchers blend in with the
+      // rest of the sidebar nav (paperclip-chat shows up alongside Inbox,
+      // Issues, Projects, etc.).
+      return "justify-start w-full h-auto px-3 py-2 text-[13px] font-medium text-foreground/80 hover:bg-accent/50 hover:text-foreground border-0 rounded-none";
+      //// End Neoffice Modification
     case "toolbarButton":
     case "globalToolbarButton":
       return "h-8";
@@ -421,7 +429,11 @@ function LauncherRenderContent({
     if (renderEnvironment.environment === "iframe") {
       return (
         <iframe
-          src={`/_plugins/${encodeURIComponent(instance.launcher.pluginId)}/ui/${instance.launcher.action.target}`}
+          //// Neoffice Modification — respect Vite BASE_URL for iframe sources
+          // Some deployments serve Paperclip under a non-root path; without
+          // BASE_URL the iframe src would be absolute-rooted and 404.
+          //// End Neoffice Modification
+          src={`${(import.meta.env.BASE_URL || "/").replace(/\/$/, "")}/_plugins/${encodeURIComponent(instance.launcher.pluginId)}/ui/${instance.launcher.action.target}`}
           title={`${instance.launcher.pluginDisplayName} ${instance.launcher.displayName}`}
           className="h-full min-h-[24rem] w-full rounded-md border border-border bg-background"
         />
@@ -650,15 +662,29 @@ export function PluginLauncherProvider({ children }: { children: ReactNode }) {
       contribution: PluginUiContribution,
       sourceEl?: HTMLElement | null,
     ) => {
+      //// Neoffice Modification — patch #5 (resolve nav target against company prefix)
+      // Plugin launchers can use simple paths like "plugins/paperclip-chat".
+      // Without this resolver, navigate("plugins/paperclip-chat") would land on
+      // a global /plugins/paperclip-chat route — but our app mounts plugins
+      // under /:companyPrefix/plugins/:pluginId, so we need to prepend the
+      // active company prefix when the target is relative.
+      // Migration path: PR upstream — this is a multi-company bug fix.
+      const resolveNavTarget = (target: string): string => {
+        if (target.startsWith("/") || /^https?:\/\//.test(target)) return target;
+        const prefix = hostContext.companyPrefix;
+        if (prefix) return `/${prefix}/${target}`;
+        return `/${target}`;
+      };
+      //// End Neoffice Modification
       switch (launcher.action.type) {
         case "navigate":
-          navigate(launcher.action.target);
+          navigate(resolveNavTarget(launcher.action.target));
           return;
         case "deepLink":
           if (/^https?:\/\//.test(launcher.action.target)) {
             window.open(launcher.action.target, "_blank", "noopener,noreferrer");
           } else {
-            navigate(launcher.action.target);
+            navigate(resolveNavTarget(launcher.action.target));
           }
           return;
         case "performAction":
@@ -724,6 +750,18 @@ export function usePluginLauncherRuntime(): PluginLauncherRuntimeContextValue {
   return value;
 }
 
+//// Neoffice Modification — patch #8 (icon mapping for known plugin launchers)
+// Map known plugin launchers to a friendly Lucide icon. Unknown launchers
+// fall back to a neutral puzzle-piece so they line up visually with native
+// nav items (Inbox, Issues, etc.) which all have icons.
+// Migration path: PR upstream — drop this once the plugin manifest declares
+// an icon natively.
+function pickLauncherIcon(launcher: ResolvedPluginLauncher) {
+  if (launcher.pluginKey === "paperclip-chat" || launcher.id === "chat-nav") return MessageCircle;
+  return Puzzle;
+}
+//// End Neoffice Modification
+
 function DefaultLauncherTrigger({
   launcher,
   placementZone,
@@ -733,6 +771,10 @@ function DefaultLauncherTrigger({
   placementZone: PluginLauncherPlacementZone;
   onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void;
 }) {
+  //// Neoffice Modification — patch #8 (render sidebar launcher with icon)
+  const Icon = pickLauncherIcon(launcher);
+  const isSidebar = placementZone === "sidebar" || placementZone === "sidebarPanel";
+  //// End Neoffice Modification
   return (
     <Button
       type="button"
@@ -741,7 +783,16 @@ function DefaultLauncherTrigger({
       className={launcherTriggerClassName(placementZone)}
       onClick={onClick}
     >
-      {launcher.displayName}
+      {/* //// Neoffice Modification — patch #8 (sidebar shows icon + label, others unchanged) */}
+      {isSidebar ? (
+        <span className="flex items-center gap-2.5 w-full">
+          <Icon className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate text-left">{launcher.displayName}</span>
+        </span>
+      ) : (
+        launcher.displayName
+      )}
+      {/* //// End Neoffice Modification */}
     </Button>
   );
 }
