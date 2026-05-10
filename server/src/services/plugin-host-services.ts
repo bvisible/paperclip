@@ -467,7 +467,12 @@ export function buildHostServices(
   pluginKey: string,
   eventBus: PluginEventBus,
   notifyWorker?: (method: string, params: unknown) => void,
-  options: { pluginWorkerManager?: PluginWorkerManager } = {},
+  //// Neoffice Modification — accept (and ignore) `manifest` option for upstream compat.
+  // Upstream PR #5597 (LLM Wiki plugin host support) added a `manifest` option
+  // that the LLM Wiki feature consumes downstream. Our vendored buildHostServices
+  // does not currently use it, but we accept it so app.ts compiles.
+  options: { pluginWorkerManager?: PluginWorkerManager; manifest?: unknown } = {},
+  //// End Neoffice Modification
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
   const stateStore = pluginStateStore(db);
@@ -759,6 +764,38 @@ export function buildHostServices(
       },
     },
 
+    //// Neoffice Modification — stub sections added upstream (NeoCompany fork)
+    // Upstream PRs (post v2026.427.0) added:
+    //   - localFolders.* — trusted company-scoped local folder helpers
+    //   - routines.managed.* — managed-routines sync
+    //   - skills.managed.*  — managed-skills sync
+    // Our fork does not consume these capabilities yet. We provide stub
+    // implementations that throw so any plugin trying to use them fails
+    // loudly and we know to implement them on demand. Migration path:
+    // implement when a NeoCompany plugin needs these capabilities.
+    localFolders: {
+      async declarations(_params) { throw new Error("localFolders.declarations not implemented in NeoCompany fork"); },
+      async configure(_params) { throw new Error("localFolders.configure not implemented in NeoCompany fork"); },
+      async status(_params) { throw new Error("localFolders.status not implemented in NeoCompany fork"); },
+      async list(_params) { throw new Error("localFolders.list not implemented in NeoCompany fork"); },
+      async readText(_params) { throw new Error("localFolders.readText not implemented in NeoCompany fork"); },
+      async writeTextAtomic(_params) { throw new Error("localFolders.writeTextAtomic not implemented in NeoCompany fork"); },
+      async deleteFile(_params) { throw new Error("localFolders.deleteFile not implemented in NeoCompany fork"); },
+    },
+    routines: {
+      async managedGet(_params) { throw new Error("routines.managed.get not implemented in NeoCompany fork"); },
+      async managedReconcile(_params) { throw new Error("routines.managed.reconcile not implemented in NeoCompany fork"); },
+      async managedReset(_params) { throw new Error("routines.managed.reset not implemented in NeoCompany fork"); },
+      async managedUpdate(_params) { throw new Error("routines.managed.update not implemented in NeoCompany fork"); },
+      async managedRun(_params) { throw new Error("routines.managed.run not implemented in NeoCompany fork"); },
+    },
+    skills: {
+      async managedGet(_params) { throw new Error("skills.managed.get not implemented in NeoCompany fork"); },
+      async managedReconcile(_params) { throw new Error("skills.managed.reconcile not implemented in NeoCompany fork"); },
+      async managedReset(_params) { throw new Error("skills.managed.reset not implemented in NeoCompany fork"); },
+    },
+    //// End Neoffice Modification
+
     state: {
       async get(params) {
         return stateStore.get(pluginId, params.scopeKind as any, params.stateKey, {
@@ -1023,6 +1060,22 @@ export function buildHostServices(
           updatedAt: (row?.updatedAt ?? project.updatedAt).toISOString(),
         };
       },
+      //// Neoffice Modification — managed-projects RPC stubs (NeoCompany fork)
+      // Upstream added managed-entities sync RPCs (projects.managed.*) for
+      // plugins that own a project hierarchy declaratively. Our fork does
+      // not consume these yet — stubs throw a clear error so callers fail
+      // loudly. Migration path: implement when a NeoCompany plugin needs
+      // managed-project semantics.
+      async getManaged(_params) {
+        throw new Error("projects.managed.get not implemented in NeoCompany fork");
+      },
+      async reconcileManaged(_params) {
+        throw new Error("projects.managed.reconcile not implemented in NeoCompany fork");
+      },
+      async resetManaged(_params) {
+        throw new Error("projects.managed.reset not implemented in NeoCompany fork");
+      },
+      //// End Neoffice Modification
     },
 
     issues: {
@@ -1651,6 +1704,22 @@ export function buildHostServices(
         if (!run) throw new Error("Agent wakeup was skipped by heartbeat policy");
         return { runId: run.id };
       },
+      //// Neoffice Modification — managed-agents RPC stubs (NeoCompany fork)
+      // Upstream added managed-entities sync RPCs (agents.managed.*) for
+      // plugins that own an agent fleet declaratively (e.g. seed-agents).
+      // Our fork seeds agents via server/src/services/seed-agents.ts at
+      // company-create time, not via plugin-managed sync — stubs throw a
+      // clear error if consumed.
+      async managedGet(_params) {
+        throw new Error("agents.managed.get not implemented in NeoCompany fork");
+      },
+      async managedReconcile(_params) {
+        throw new Error("agents.managed.reconcile not implemented in NeoCompany fork");
+      },
+      async managedReset(_params) {
+        throw new Error("agents.managed.reset not implemented in NeoCompany fork");
+      },
+      //// End Neoffice Modification
     },
 
     goals: {

@@ -192,4 +192,13 @@ export const queryKeys = {
   adapters: {
     all: ["adapters"] as const,
   },
+  //// Neoffice Modification — admin query keys (NeoCompany SuperAdmin)
+  // Used by the /admin/* dashboard pages (AdminLayout, CompanyDrawer, etc.)
+  // to identify cached responses from the /admin/* server routes.
+  admin: {
+    isAdmin: ["admin", "is-admin"] as const,
+    companyMembers: (companyId: string) => ["admin", "company-members", companyId] as const,
+    companyAgents: (companyId: string) => ["admin", "company-agents", companyId] as const,
+  },
+  //// End Neoffice Modification
 };

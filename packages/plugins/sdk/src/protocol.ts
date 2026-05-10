@@ -692,6 +692,23 @@ export interface WorkerToHostMethods {
       updatedAt: string;
     }>,
   ];
+  //// Neoffice Modification — entities.delete RPC (NeoCompany)
+  "entities.delete": [
+    params: { id: string },
+    result: {
+      id: string;
+      entityType: string;
+      scopeKind: PluginStateScopeKind;
+      scopeId: string | null;
+      externalId: string | null;
+      title: string | null;
+      status: string | null;
+      data: Record<string, unknown>;
+      createdAt: string;
+      updatedAt: string;
+    } | null,
+  ];
+  //// End Neoffice Modification
 
   // Events
   "events.emit": [
@@ -1082,7 +1099,12 @@ export interface WorkerToHostMethods {
     result: Array<{ sessionId: string; agentId: string; companyId: string; status: "active" | "closed"; createdAt: string }>,
   ];
   "agents.sessions.sendMessage": [
-    params: { sessionId: string; companyId: string; prompt: string; reason?: string },
+    //// Neoffice Modification — extra session-message fields (NeoCompany)
+    // actorUserId: external end-user id (Frappe/Neoffice session.user) so the
+    //   adapter scopes the engine-side LLM session key per user.
+    // noraTraceId: distributed trace id propagated from NORA into adapter logs.
+    //// End Neoffice Modification
+    params: { sessionId: string; companyId: string; prompt: string; reason?: string; actorUserId?: string | null; noraTraceId?: string | null },
     result: { runId: string },
   ];
   "agents.sessions.close": [

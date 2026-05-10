@@ -1,3 +1,7 @@
+//// Neoffice Modification — fork-modified file (NeoCompany)
+//// Adds neocompany-tools allowlist cache + agent-mode tool dispatching.
+//// See FORK_PATCHES.md (related to #10).
+
 /**
  * PluginToolDispatcher — orchestrates plugin tool discovery, lifecycle
  * integration, and execution routing for the agent service.
@@ -22,6 +26,7 @@
  * @see PLUGIN_SPEC.md §13.10 — `executeTool`
  */
 
+import crypto from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import type {
   PaperclipPluginManifestV1,
@@ -38,7 +43,64 @@ import {
   type ToolExecutionResult,
 } from "./plugin-tool-registry.js";
 import { pluginRegistryService } from "./plugin-registry.js";
+import { pluginStateStore } from "./plugin-state-store.js";
+import { getGlobalToolEventBus } from "./tool-event-bus.js";
 import { logger } from "../middleware/logger.js";
+
+// ---------------------------------------------------------------------------
+// neocompany-tools super-admin gate
+// ---------------------------------------------------------------------------
+//
+// When `neocompany-tools` is installed, the super-admin controls a
+// platform-wide whitelist of tool names stored in `plugin_state` scope=instance
+// at key `platform:enabled-tools`. If the key is absent the gate is
+// permissive (backwards-compat — new installs and legacy tests still work).
+// If the key is an empty array, every neocompany-tools call is blocked.
+// If the key is a non-empty array, only the listed bare tool names are
+// allowed through to the worker.
+//
+// We cache the current allowlist for a short TTL so the DB isn't hit on
+// every single tool call, and invalidate on write via the bridge route.
+
+const NEOCOMPANY_PLUGIN_KEY = "neocompany-tools";
+const ENABLED_TOOLS_STATE_KEY = "platform:enabled-tools";
+const ENABLED_CACHE_TTL_MS = 5_000;
+
+interface AllowlistCacheEntry {
+  value: string[] | null; // null = "not configured, allow all"
+  fetchedAt: number;
+}
+
+let allowlistCache: AllowlistCacheEntry | null = null;
+
+/** Force the next allowlist read to hit the DB. Called by the bridge route
+ *  after a successful POST /enabled-tools so UI changes apply immediately. */
+export function invalidateNeocompanyAllowlistCache(): void {
+  allowlistCache = null;
+}
+
+async function readNeocompanyAllowlist(db: Db): Promise<string[] | null> {
+  const now = Date.now();
+  if (allowlistCache && now - allowlistCache.fetchedAt < ENABLED_CACHE_TTL_MS) {
+    return allowlistCache.value;
+  }
+  try {
+    const plugin = await pluginRegistryService(db).getByKey(NEOCOMPANY_PLUGIN_KEY);
+    if (!plugin) {
+      // Plugin not installed — no gate to enforce.
+      allowlistCache = { value: null, fetchedAt: now };
+      return null;
+    }
+    const raw = await pluginStateStore(db).get(plugin.id, "instance", ENABLED_TOOLS_STATE_KEY);
+    const value = Array.isArray(raw) ? (raw as string[]) : null;
+    allowlistCache = { value, fetchedAt: now };
+    return value;
+  } catch {
+    // Defensive fallback: on any read error, treat as unconfigured.
+    allowlistCache = { value: null, fetchedAt: now };
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -156,6 +218,7 @@ export interface PluginToolDispatcher {
   registerPluginTools(
     pluginId: string,
     manifest: PaperclipPluginManifestV1,
+    pluginDbId?: string,
   ): void;
 
   /**
@@ -219,6 +282,20 @@ export interface PluginToolDispatcher {
  * );
  * ```
  */
+// Module-level singleton used by services that need to read the tool catalog
+// without receiving the dispatcher through their factory (e.g. heartbeat,
+// which already has a large argument surface). App bootstrap calls
+// `setGlobalPluginToolDispatcher(dispatcher)` once after construction.
+let globalPluginToolDispatcher: PluginToolDispatcher | null = null;
+
+export function setGlobalPluginToolDispatcher(dispatcher: PluginToolDispatcher): void {
+  globalPluginToolDispatcher = dispatcher;
+}
+
+export function getGlobalPluginToolDispatcher(): PluginToolDispatcher | null {
+  return globalPluginToolDispatcher;
+}
+
 export function createPluginToolDispatcher(
   options: PluginToolDispatcherOptions = {},
 ): PluginToolDispatcher {
@@ -407,11 +484,68 @@ export function createPluginToolDispatcher(
         "dispatching tool execution",
       );
 
-      const result = await registry.executeTool(
-        namespacedName,
-        parameters,
-        runContext,
-      );
+      // Super-admin platform gate: for any `neocompany-tools:*` call we
+      // consult the platform-wide allowlist stored in plugin_state scope
+      // instance. A missing key means "allow all" (permissive default so
+      // a fresh install or pre-D deployment keeps working). An empty array
+      // means "block everything". Otherwise only explicitly-listed bare
+      // tool names are dispatched.
+      if (db && namespacedName.startsWith(`${NEOCOMPANY_PLUGIN_KEY}:`)) {
+        const bareName = namespacedName.slice(NEOCOMPANY_PLUGIN_KEY.length + 1);
+        const allowlist = await readNeocompanyAllowlist(db);
+        if (allowlist !== null && !allowlist.includes(bareName)) {
+          throw new Error(
+            `Tool "${namespacedName}" is not enabled on this platform. ` +
+              `Ask the super-admin to enable it from the NeoCompany Tools settings.`,
+          );
+        }
+      }
+
+      // Emit synthetic tool_use / tool_result events into the session
+      // stream so adapters (e.g. OpenClaw) can forward them to the chat UI.
+      // Try the exact runId first; fall back to the agent mapping (covers
+      // OpenClaw where the gateway uses its own run ID, different from the
+      // Paperclip heartbeat run ID the bus is subscribed to).
+      const bus = getGlobalToolEventBus();
+      const toolUseId = crypto.randomUUID();
+      const emitEvent = (event: import("./tool-event-bus.js").ToolStreamEvent) => {
+        if (!bus) return;
+        bus.emit(runContext.runId, event);
+        bus.emitForAgent(runContext.agentId, event);
+      };
+      const toolUseEvent = {
+        type: "tool_use" as const,
+        name: namespacedName,
+        input: parameters,
+        id: toolUseId,
+      };
+      emitEvent(toolUseEvent);
+
+      let result: ToolExecutionResult;
+      try {
+        result = await registry.executeTool(
+          namespacedName,
+          parameters,
+          runContext,
+        );
+      } catch (err) {
+        emitEvent({
+          type: "tool_result",
+          toolUseId,
+          content: err instanceof Error ? err.message : String(err),
+          isError: true,
+        });
+        throw err;
+      }
+
+      emitEvent({
+        type: "tool_result",
+        toolUseId,
+        content: typeof result.result.content === "string"
+          ? result.result.content
+          : JSON.stringify(result.result.content ?? ""),
+        isError: !!result.result.error,
+      });
 
       log.debug(
         {
@@ -429,8 +563,13 @@ export function createPluginToolDispatcher(
     registerPluginTools(
       pluginId: string,
       manifest: PaperclipPluginManifestV1,
+      pluginDbId?: string,
     ): void {
-      registry.registerPlugin(pluginId, manifest);
+      // `pluginId` here is typically the plugin *key* (e.g. "neocompany-tools"),
+      // while the worker manager is keyed by the plugin DB UUID. Propagate the
+      // explicit DB id so downstream `executeTool` can look up the worker
+      // correctly; fall back to the key for backwards compatibility.
+      registry.registerPlugin(pluginId, manifest, pluginDbId);
     },
 
     unregisterPluginTools(pluginId: string): void {

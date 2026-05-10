@@ -751,6 +751,15 @@ export interface PluginEntitiesClient {
    * @returns Matching entity records
    */
   list(query: PluginEntityQuery): Promise<PluginEntityRecord[]>;
+
+  //// Neoffice Modification — entities.delete RPC (NeoCompany)
+  // Used by neocompany-tools (image-delete, brand-template-delete, etc.) to
+  // remove plugin entity records by internal UUID. Idempotent — resolves
+  // null if the record does not exist.
+  // Migration path: PR upstream — this is a generic capability that any
+  // plugin doing CRUD on plugin_entities will need.
+  delete(input: { id: string }): Promise<PluginEntityRecord | null>;
+  //// End Neoffice Modification
 }
 
 /**
@@ -1481,6 +1490,12 @@ export interface PluginAgentSessionsClient {
     prompt: string;
     reason?: string;
     onEvent?: (event: AgentSessionEvent) => void;
+    //// Neoffice Modification — extra session-message fields (NeoCompany)
+    /** External actor user id (Frappe/Neoffice integration) for per-user session scoping. */
+    actorUserId?: string | null;
+    /** Distributed trace id propagated from NORA into adapter logs. */
+    noraTraceId?: string | null;
+    //// End Neoffice Modification
   }): Promise<AgentSessionSendResult>;
 
   /** Close a session, releasing resources. Requires `agent.sessions.close`. */

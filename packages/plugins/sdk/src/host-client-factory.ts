@@ -115,10 +115,13 @@ export interface HostServices {
     execute(params: WorkerToHostMethods["db.execute"][0]): Promise<WorkerToHostMethods["db.execute"][1]>;
   };
 
-  /** Provides `entities.upsert`, `entities.list`. */
+  /** Provides `entities.upsert`, `entities.list`, `entities.delete`. */
   entities: {
     upsert(params: WorkerToHostMethods["entities.upsert"][0]): Promise<WorkerToHostMethods["entities.upsert"][1]>;
     list(params: WorkerToHostMethods["entities.list"][0]): Promise<WorkerToHostMethods["entities.list"][1]>;
+    //// Neoffice Modification — entities.delete RPC (NeoCompany)
+    delete(params: WorkerToHostMethods["entities.delete"][0]): Promise<WorkerToHostMethods["entities.delete"][1]>;
+    //// End Neoffice Modification
   };
 
   /** Provides `events.emit` and `events.subscribe`. */
@@ -335,6 +338,9 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
   // Entities — no specific capability required (plugin-scoped by design)
   "entities.upsert": null,
   "entities.list": null,
+  //// Neoffice Modification — entities.delete RPC (NeoCompany)
+  "entities.delete": null,
+  //// End Neoffice Modification
 
   // Events
   "events.emit": "events.emit",
@@ -545,6 +551,11 @@ export function createHostClientHandlers(
     "entities.list": gated("entities.list", async (params) => {
       return services.entities.list(params);
     }),
+    //// Neoffice Modification — entities.delete RPC (NeoCompany)
+    "entities.delete": gated("entities.delete", async (params) => {
+      return services.entities.delete(params);
+    }),
+    //// End Neoffice Modification
 
     // Events
     "events.emit": gated("events.emit", async (params) => {

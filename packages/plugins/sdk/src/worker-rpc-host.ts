@@ -603,6 +603,12 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             offset: query.offset,
           });
         },
+
+        //// Neoffice Modification — entities.delete RPC (NeoCompany)
+        async delete(input) {
+          return callHost("entities.delete", { id: input.id });
+        },
+        //// End Neoffice Modification
       },
 
       projects: {

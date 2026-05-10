@@ -822,6 +822,18 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (query.limit) out = out.slice(0, query.limit);
         return out;
       },
+      //// Neoffice Modification — entities.delete RPC (NeoCompany) — testing harness
+      async delete(input: { id: string }) {
+        const existing = entities.get(input.id);
+        if (!existing) return null;
+        entities.delete(input.id);
+        if (existing.externalId) {
+          const externalKey = `${existing.entityType}|${existing.scopeKind}|${existing.scopeId ?? ""}|${existing.externalId}`;
+          entityExternalIndex.delete(externalKey);
+        }
+        return existing;
+      },
+      //// End Neoffice Modification
     },
     projects: {
       async list(input) {
