@@ -98,12 +98,16 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Local Cursor agent",
     icon: MousePointer2,
   },
+  //// Neoffice Modification — patch #4 (drop comingSoon for openclaw_gateway)
+  // OpenClaw is our primary adapter (production on app.neocompany.ch).
+  // Removing the `comingSoon` flag exposes it in the visual adapter picker.
+  // Migration path: PR upstream once we're confident the adapter is stable
+  // for everyone (it currently requires manual openclaw.json config).
+  //// End Neoffice Modification
   openclaw_gateway: {
     label: "OpenClaw Gateway",
     description: "Invoke OpenClaw via gateway protocol",
     icon: Bot,
-    comingSoon: true,
-    disabledLabel: "Configure OpenClaw within the App",
   },
   process: {
     label: "Process",
