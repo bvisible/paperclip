@@ -1,3 +1,10 @@
+//// Neoffice Modification — fork-modified file (NeoCompany)
+//// patches #1 (paperclip-context XML wrap) + #2 (chatPrompt passthrough)
+//// Edits are scattered throughout this file. See FORK_PATCHES.md at repo root
+//// for the catalogue + migration paths. When merging upstream, expect conflicts
+//// here and resolve by preserving the fork edits unless upstream provides an
+//// equivalent SDK hook (the migration path documents what to look for).
+
 import type {
   AdapterExecutionContext,
   AdapterExecutionResult,
@@ -8,7 +15,6 @@ import {
   asString,
   buildPaperclipEnv,
   parseObject,
-  readPaperclipIssueWorkModeFromContext,
   renderPaperclipWakePrompt,
   stringifyPaperclipWakePayload,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -145,13 +151,37 @@ export function resolveSessionKey(input: {
   agentId: string | null;
   runId: string;
   issueId: string | null;
+  chatSessionId?: string | null;
+  userId?: string | null;
 }): string {
   const fallback = input.configuredSessionKey ?? "paperclip";
+  const userSegment = input.userId
+    ? `user:${input.userId.replace(/[^a-zA-Z0-9._@-]/g, "_")}:`
+    : "";
+  // Chat plugin wakeups always derive their key from the Paperclip session
+  // id so each chat thread gets an isolated engine-side session. This
+  // mirrors the Slack/Telegram/Discord adapter pattern and prevents
+  // cumulative wake-event accumulation from overflowing the model
+  // context window (OpenClaw issue #29729).
+  //
+  // When an external user id is known (Frappe/Neoffice integration passes
+  // `X-Paperclip-User`), it's injected into the key so that one agent's
+  // MEMORY/journals stay scoped per user instead of being shared across
+  // accounts that happen to talk to the same agent.
+  if (input.chatSessionId) {
+    return prefixSessionKeyForAgent(
+      `paperclip:chat:${userSegment}${input.chatSessionId}`,
+      input.agentId,
+    );
+  }
   if (input.strategy === "run") {
     return prefixSessionKeyForAgent(`paperclip:run:${input.runId}`, input.agentId);
   }
   if (input.strategy === "issue" && input.issueId) {
-    return prefixSessionKeyForAgent(`paperclip:issue:${input.issueId}`, input.agentId);
+    return prefixSessionKeyForAgent(
+      `paperclip:issue:${userSegment}${input.issueId}`,
+      input.agentId,
+    );
   }
   return prefixSessionKeyForAgent(fallback, input.agentId);
 }
@@ -331,6 +361,29 @@ function resolvePaperclipApiUrlOverride(value: unknown): string | null {
   }
 }
 
+/**
+ * Resolve the API URL used by the agent to call back into Paperclip.
+ * Fallback chain:
+ *   1. Adapter config override (`paperclipApiUrl`) — explicit, highest priority.
+ *   2. `PAPERCLIP_PUBLIC_URL` env var — the operator-configured public URL.
+ *   3. `http://127.0.0.1:{PORT|3100}` — loopback, works when the gateway runs
+ *      on the same host as the Paperclip server (our default topology).
+ */
+function resolvePaperclipApiUrlForAgent(value: unknown): string {
+  const override = resolvePaperclipApiUrlOverride(value);
+  if (override) return override;
+  const publicUrl = nonEmpty(process.env.PAPERCLIP_PUBLIC_URL);
+  if (publicUrl) {
+    try {
+      return new URL(publicUrl).toString().replace(/\/$/, "");
+    } catch {
+      // fall through
+    }
+  }
+  const port = nonEmpty(process.env.PORT) ?? "3100";
+  return `http://127.0.0.1:${port}`;
+}
+
 const DEFAULT_CLAIMED_API_KEY_PATH = "~/.openclaw/workspace/paperclip-claimed-api-key.json";
 
 function resolveClaimedApiKeyPath(value: unknown): string {
@@ -338,18 +391,16 @@ function resolveClaimedApiKeyPath(value: unknown): string {
 }
 
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
-  const paperclipApiUrlOverride = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
   const paperclipEnv: Record<string, string> = {
     ...buildPaperclipEnv(ctx.agent),
     PAPERCLIP_RUN_ID: ctx.runId,
   };
 
-  if (paperclipApiUrlOverride) {
-    paperclipEnv.PAPERCLIP_API_URL = paperclipApiUrlOverride;
-  }
+  // Always expose a usable PAPERCLIP_API_URL so plugin tools + wake text
+  // instructions have a concrete callback endpoint, even when the agent's
+  // adapter config doesn't override it.
+  paperclipEnv.PAPERCLIP_API_URL = resolvePaperclipApiUrlForAgent(ctx.config.paperclipApiUrl);
   if (wakePayload.taskId) paperclipEnv.PAPERCLIP_TASK_ID = wakePayload.taskId;
-  const issueWorkMode = readPaperclipIssueWorkModeFromContext(ctx.context);
-  if (issueWorkMode) paperclipEnv.PAPERCLIP_ISSUE_WORK_MODE = issueWorkMode;
   if (wakePayload.wakeReason) paperclipEnv.PAPERCLIP_WAKE_REASON = wakePayload.wakeReason;
   if (wakePayload.wakeCommentId) paperclipEnv.PAPERCLIP_WAKE_COMMENT_ID = wakePayload.wakeCommentId;
   if (wakePayload.approvalId) paperclipEnv.PAPERCLIP_APPROVAL_ID = wakePayload.approvalId;
@@ -1048,6 +1099,76 @@ function extractResultText(value: unknown): string | null {
   return nonEmpty(record.text) ?? nonEmpty(record.summary) ?? null;
 }
 
+interface PaperclipToolDescriptor {
+  name: string;
+  displayName?: string;
+  description?: string;
+  parametersSchema?: Record<string, unknown>;
+  pluginId?: string;
+}
+
+/**
+ * Render the `<paperclip-tools>` system-prompt block the OpenClaw agent
+ * consumes. Returns null when no tools are available or when the context
+ * did not include a tool catalog (older Paperclip versions).
+ *
+ * Tools are invoked by the agent against Paperclip's existing
+ * `POST /api/plugins/tools/execute` endpoint using the PAPERCLIP_API_KEY
+ * that was already dropped in the claimed-api-key file.
+ *
+ * Caller passes the resolved `apiBase` + `claimedKeyPath` so chat sessions
+ * (which skip the task wake text where these values are normally exposed)
+ * still get a self-contained invocation guide.
+ */
+function buildPaperclipToolsXml(
+  ctx: AdapterExecutionContext,
+  apiBase: string | null,
+  claimedKeyPath: string,
+  runId: string,
+): string | null {
+  const raw = (ctx.context as Record<string, unknown>).availableTools;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const tools = raw.filter((t): t is PaperclipToolDescriptor =>
+    typeof t === "object" && t !== null && typeof (t as { name?: unknown }).name === "string",
+  );
+  if (tools.length === 0) return null;
+
+  const resolvedApiBase = apiBase ?? "(unresolved — ask the user for the Paperclip API URL)";
+
+  const parts: string[] = [
+    "<paperclip-tools>",
+    "  <description>",
+    "    You have access to the following Paperclip plugin tools. They run on the Paperclip server and you call them over HTTP from your shell.",
+    "    To invoke a tool:",
+    `      1. Read the JSON file ${claimedKeyPath}. It contains { apiUrl, apiKey, agentId, companyId, agentName }. Use apiKey as your bearer token.`,
+    `      2. POST ${resolvedApiBase}/api/plugins/tools/execute`,
+    "         Headers:",
+    "           Authorization: Bearer <apiKey from the claimed file>",
+    `           X-Paperclip-Run-Id: ${runId}`,
+    "           Content-Type: application/json",
+    "         Body: { \"tool\": \"<namespacedName>\", \"parameters\": { ... matches the tool schema ... } }",
+    "      3. The server derives agentId/companyId/runId from your credentials + the X-Paperclip-Run-Id header. You do NOT need to include a runContext in the body.",
+    "      4. Response shape: { \"pluginId\", \"toolName\", \"result\": { \"content\"?, \"data\"?, \"error\"? } }. Echo `result.content` back to the user verbatim when the call succeeds; surface `result.error` clearly if it fails.",
+    "    Only call a tool when it's the fastest path to the answer. Prefer your own knowledge when it suffices.",
+    "  </description>",
+  ];
+
+  for (const tool of tools) {
+    const name = tool.name;
+    const displayName = tool.displayName ?? name;
+    const description = (tool.description ?? "").replace(/]]>/g, "]]]]><![CDATA[>");
+    const schemaJson = JSON.stringify(tool.parametersSchema ?? { type: "object", properties: {} });
+    parts.push(`  <tool name="${name}">`);
+    parts.push(`    <displayName>${displayName}</displayName>`);
+    parts.push(`    <description><![CDATA[${description}]]></description>`);
+    parts.push(`    <parametersSchema><![CDATA[${schemaJson}]]></parametersSchema>`);
+    parts.push(`  </tool>`);
+  }
+  parts.push("</paperclip-tools>");
+  return parts.join("\n");
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const urlValue = asString(ctx.config.url, "").trim();
   if (!urlValue) {
@@ -1081,7 +1202,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     };
   }
 
-  const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 120)));
+  // Default bumped from 120 s to 300 s: Nora's CEO pattern spawns a
+  // specialist agent, then calls sessions_send with timeoutSeconds=60 to
+  // receive the final result. Add OpenClaw bootstrap + tool latency on
+  // top and a single turn can legitimately run for 2–3 minutes. 300 s
+  // leaves headroom without masking genuine hangs (safety-net still
+  // kicks in after 5 minutes).
+  const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 300)));
   const timeoutMs = timeoutSec > 0 ? timeoutSec * 1000 : 0;
   const connectTimeoutMs = timeoutMs > 0 ? Math.min(timeoutMs, 15_000) : 10_000;
   const waitTimeoutMs = parseOptionalPositiveInteger(ctx.config.waitTimeoutMs) ?? (timeoutMs > 0 ? timeoutMs : 30_000);
@@ -1120,16 +1247,95 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
   const configuredSessionKey = nonEmpty(ctx.config.sessionKey);
+  const chatSessionId = nonEmpty(ctx.context.chatSessionId);
+  // Scope the session key on the external actor (e.g. Frappe session user)
+  // so the agent's MEMORY/journals don't bleed across users talking to the
+  // same agent in different threads.
+  const actorUserId =
+    nonEmpty((ctx.context as { actorUserId?: unknown }).actorUserId) ??
+    nonEmpty((ctx.context as { externalUserId?: unknown }).externalUserId);
+  // Distributed trace id — propagated from NORA Quick Chat through the
+  // Paperclip bridge into the plugin-host contextSnapshot. Every onLog
+  // call made during this run prefixes its message with `[trace=<id>]`
+  // so a single grep on the gateway log stitches Paperclip + adapter +
+  // OpenClaw CLI timelines together.
+  const noraTraceId = nonEmpty(
+    (ctx.context as { noraTraceId?: unknown }).noraTraceId,
+  );
+  const logPrefix = noraTraceId ? `[trace=${noraTraceId}] ` : "";
+  const traceLog = (stream: "stdout" | "stderr", message: string) =>
+    ctx.onLog(stream, logPrefix + message);
+
+  // Emit a single structured JSON event (same shape as NORA Python's
+  // nora.utils.trace so `nora.api.trace.show` can fuse both timelines).
+  // No-op when the trace id is not propagated (non-chat runs).
+  const emitTrace = (
+    event: string,
+    phase: "start" | "end" | "error",
+    extra: Record<string, unknown> = {},
+  ) => {
+    if (!noraTraceId) return;
+    const payload = {
+      ts: new Date().toISOString(),
+      trace_id: noraTraceId,
+      service: "openclaw-gateway",
+      event,
+      phase,
+      ...extra,
+    };
+    void traceLog("stderr", JSON.stringify(payload) + "\n");
+  };
+
+  // Time + emit a span around a promise. Captures ok/error outcome and
+  // duration_ms automatically. The returned value is the promise result.
+  const traceSpan = async <T>(
+    event: string,
+    run: () => Promise<T>,
+    extraStart: Record<string, unknown> = {},
+  ): Promise<T> => {
+    emitTrace(event, "start", extraStart);
+    const startedAt = Date.now();
+    try {
+      const result = await run();
+      emitTrace(event, "end", {
+        duration_ms: Date.now() - startedAt,
+        status: "ok",
+      });
+      return result;
+    } catch (err) {
+      emitTrace(event, "error", {
+        duration_ms: Date.now() - startedAt,
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
   const sessionKey = resolveSessionKey({
     strategy: sessionKeyStrategy,
     configuredSessionKey,
     agentId: nonEmpty(ctx.config.agentId),
     runId: ctx.runId,
     issueId: wakePayload.issueId,
+    chatSessionId,
+    userId: actorUserId,
   });
+  if (noraTraceId) {
+    traceLog(
+      "stderr",
+      `openclaw-gateway run sessionKey=${sessionKey} agentId=${nonEmpty(ctx.config.agentId) ?? "-"}`,
+    );
+  }
 
+  // Chat sessions (e.g. paperclip-chat plugin) inject the user prompt via
+  // ctx.context.chatPrompt. In that mode we send ONLY the user's message to
+  // the model and skip the task-oriented wake text, so the agent replies
+  // conversationally instead of running the heartbeat procedure.
+  const chatPrompt = nonEmpty(ctx.context.chatPrompt);
   const templateMessage = nonEmpty(payloadTemplate.message) ?? nonEmpty(payloadTemplate.text);
-  const message = templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText;
+  const message = chatPrompt
+    ? (templateMessage ? `${templateMessage}\n\n${chatPrompt}` : chatPrompt)
+    : (templateMessage ? appendWakeText(templateMessage, wakeText) : wakeText);
   const paperclipPayload = buildStandardPaperclipPayload(ctx, wakePayload, paperclipEnv, payloadTemplate);
 
   const agentParams: Record<string, unknown> = {
@@ -1139,7 +1345,42 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     idempotencyKey: ctx.runId,
   };
   delete agentParams.text;
-  agentParams.paperclip = paperclipPayload;
+  // Move paperclip context to extraSystemPrompt to avoid OpenClaw schema rejection
+  // (OpenClaw uses additionalProperties: false and rejects unknown root-level fields)
+  const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
+  // Expose plugin-contributed agent tools via a structured system-prompt block.
+  // Each tool lists its JSON schema plus a ready-to-run curl example that uses
+  // the PAPERCLIP_API_KEY the agent already has on disk. We inline the
+  // resolved API base + claimed-key path so chat sessions (which skip the
+  // task wake text) stay self-contained.
+  const claimedKeyPath = resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath);
+  const toolsXml = buildPaperclipToolsXml(
+    ctx,
+    paperclipEnv.PAPERCLIP_API_URL ?? null,
+    claimedKeyPath,
+    ctx.runId,
+  );
+  // NORA-DEBUG 2026-04-29 — diagnose paperclip-tools injection in chat mode
+  {
+    const rawCtxTools = (ctx.context as Record<string, unknown>).availableTools;
+    const ctxToolsLen = Array.isArray(rawCtxTools) ? rawCtxTools.length : -1;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[NORA-DEBUG] buildPaperclipToolsXml runId=${ctx.runId} ctx.availableTools.length=${ctxToolsLen} toolsXml=${toolsXml === null ? "null" : `${toolsXml.length} chars`}`,
+    );
+  }
+  agentParams.extraSystemPrompt = toolsXml
+    ? `${paperclipContextXml}\n${toolsXml}`
+    : paperclipContextXml;
+  // NORA-DEBUG 2026-04-29 — log size of extraSystemPrompt that goes to OpenClaw
+  {
+    const esp = agentParams.extraSystemPrompt;
+    const espLen = typeof esp === "string" ? esp.length : -1;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[NORA-DEBUG] extraSystemPrompt runId=${ctx.runId} total=${espLen} chars (toolsXml present: ${toolsXml !== null})`,
+    );
+  }
 
   const configuredAgentId = nonEmpty(ctx.config.agentId);
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
@@ -1260,7 +1501,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
       await ctx.onLog("stdout", `[openclaw-gateway] connecting to ${parsedUrl.toString()}\n`);
 
-      const hello = await client.connect((nonce) => {
+      const hello = await traceSpan("gateway.connect", () => client.connect((nonce) => {
         const signedAtMs = Date.now();
         const connectParams: Record<string, unknown> = {
           minProtocol: PROTOCOL_VERSION,
@@ -1306,16 +1547,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           };
         }
         return connectParams;
-      }, connectTimeoutMs);
+      }, connectTimeoutMs));
 
       await ctx.onLog(
         "stdout",
         `[openclaw-gateway] connected protocol=${asNumber(asRecord(hello)?.protocol, PROTOCOL_VERSION)}\n`,
       );
 
-      const acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
-        timeoutMs: connectTimeoutMs,
-      });
+      const acceptedPayload = await traceSpan(
+        "gateway.agent.wake",
+        () => client.request<Record<string, unknown>>("agent", agentParams, {
+          timeoutMs: connectTimeoutMs,
+        }),
+        { agentId: nonEmpty(ctx.config.agentId), sessionKey },
+      );
 
       latestResultPayload = acceptedPayload;
 
@@ -1342,10 +1587,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
 
       if (acceptedStatus !== "ok") {
-        const waitPayload = await client.request<Record<string, unknown>>(
-          "agent.wait",
+        const waitPayload = await traceSpan(
+          "gateway.agent.wait",
+          () => client.request<Record<string, unknown>>(
+            "agent.wait",
+            { runId: acceptedRunId, timeoutMs: waitTimeoutMs },
+            { timeoutMs: waitTimeoutMs + connectTimeoutMs },
+          ),
           { runId: acceptedRunId, timeoutMs: waitTimeoutMs },
-          { timeoutMs: waitTimeoutMs + connectTimeoutMs },
         );
 
         latestResultPayload = waitPayload;
@@ -1431,6 +1680,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         resultJson: asRecord(latestResultPayload),
         ...(runtimeServices.length > 0 ? { runtimeServices } : {}),
         ...(summary ? { summary } : {}),
+        // Persist the engine-side session key so heartbeat keeps the
+        // Paperclip agent_task_session alive after the run completes.
+        // Without this, resolveNextSessionState() sees both sessionId and
+        // sessionParams as undefined, serializes to null, and
+        // clearTaskSessions() drops the row — every follow-up message in
+        // the same chat thread then fails with "Session not found".
+        sessionId: sessionKey,
+        sessionDisplayId: sessionKey,
+        sessionParams: { sessionId: sessionKey },
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -1,3 +1,10 @@
+//// Neoffice Modification — fork-modified file (NeoCompany)
+//// patch #2 (chatPrompt injection in sessions.sendMessage)
+//// Edits are scattered throughout this file. See FORK_PATCHES.md at repo root
+//// for the catalogue + migration paths. When merging upstream, expect conflicts
+//// here and resolve by preserving the fork edits unless upstream provides an
+//// equivalent SDK hook (the migration path documents what to look for).
+
 import type { Db } from "@paperclipai/db";
 import {
   agentTaskSessions as agentTaskSessionsTable,
@@ -22,7 +29,6 @@ import type {
   PluginIssueOrchestrationSummary,
 } from "@paperclipai/plugin-sdk";
 import type { CreateIssueThreadInteraction, IssueDocumentSummary } from "@paperclipai/shared";
-import { pluginOperationIssueOriginKind } from "@paperclipai/shared";
 import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
@@ -35,29 +41,12 @@ import { budgetService } from "./budgets.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { subscribeCompanyLiveEvents } from "./live-events.js";
 import { randomUUID } from "node:crypto";
-import path from "node:path";
 import { activityService } from "./activity.js";
 import { costService } from "./costs.js";
 import { assetService } from "./assets.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import { pluginStateStore } from "./plugin-state-store.js";
 import { pluginDatabaseService } from "./plugin-database.js";
-import { pluginManagedAgentService } from "./plugin-managed-agents.js";
-import { pluginManagedRoutineService } from "./plugin-managed-routines.js";
-import { pluginManagedSkillService } from "./plugin-managed-skills.js";
-import {
-  assertConfiguredLocalFolder,
-  assertWritableConfiguredLocalFolder,
-  getStoredLocalFolders,
-  deletePluginLocalFolderFile,
-  inspectPluginLocalFolder,
-  listPluginLocalFolderEntries,
-  preparePluginLocalFolder,
-  readPluginLocalFolderText,
-  requireLocalFolderDeclaration,
-  setStoredLocalFolder,
-  writePluginLocalFolderTextAtomic,
-} from "./plugin-local-folders.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
 import { logActivity } from "./activity-log.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
@@ -478,7 +467,7 @@ export function buildHostServices(
   pluginKey: string,
   eventBus: PluginEventBus,
   notifyWorker?: (method: string, params: unknown) => void,
-  options: { pluginWorkerManager?: PluginWorkerManager; manifest?: import("@paperclipai/shared").PaperclipPluginManifestV1 } = {},
+  options: { pluginWorkerManager?: PluginWorkerManager } = {},
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
   const stateStore = pluginStateStore(db);
@@ -486,36 +475,6 @@ export function buildHostServices(
   const secretsHandler = createPluginSecretsHandler({ db, pluginId });
   const companies = companyService(db);
   const agents = agentService(db);
-  const managedAgents = pluginManagedAgentService(db, {
-    pluginId,
-    pluginKey,
-    manifest: options.manifest,
-    instructionTemplateVariables: async (companyId) => {
-      const variables: Record<string, string | null | undefined> = {};
-      for (const declaration of options.manifest?.localFolders ?? []) {
-        const status = await inspectPluginLocalFolder({
-          folderKey: declaration.folderKey,
-          declaration,
-          storedConfig: await getStoredLocalFolderConfig(companyId, declaration.folderKey),
-        });
-        const prefix = `localFolders.${declaration.folderKey}`;
-        variables[`${prefix}.path`] = status.realPath ?? status.path ?? null;
-        variables[`${prefix}.agentsPath`] = status.realPath ? path.join(status.realPath, "AGENTS.md") : null;
-      }
-      return variables;
-    },
-  });
-  const managedRoutines = pluginManagedRoutineService(db, {
-    pluginId,
-    pluginKey,
-    manifest: options.manifest,
-    pluginWorkerManager: options.pluginWorkerManager,
-  });
-  const managedSkills = pluginManagedSkillService(db, {
-    pluginId,
-    pluginKey,
-    manifest: options.manifest,
-  });
   const heartbeat = heartbeatService(db, {
     pluginWorkerManager: options.pluginWorkerManager,
   });
@@ -565,23 +524,6 @@ export function buildHostServices(
    * availability gate to enforce here.
    */
   const ensurePluginAvailableForCompany = async (_companyId: string) => {};
-
-  const getLocalFolderDeclaration = (folderKey: string) =>
-    requireLocalFolderDeclaration(options.manifest?.localFolders, folderKey);
-
-  const getStoredLocalFolderConfig = async (companyId: string, folderKey: string) => {
-    ensureCompanyId(companyId);
-    await ensurePluginAvailableForCompany(companyId);
-    const settings = await registry.getCompanySettings(pluginId, companyId);
-    return getStoredLocalFolders(settings?.settingsJson)[folderKey] ?? null;
-  };
-
-  const inspectStoredLocalFolder = async (companyId: string, folderKey: string) =>
-    inspectPluginLocalFolder({
-      folderKey,
-      declaration: getLocalFolderDeclaration(folderKey),
-      storedConfig: await getStoredLocalFolderConfig(companyId, folderKey),
-    });
 
   const inCompany = <T extends { companyId: string | null | undefined }>(
     record: T | null | undefined,
@@ -817,91 +759,6 @@ export function buildHostServices(
       },
     },
 
-    localFolders: {
-      async declarations() {
-        return options.manifest?.localFolders ?? [];
-      },
-
-      async configure(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        const declaration = getLocalFolderDeclaration(params.folderKey);
-        const existing = await registry.getCompanySettings(pluginId, companyId);
-        const existingConfig = getStoredLocalFolders(existing?.settingsJson)[params.folderKey] ?? null;
-        await preparePluginLocalFolder({
-          folderKey: params.folderKey,
-          declaration,
-          storedConfig: existingConfig,
-          overrideConfig: {
-            path: params.path,
-          },
-        });
-        const status = await inspectPluginLocalFolder({
-          folderKey: params.folderKey,
-          declaration,
-          storedConfig: existingConfig,
-          overrideConfig: {
-            path: params.path,
-          },
-        });
-
-        const nextSettings = setStoredLocalFolder(existing?.settingsJson, params.folderKey, {
-          path: params.path,
-          access: status.access,
-          requiredDirectories: status.requiredDirectories,
-          requiredFiles: status.requiredFiles,
-        });
-        await registry.upsertCompanySettings(pluginId, companyId, {
-          enabled: existing?.enabled ?? true,
-          settingsJson: nextSettings,
-          lastError: status.healthy ? null : status.problems.map((item: { message: string }) => item.message).join("; "),
-        });
-        return status;
-      },
-
-      async status(params) {
-        return inspectStoredLocalFolder(params.companyId, params.folderKey);
-      },
-
-      async list(params) {
-        const status = await inspectStoredLocalFolder(params.companyId, params.folderKey);
-        assertConfiguredLocalFolder(status);
-        const listing = await listPluginLocalFolderEntries(status.realPath!, {
-          relativePath: params.relativePath,
-          recursive: params.recursive,
-          maxEntries: params.maxEntries,
-        });
-        return { ...listing, folderKey: params.folderKey };
-      },
-
-      async readText(params) {
-        const status = await inspectStoredLocalFolder(params.companyId, params.folderKey);
-        assertConfiguredLocalFolder(status);
-        return readPluginLocalFolderText(status.realPath!, params.relativePath);
-      },
-
-      async writeTextAtomic(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await preparePluginLocalFolder({
-          folderKey: params.folderKey,
-          declaration: getLocalFolderDeclaration(params.folderKey),
-          storedConfig: await getStoredLocalFolderConfig(companyId, params.folderKey),
-        });
-        const status = await inspectStoredLocalFolder(companyId, params.folderKey);
-        assertWritableConfiguredLocalFolder(status);
-        await writePluginLocalFolderTextAtomic(status.realPath!, params.relativePath, params.contents);
-        return inspectStoredLocalFolder(companyId, params.folderKey);
-      },
-
-      async deleteFile(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        const status = await inspectStoredLocalFolder(companyId, params.folderKey);
-        assertWritableConfiguredLocalFolder(status);
-        await deletePluginLocalFolderFile(status.realPath!, params.relativePath, params.folderKey);
-        return inspectStoredLocalFolder(companyId, params.folderKey);
-      },
-    },
-
     state: {
       async get(params) {
         return stateStore.get(pluginId, params.scopeKind as any, params.stateKey, {
@@ -944,6 +801,9 @@ export function buildHostServices(
       },
       async list(params) {
         return registry.listEntities(pluginId, params as any) as any;
+      },
+      async delete(params: { id: string }) {
+        return registry.deleteEntity(params.id) as any;
       },
     },
 
@@ -1163,95 +1023,6 @@ export function buildHostServices(
           updatedAt: (row?.updatedAt ?? project.updatedAt).toISOString(),
         };
       },
-      async getManaged(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return projects.resolveManagedProject({
-          companyId,
-          pluginId,
-          pluginKey,
-          projectKey: params.projectKey,
-          createIfMissing: false,
-        });
-      },
-      async reconcileManaged(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return projects.resolveManagedProject({
-          companyId,
-          pluginId,
-          pluginKey,
-          projectKey: params.projectKey,
-        });
-      },
-      async resetManaged(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return projects.resolveManagedProject({
-          companyId,
-          pluginId,
-          pluginKey,
-          projectKey: params.projectKey,
-          reset: true,
-        });
-      },
-    },
-
-    routines: {
-      async managedGet(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedRoutines.get(params.routineKey, companyId);
-      },
-      async managedReconcile(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedRoutines.reconcile(params.routineKey, companyId, {
-          assigneeAgentId: params.assigneeAgentId,
-          projectId: params.projectId,
-        });
-      },
-      async managedReset(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedRoutines.reset(params.routineKey, companyId, {
-          assigneeAgentId: params.assigneeAgentId,
-          projectId: params.projectId,
-        });
-      },
-      async managedUpdate(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedRoutines.update(params.routineKey, companyId, {
-          status: params.status,
-        });
-      },
-      async managedRun(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedRoutines.run(params.routineKey, companyId, {
-          assigneeAgentId: params.assigneeAgentId,
-          projectId: params.projectId,
-        });
-      },
-    },
-
-    skills: {
-      async managedGet(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedSkills.get(params.skillKey, companyId);
-      },
-      async managedReconcile(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedSkills.reconcile(params.skillKey, companyId);
-      },
-      async managedReset(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedSkills.reset(params.skillKey, companyId);
-      },
     },
 
     issues: {
@@ -1270,12 +1041,8 @@ export function buildHostServices(
       async create(params) {
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
-        const { actorAgentId, actorUserId, actorRunId, originKind, surfaceVisibility, ...issueInput } = params;
-        const normalizedOriginKind = normalizePluginOriginKind(
-          surfaceVisibility === "plugin_operation" && !originKind
-            ? pluginOperationIssueOriginKind(pluginKey)
-            : originKind,
-        );
+        const { actorAgentId, actorUserId, actorRunId, originKind, ...issueInput } = params;
+        const normalizedOriginKind = normalizePluginOriginKind(originKind);
         const issue = (await issues.create(companyId, {
           ...(issueInput as any),
           originKind: normalizedOriginKind,
@@ -1884,21 +1651,6 @@ export function buildHostServices(
         if (!run) throw new Error("Agent wakeup was skipped by heartbeat policy");
         return { runId: run.id };
       },
-      async managedGet(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedAgents.get(params.agentKey, companyId);
-      },
-      async managedReconcile(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedAgents.reconcile(params.agentKey, companyId);
-      },
-      async managedReset(params) {
-        const companyId = ensureCompanyId(params.companyId);
-        await ensurePluginAvailableForCompany(companyId);
-        return managedAgents.reset(params.agentKey, companyId);
-      },
     },
 
     goals: {
@@ -2027,6 +1779,31 @@ export function buildHostServices(
             taskKey: session.taskKey,
             wakeSource: "automation",
             wakeTriggerDetail: "system",
+            // Expose the chat prompt to the adapter via ctx.context.chatPrompt.
+            // Chat-capable adapters (e.g. openclaw_gateway) use this instead
+            // of building a task-oriented wake prompt, so the LLM actually
+            // responds to the user message rather than the wake procedure.
+            chatPrompt: params.prompt,
+            chatPluginId: pluginId,
+            // Expose the per-thread Paperclip session id so chat-capable
+            // adapters can derive a per-thread LLM session key. Without
+            // this, every thread shares a single cumulative session on
+            // the engine side (OpenClaw), which eventually overflows the
+            // context window as wake events pile up across threads. The
+            // value mirrors Slack/Telegram/Discord adapters which key
+            // their LLM sessions by thread id (OpenClaw issue #29729).
+            chatSessionId: params.sessionId,
+            // When the plugin knows the external end-user (e.g. Frappe
+            // session.user), forward it so the adapter can scope the LLM
+            // session key per user. Without this, two Frappe users with
+            // different threads still share MEMORY/journals at the
+            // engine layer (only the thread id differs in the key).
+            actorUserId: params.actorUserId,
+            // Distributed trace id propagated from NORA (see
+            // nora_quick_chat.js → Frappe client.py → paperclip bridge
+            // route → this call). The openclaw-gateway adapter tags all
+            // its log events + stream chunks with this id.
+            noraTraceId: params.noraTraceId,
           },
           requestedByActorType: "system",
           requestedByActorId: pluginId,
@@ -2039,20 +1816,59 @@ export function buildHostServices(
         if (notifyWorker) {
           const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 
+          // Follow-up window: after the INITIAL run terminates we keep the
+          // subscription alive for a while so subagent_announce-triggered
+          // runs on the same agent/session (which OpenClaw runs as fresh
+          // heartbeat runs) can still be forwarded as additional chunks on
+          // the same plugin session. Without this the second assistant
+          // turn — the one that carries the real result — never reaches
+          // the plugin and the UI shows a stale placeholder.
+          const FOLLOW_UP_WINDOW_MS = 90 * 1000;
+
+          // Track every runId we have forwarded events for. Any new runId
+          // seen during the follow-up window that targets the same agent
+          // in the same company is assumed to be a continuation of this
+          // chat session and joins the set.
+          const knownRunIds = new Set<string>([run.id]);
+          let followUpTimer: NodeJS.Timeout | null = null;
+          let cleanupCalled = false;
+
           const cleanup = () => {
+            if (cleanupCalled) return;
+            cleanupCalled = true;
             unsubscribe();
             clearTimeout(timeoutTimer);
+            if (followUpTimer) clearTimeout(followUpTimer);
             activeSubscriptions.delete(entry);
+          };
+
+          const armFollowUpTimer = () => {
+            if (followUpTimer) clearTimeout(followUpTimer);
+            followUpTimer = setTimeout(() => {
+              cleanup();
+            }, FOLLOW_UP_WINDOW_MS);
           };
 
           const unsubscribe = subscribeCompanyLiveEvents(companyId, (event) => {
             const payload = event.payload as Record<string, unknown> | undefined;
-            if (!payload || payload.runId !== run.id) return;
+            if (!payload) return;
+            const eventRunId = payload.runId as string | undefined;
+            const eventAgentId = payload.agentId as string | undefined;
+            if (!eventRunId) return;
+
+            // Accept events from the original run, or from any additional
+            // run that targets the same agent in this company DURING the
+            // follow-up window (subagent_announce triggers those).
+            if (!knownRunIds.has(eventRunId)) {
+              if (!followUpTimer) return; // outside the follow-up window
+              if (eventAgentId && eventAgentId !== session.agentId) return;
+              knownRunIds.add(eventRunId);
+            }
 
             if (event.type === "heartbeat.run.log" || event.type === "heartbeat.run.event") {
               notifyWorker("agents.sessions.event", {
                 sessionId: params.sessionId,
-                runId: run.id,
+                runId: eventRunId,
                 seq: (payload.seq as number) ?? 0,
                 eventType: "chunk",
                 stream: (payload.stream as string) ?? null,
@@ -2064,18 +1880,21 @@ export function buildHostServices(
               if (TERMINAL_STATUSES.has(status)) {
                 notifyWorker("agents.sessions.event", {
                   sessionId: params.sessionId,
-                  runId: run.id,
+                  runId: eventRunId,
                   seq: 0,
                   eventType: status === "succeeded" ? "done" : "error",
                   stream: "system",
                   message: status === "succeeded" ? "Run completed" : `Run ${status}`,
                   payload: payload,
                 });
-                cleanup();
+                // First terminal = arm the follow-up window. Subsequent
+                // terminals (from cascading subagent_announce runs) reset
+                // it to give the chain room to breathe.
+                armFollowUpTimer();
               } else {
                 notifyWorker("agents.sessions.event", {
                   sessionId: params.sessionId,
-                  runId: run.id,
+                  runId: eventRunId,
                   seq: 0,
                   eventType: "status",
                   stream: "system",
