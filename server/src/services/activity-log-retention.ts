@@ -1,6 +1,5 @@
-import { lt } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
 
 const DEFAULT_RETENTION_DAYS = 30;
@@ -12,8 +11,16 @@ const MAX_ITERATIONS = 200;
  * Delete activity_log rows older than `retentionDays`.
  *
  * Without this sweep the table grows indefinitely. On Osiris we observed
- * 1 GB / 837 rows because the `details` JSONB column embeds full
- * referenced-issue lists per comment.
+ * 1 GB / 1.1M rows because the `details` JSONB column embeds full
+ * referenced-issue lists per comment, and a runaway emitter can dump
+ * hundreds of thousands of events per day.
+ *
+ * Uses a true batched DELETE (`DELETE ... WHERE id IN (SELECT ... LIMIT n)`)
+ * to avoid (a) acquiring row locks on the entire deletion set in one go and
+ * (b) loading the deleted IDs into the Node process heap. The previous
+ * implementation used `.returning()` without an explicit LIMIT, which
+ * resulted in a single un-bounded statement that pinned millions of rows
+ * in RAM and starved the rest of the process.
  */
 export async function pruneActivityLogs(
   db: Db,
@@ -25,12 +32,26 @@ export async function pruneActivityLogs(
   let totalDeleted = 0;
   let iterations = 0;
 
+  // Cutoff is encoded as ISO string + cast to timestamptz because the
+  // postgres.js driver (used by drizzle here) does not auto-bind Date
+  // values inside raw `sql` template literals.
+  const cutoffIso = cutoff.toISOString();
+
   while (iterations < MAX_ITERATIONS) {
-    const deleted = await db
-      .delete(activityLog)
-      .where(lt(activityLog.createdAt, cutoff))
-      .returning({ id: activityLog.id })
-      .then((rows) => rows.length);
+    // Postgres-native batched delete; avoids RETURNING entirely.
+    const result = await db.execute(sql`
+      DELETE FROM activity_log
+      WHERE id IN (
+        SELECT id FROM activity_log
+        WHERE created_at < ${cutoffIso}::timestamptz
+        LIMIT ${DELETE_BATCH_SIZE}
+      )
+    `);
+
+    // pg client returns either { rowCount } (node-postgres) or { count } depending on driver.
+    const deleted = (result as { rowCount?: number; count?: number }).rowCount
+      ?? (result as { rowCount?: number; count?: number }).count
+      ?? 0;
 
     totalDeleted += deleted;
     iterations++;

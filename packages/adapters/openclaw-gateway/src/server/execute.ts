@@ -12,6 +12,8 @@ import {
   stringifyPaperclipWakePayload,
 } from "@paperclipai/adapter-utils/server-utils";
 import crypto, { randomUUID } from "node:crypto";
+import { promises as fsPromises } from "node:fs";
+import { homedir } from "node:os";
 import { WebSocket } from "ws";
 
 type SessionKeyStrategy = "fixed" | "issue" | "run";
@@ -336,6 +338,226 @@ function resolveClaimedApiKeyPath(value: unknown): string {
   return nonEmpty(value) ?? DEFAULT_CLAIMED_API_KEY_PATH;
 }
 
+// =============================================================================
+// NORA function-calls native — Phase 2.2
+// =============================================================================
+//
+// The adapter exposes plugin tools (e.g. nora-frappe-tools) as OpenAI-style
+// `clientTools` in the agent.run payload, so the LLM can invoke them via
+// native `tool_calls` instead of being asked to emit `<tool_call>` text or
+// shell out to `curl POST /api/plugins/tools/execute`.
+//
+// Flow on a wake event:
+//  1. Load the API key from the claim file written by the agent at first wake.
+//  2. GET /api/plugins/tools to list the tools available to this agent.
+//  3. Convert AgentToolDescriptor[] -> ClientToolDefinition[] and inject in
+//     agentParams.clientTools.
+//  4. Send agent.run via WebSocket. OpenClaw fork (>= dae7845) accepts the new
+//     `clientTools` field on AgentParamsSchema.
+//  5. If the run terminates with stopReason="tool_calls", iterate up to
+//     MAX_FUNCTION_CALL_ROUNDTRIPS times: execute the tool via
+//     POST /api/plugins/tools/execute and re-issue agent.run with the result
+//     embedded in the next message (Option A — see
+//     NORA/19-function-calls-natifs/04-...). When stopReason flips back to
+//     `end_turn` (or anything other than `tool_calls`), the final answer is in
+//     the assistant chunks / payloads, and we exit the loop.
+//
+// If the claim file is missing (first wake on a fresh workspace), or the API
+// is unreachable, the function returns null/empty arrays and the run proceeds
+// without clientTools — falling back to the legacy behaviour rather than
+// failing the wake.
+
+function expandHomePath(path: string): string {
+  if (path.startsWith("~/")) {
+    return `${homedir()}/${path.slice(2)}`;
+  }
+  return path;
+}
+
+async function loadClaimedApiKey(claimedApiKeyPath: string): Promise<string | null> {
+  try {
+    const expanded = expandHomePath(claimedApiKeyPath);
+    const content = await fsPromises.readFile(expanded, "utf8");
+    const json = JSON.parse(content) as { apiKey?: unknown };
+    return typeof json.apiKey === "string" && json.apiKey.length > 0 ? json.apiKey : null;
+  } catch {
+    return null;
+  }
+}
+
+type AgentToolDescriptor = {
+  name: string;
+  displayName?: string;
+  description: string;
+  parametersSchema: Record<string, unknown>;
+  pluginId?: string;
+};
+
+async function fetchAvailableTools(
+  apiUrl: string,
+  apiKey: string,
+  toolFilter?: ReadonlySet<string>,
+): Promise<AgentToolDescriptor[]> {
+  const url = new URL("/api/plugins/tools", apiUrl).toString();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!res.ok) {
+    throw new Error(`fetchAvailableTools failed: ${res.status} ${res.statusText}`);
+  }
+  const json = (await res.json()) as unknown;
+  const all = Array.isArray(json) ? (json as AgentToolDescriptor[]) : [];
+  // NORA Phase 5 — apply per-agent filter when provided. Without this all
+  // 48 plugin tools are sent to every agent and Qwen3.6 spends turns
+  // exploring tools that aren't relevant to the question (e.g. calling
+  // `frappeFieldInfo` four times before answering "how many customers"
+  // — each call returns ~18 KB and overflows the model context window).
+  if (!toolFilter || toolFilter.size === 0) return all;
+  return all.filter((t) => toolFilter.has(t.name));
+}
+
+/**
+ * Per-agent tool allow-list for native function-calling. Maps the OpenClaw
+ * agent id to the namespaced tool names that agent should see in its
+ * clientTools array. Adapter config can override via
+ * `clientToolAllowlist: string[]`.
+ */
+const DEFAULT_AGENT_TOOL_ALLOWLIST: Record<string, ReadonlySet<string>> = {
+  "main-v15": new Set<string>([]), // text-only orchestrator
+  "tools-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeDocumentInsert",
+    "nora-frappe-tools:frappeDocumentUpdate",
+    "nora-frappe-tools:frappeDocumentDelete",
+    "nora-frappe-tools:frappeReportRun",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "sales-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeCustomerCreate",
+    "nora-frappe-tools:frappeQuotationCreate",
+    "nora-frappe-tools:frappeSalesInvoiceCreate",
+    "nora-frappe-tools:frappeOutstandingReceivables",
+    "nora-frappe-tools:frappeRevenueSummary",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "accounting-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappePaymentEntryCreate",
+    "nora-frappe-tools:frappeBankReconciliation",
+    "nora-frappe-tools:noraTaxFiling",
+    "nora-frappe-tools:frappeOutstandingReceivables",
+    "nora-frappe-tools:frappeOutstandingPayables",
+    "nora-frappe-tools:frappeRevenueSummary",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "hr-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeLeaveApply",
+    "nora-frappe-tools:noraPayrollRun",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "purchasing-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeSupplierCreate",
+    "nora-frappe-tools:frappePurchaseOrderCreate",
+    "nora-frappe-tools:frappeOutstandingPayables",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "documents-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeSearchGlobal",
+    "nora-frappe-tools:frappeFileUpload",
+    "nora-frappe-tools:noraDriveSearch",
+    "nora-frappe-tools:noraDriveUpload",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "webmail-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeDocumentGet",
+    "nora-frappe-tools:frappeSearchGlobal",
+    "nora-frappe-tools:frappeEmailDraft",
+    "nora-frappe-tools:frappeEmailConfirm",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+  "insights-v15": new Set<string>([
+    "nora-frappe-tools:frappeDocumentCount",
+    "nora-frappe-tools:frappeDocumentList",
+    "nora-frappe-tools:frappeReportList",
+    "nora-frappe-tools:frappeReportRun",
+    "nora-frappe-tools:frappeRevenueSummary",
+    "nora-frappe-tools:frappeOutstandingReceivables",
+    "nora-frappe-tools:frappeOutstandingPayables",
+    "nora-frappe-tools:frappeSqlQuery",
+    "nora-frappe-tools:noraWorkItemComplete",
+  ]),
+};
+
+function resolveAgentToolFilter(ctx: AdapterExecutionContext): ReadonlySet<string> | undefined {
+  // Adapter config has highest priority — operators can override the
+  // default allowlist per agent.
+  const cfgAllow = ctx.config.clientToolAllowlist;
+  if (Array.isArray(cfgAllow)) {
+    const names = cfgAllow.filter((v): v is string => typeof v === "string" && v.length > 0);
+    return new Set<string>(names);
+  }
+  // ctx.agent.id is a Paperclip DB UUID, not the OpenClaw agent name. Match
+  // by `name` first (e.g. "sales-v15"), then fall back to id, then to the
+  // explicit `agentId` adapter config (which IS the OpenClaw name —
+  // see openclaw.json `agents.list[*].id`).
+  const agentName = nonEmpty(ctx.agent?.name);
+  if (agentName && DEFAULT_AGENT_TOOL_ALLOWLIST[agentName]) {
+    return DEFAULT_AGENT_TOOL_ALLOWLIST[agentName];
+  }
+  const agentConfigId = nonEmpty(ctx.config.agentId);
+  if (agentConfigId && DEFAULT_AGENT_TOOL_ALLOWLIST[agentConfigId]) {
+    return DEFAULT_AGENT_TOOL_ALLOWLIST[agentConfigId];
+  }
+  return undefined;
+}
+
+type ClientToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+};
+
+function toClientTools(tools: AgentToolDescriptor[]): ClientToolDefinition[] {
+  return tools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parametersSchema,
+    },
+  }));
+}
+
+function resolvePaperclipApiUrlForFetch(ctx: AdapterExecutionContext): string {
+  const override = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
+  if (override) return override;
+  const port = asNumber(ctx.config.paperclipApiPort, 3100);
+  return `http://127.0.0.1:${port}`;
+}
+
+// =============================================================================
+
 function buildPaperclipEnvForWake(ctx: AdapterExecutionContext, wakePayload: WakePayload): Record<string, string> {
   const paperclipApiUrlOverride = resolvePaperclipApiUrlOverride(ctx.config.paperclipApiUrl);
   const paperclipEnv: Record<string, string> = {
@@ -362,8 +584,38 @@ function buildWakeText(
   payload: WakePayload,
   paperclipEnv: Record<string, string>,
   structuredWakePrompt: string,
+  claimedApiKeyPath: string,
+  simpleMode: boolean,
+  nativeFunctionCalls = false,
 ): string {
-  const claimedApiKeyPath = "~/.openclaw/workspace/paperclip-claimed-api-key.json";
+  // NORA Phase 4 — when native function-calls are wired the LLM has access to
+  // plugin tools as native OpenAI tool_calls (executed inline by the runner
+  // via patch 7's clientToolExecutor). The wake message must NOT forbid tool
+  // calls; it should encourage them. Drop the long curl-procedure preamble
+  // (irrelevant when tools are native) and just let the LLM plan its tool
+  // calls naturally.
+  if (nativeFunctionCalls) {
+    return [
+      `Paperclip wake event. Issue ${payload.issueId ?? ""}${payload.taskId && payload.taskId !== payload.issueId ? ` (task ${payload.taskId})` : ""}.`,
+      "",
+      "Use the tools available to you to answer or progress the issue. Each tool call is executed and its result returned in the same turn — formulate the final response based on the real result(s) you receive.",
+      ...(structuredWakePrompt ? ["", structuredWakePrompt] : []),
+    ].join("\n");
+  }
+  // simpleMode: agents without HTTP-tooling rights (tools.allow=[]) shouldn't
+  // receive the procedural workflow — it leads them to emit unsupported
+  // tool_call payloads they can't follow. Send only the structured payload so
+  // they have the issue context and can reply in plain text. The runtime
+  // captures their assistantChunks as the comment automatically.
+  if (simpleMode) {
+    return [
+      `Paperclip wake event. Issue ${payload.issueId ?? ""}${payload.taskId && payload.taskId !== payload.issueId ? ` (task ${payload.taskId})` : ""}.`,
+      "",
+      "Reply in plain text. Do not call any tool — your reply will be posted as the issue's comment automatically.",
+      ...(structuredWakePrompt ? ["", structuredWakePrompt] : []),
+    ].join("\n");
+  }
+
   const orderedKeys = [
     "PAPERCLIP_RUN_ID",
     "PAPERCLIP_AGENT_ID",
@@ -1080,7 +1332,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const timeoutSec = Math.max(0, Math.floor(asNumber(ctx.config.timeoutSec, 120)));
   const timeoutMs = timeoutSec > 0 ? timeoutSec * 1000 : 0;
-  const connectTimeoutMs = timeoutMs > 0 ? Math.min(timeoutMs, 15_000) : 10_000;
+  // Allow agents whose runs legitimately take >15s (LLM with long prompts,
+  // first cold call after gateway boot, contended Olares slot…) to keep
+  // the WS open handshake permissive. Cap defaults to 60s (plenty for a
+  // healthy WS handshake), but the agent can override via
+  // adapter_config.connectTimeoutMs when it expects longer cold starts.
+  const connectTimeoutMs =
+    parseOptionalPositiveInteger(ctx.config.connectTimeoutMs) ??
+    (timeoutMs > 0 ? Math.min(timeoutMs, 60_000) : 10_000);
   const waitTimeoutMs = parseOptionalPositiveInteger(ctx.config.waitTimeoutMs) ?? (timeoutMs > 0 ? timeoutMs : 30_000);
 
   const payloadTemplate = parseObject(ctx.config.payloadTemplate);
@@ -1107,12 +1366,29 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const paperclipEnv = buildPaperclipEnvForWake(ctx, wakePayload);
   const structuredWakePrompt = renderPaperclipWakePrompt(ctx.context.paperclipWake);
   const structuredWakeJson = stringifyPaperclipWakePayload(ctx.context.paperclipWake);
+  // NORA function-calls native — Phase 2.2 : pre-resolve whether we will
+  // inject clientTools so we can drop the verbose curl-procedure preamble
+  // from the wake text. When the claim API key is loadable AND the feature
+  // is on, we can safely assume the LLM will see plugin tools as native
+  // OpenAI function-calls (no need to teach it the HTTP procedure).
+  const fcUseNativeFunctionCalls = parseBoolean(ctx.config.useNativeFunctionCalls, true);
+  const claimedApiKeyPathResolved = resolveClaimedApiKeyPath(ctx.config.claimedApiKeyPath);
+  const fcPreloadedApiKey = fcUseNativeFunctionCalls
+    ? await loadClaimedApiKey(claimedApiKeyPathResolved)
+    : null;
+  const wakeTextNativeFunctionCalls =
+    fcUseNativeFunctionCalls && fcPreloadedApiKey !== null;
+  const wakeTextSimpleMode =
+    !wakeTextNativeFunctionCalls && parseBoolean(ctx.config.simpleWakeText, false);
   const wakeText = buildWakeText(
     wakePayload,
     paperclipEnv,
     structuredWakeJson
       ? joinWakePayloadSections(structuredWakePrompt, structuredWakeJson)
       : structuredWakePrompt,
+    claimedApiKeyPathResolved,
+    wakeTextSimpleMode,
+    wakeTextNativeFunctionCalls,
   );
 
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
@@ -1136,7 +1412,45 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     idempotencyKey: ctx.runId,
   };
   delete agentParams.text;
-  agentParams.paperclip = paperclipPayload;
+  // NOTE — Tried `agentParams.disableTools = true` to short-circuit OpenClaw's
+  // createOpenClawCodingTools() (a 13-15s prep step per run, profiled via
+  // NORA-PROBE in node_modules/openclaw/dist/selection-D9uTvvsw.js:6181).
+  // Rejected: OpenClaw's WS schema is strict (`additionalProperties: false`)
+  // and returns "invalid agent params: at root: unexpected property
+  // 'disableTools'". The field exists internally (params.disableTools is
+  // honored by runEmbeddedAttempt) but is not exposed in the public agent.run
+  // protocol. → upstream PR needed to whitelist `disableTools` (and ideally
+  // short-circuit when agents.list[].tools.allow is empty).
+  // Tracking: NORA/18-reset-2026-04-29/25-perf-cold-start-15s-investigation.md
+  // Move paperclip context to extraSystemPrompt to avoid OpenClaw schema rejection
+  // (OpenClaw uses additionalProperties: false and rejects unknown root-level fields)
+  const paperclipContextXml = `<paperclip-context>\n${JSON.stringify(paperclipPayload, null, 2)}\n</paperclip-context>`;
+  agentParams.extraSystemPrompt = paperclipContextXml;
+
+  // NORA Phase 7 — Prompt size optimization. OpenClaw's protocol schema
+  // (packages/.../protocol-Hjar_s3V.js:209) accepts an optional
+  // `promptMode: "full" | "minimal" | "none"` agent param that drastically
+  // changes the system prompt size:
+  //   - "full"    (default): ~24K chars (skills bundled + tooling list +
+  //                          gateway CLI ref + execution bias + safety + …)
+  //   - "minimal" (auto when `tools.allow` is non-empty): ~5-8K chars
+  //   - "none"  : 1 line ("You are a personal assistant running inside OpenClaw.")
+  //
+  // We expose this via adapterConfig so each agent can opt in. main-v15
+  // (text-only orchestrator with `tools.allow:[]`) sets promptMode="none"
+  // to drop the 24K → 1 line, which removes the irrelevant tooling/skills
+  // catalog and keeps the prompt prefix STABLE between runs (so Olares
+  // KV-cache hits — gain ~99% on warm calls).
+  //
+  // Reference: NORA/18-reset-2026-04-29/29-plan-recuperation-tools-agents-skills-memory.md
+  const promptModeRaw = nonEmpty(ctx.config.promptMode);
+  if (
+    promptModeRaw === "none" ||
+    promptModeRaw === "minimal" ||
+    promptModeRaw === "full"
+  ) {
+    agentParams.promptMode = promptModeRaw;
+  }
 
   const configuredAgentId = nonEmpty(ctx.config.agentId);
   if (configuredAgentId && !nonEmpty(agentParams.agentId)) {
@@ -1310,8 +1624,73 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         `[openclaw-gateway] connected protocol=${asNumber(asRecord(hello)?.protocol, PROTOCOL_VERSION)}\n`,
       );
 
-      const acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
-        timeoutMs: connectTimeoutMs,
+      // NORA function-calls native — Phase 2.2 : inject plugin tools as
+      // OpenAI-style clientTools so the LLM can use native function-calling
+      // instead of emitting `<tool_call>` text or shelling out to curl.
+      // Falls back gracefully if the claim file is missing or the API is
+      // unreachable (preserves the legacy behaviour).
+      // The API key was already resolved up top (so the wake text could
+      // drop the curl-procedure preamble), reuse it here.
+      const fcEnabled = fcUseNativeFunctionCalls;
+      const fcApiKey = fcPreloadedApiKey;
+      let fcApiUrl: string | null = null;
+      if (fcEnabled) {
+        if (fcApiKey) {
+          fcApiUrl = resolvePaperclipApiUrlForFetch(ctx);
+          const toolFilter = resolveAgentToolFilter(ctx);
+          try {
+            const tools = await fetchAvailableTools(fcApiUrl, fcApiKey, toolFilter);
+            if (tools.length > 0) {
+              agentParams.clientTools = toClientTools(tools);
+              // NORA Phase 4 — pass a synchronous executor descriptor so
+              // OpenClaw fork (>= bb7022c2 / patch 7) executes plugin tools
+              // INLINE during the LLM turn instead of returning a sentinel
+              // that Qwen-class models ignore. With this in place there is
+              // no need for the roundtrip loop below — tool results land
+              // back in the same turn and the LLM produces a grounded
+              // final answer in one shot.
+              agentParams.clientToolExecutor = {
+                url: new URL("/api/plugins/tools/execute", fcApiUrl).toString(),
+                apiKey: fcApiKey,
+                runId: ctx.runId,
+                timeoutMs: 30_000,
+              };
+              await ctx.onLog(
+                "stdout",
+                `[openclaw-gateway] injected ${tools.length} plugin tool(s) as clientTools + sync executor (function-calling native)\n`,
+              );
+            } else {
+              await ctx.onLog(
+                "stdout",
+                "[openclaw-gateway] no plugin tools available, skipping clientTools injection\n",
+              );
+            }
+          } catch (err) {
+            await ctx.onLog(
+              "stdout",
+              `[openclaw-gateway] failed to inject clientTools (continuing without): ${err instanceof Error ? err.message : String(err)}\n`,
+            );
+          }
+        } else {
+          await ctx.onLog(
+            "stdout",
+            "[openclaw-gateway] claim API key not found, skipping clientTools injection\n",
+          );
+        }
+      }
+
+      // When clientTools are injected we need the FINAL gateway frame
+      // (status="ok" with `result.meta.stopReason` populated), not the
+      // intermediate `accepted` ack — otherwise the roundtrip loop never
+      // sees `pendingToolCalls`. expectFinal: true makes the WS client
+      // skip the `accepted` ack frame and wait for the second frame
+      // (same RPC id) that the gateway sends once
+      // `agentCommandFromIngress` resolves
+      // (server-methods/agent.ts:328-345).
+      const expectFinalForRun = fcEnabled && fcApiKey !== null;
+      let acceptedPayload = await client.request<Record<string, unknown>>("agent", agentParams, {
+        timeoutMs: expectFinalForRun ? waitTimeoutMs : connectTimeoutMs,
+        expectFinal: expectFinalForRun,
       });
 
       latestResultPayload = acceptedPayload;
@@ -1383,7 +1762,26 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             resultJson: waitPayload,
           };
         }
+
+        acceptedPayload = waitPayload;
       }
+
+      // NORA function-calls native — Phase 2.2 : roundtrip loop. When the LLM
+      // emits tool_calls (stopReason="tool_calls"), execute each pending tool
+      // via /api/plugins/tools/execute and re-issue agent.run with the result
+      // embedded in the next message. Bounded to MAX_FUNCTION_CALL_ROUNDTRIPS
+      // to guard against runaway loops; gracefully exits if any tool fails.
+      // NORA Phase 6 — Phase 2.2 roundtrip loop removed. With patch 7's sync
+      // executor (clientToolExecutor in agentParams), tool calls execute
+      // inline during the LLM turn and the run terminates with the final
+      // answer in the assistant chunks. The legacy roundtrip path used to
+      // re-execute every tool externally and follow up with a second
+      // agent.run; it became dead code once `agentParams.clientToolExecutor`
+      // was always set. Removing it (commit history: a062527d → 9b8c5503)
+      // eliminates ~140 lines of dead code on the happy path. If for any
+      // reason a future agent ships without an executor, the LLM will get
+      // the patch-6 sentinel ("STOP your turn immediately…") which is the
+      // documented OpenResponses fallback.
 
       const summaryFromEvents = assistantChunks.join("").trim();
       const summaryFromPayload =
