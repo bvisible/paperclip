@@ -456,6 +456,22 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/plugins/nora-frappe-tools:
+    dependencies:
+      '@paperclipai/plugin-sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^24.6.0
+        version: 24.12.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/plugins/paperclip-plugin-fake-sandbox:
     dependencies:
       '@paperclipai/plugin-sdk':
