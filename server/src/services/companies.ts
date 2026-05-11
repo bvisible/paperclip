@@ -52,6 +52,9 @@ export function companyService(db: Db) {
     feedbackDataSharingConsentByUserId: companies.feedbackDataSharingConsentByUserId,
     feedbackDataSharingTermsVersion: companies.feedbackDataSharingTermsVersion,
     brandColor: companies.brandColor,
+    //// Neocompany Modification — expose is_test flag in company selection
+    isTest: companies.isTest,
+    //// End Neocompany Modification
     logoAssetId: companyLogos.assetId,
     createdAt: companies.createdAt,
     updatedAt: companies.updatedAt,
@@ -157,11 +160,20 @@ export function companyService(db: Db) {
   }
 
   return {
-    list: async () => {
-      const rows = await getCompanyQuery(db);
+    //// Neocompany Modification — list() accepts { includeTest } so callers can
+    // opt into seeing the `is_test=true` companies. Board routes default to
+    // includeTest=false (clients never see test companies). Instance-admin
+    // surfaces (/admin) pass includeTest=true. Defaults are board-safe.
+    list: async (options: { includeTest?: boolean } = {}) => {
+      const includeTest = options.includeTest === true;
+      const baseQuery = getCompanyQuery(db);
+      const rows = includeTest
+        ? await baseQuery
+        : await baseQuery.where(eq(companies.isTest, false));
       const hydrated = await hydrateCompanySpend(rows);
       return hydrated.map((row) => enrichCompany(row));
     },
+    //// End Neocompany Modification
 
     getById: async (id: string) => {
       const row = await getCompanyQuery(db)

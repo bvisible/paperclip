@@ -89,7 +89,17 @@ export function companyRoutes(db: Db, storage?: StorageService) {
 
   router.get("/", async (req, res) => {
     assertBoard(req);
-    const result = await svc.list();
+    //// Neocompany Modification — gate is_test companies behind instance_admin
+    // Test companies (is_test=true) are hidden from client boards. Only
+    // instance admins (and the local_implicit dev flow) get to see them, AND
+    // only when they explicitly opt in via ?includeTest=true. This is
+    // double-defensive: the service-level default already excludes them.
+    const callerIsAdmin =
+      req.actor.source === "local_implicit" || req.actor.isInstanceAdmin;
+    const includeTestRequested = req.query?.includeTest === "true" || req.query?.includeTest === "1";
+    const includeTest = callerIsAdmin && includeTestRequested;
+    const result = await svc.list({ includeTest });
+    //// End Neocompany Modification
     if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
       res.json(result);
       return;

@@ -26,6 +26,13 @@ export const companies = pgTable(
     feedbackDataSharingConsentByUserId: text("feedback_data_sharing_consent_by_user_id"),
     feedbackDataSharingTermsVersion: text("feedback_data_sharing_terms_version"),
     brandColor: text("brand_color"),
+    //// Neocompany Modification — is_test flag for hidden dev/test companies
+    // When true, the company is filtered out of board-level company lists for
+    // non-instance-admins so client logins never see __TEST_E2E__ /
+    // __TEST_SMOKE__ / __TEST_MANUAL__. Instance admins still see them in
+    // /admin/companies (rendered with a 🧪 badge).
+    //// End Neocompany Modification
+    isTest: boolean("is_test").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

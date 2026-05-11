@@ -14,7 +14,14 @@ import { api } from "./client";
 export type CompanyStats = Record<string, { agentCount: number; issueCount: number }>;
 
 export const companiesApi = {
-  list: () => api.get<Company[]>("/companies"),
+  //// Neocompany Modification — opt-in includeTest for instance-admin surfaces
+  // Client boards default to excluding is_test=true companies. The /admin
+  // dashboard passes { includeTest: true } so SuperAdmins can see the
+  // __TEST_E2E__ / __TEST_SMOKE__ / __TEST_MANUAL__ companies. The server
+  // double-checks the caller is instance_admin before honouring the flag.
+  list: (options?: { includeTest?: boolean }) =>
+    api.get<Company[]>(options?.includeTest ? "/companies?includeTest=true" : "/companies"),
+  //// End Neocompany Modification
   get: (companyId: string) => api.get<Company>(`/companies/${companyId}`),
   stats: () => api.get<CompanyStats>("/companies/stats"),
   create: (data: {

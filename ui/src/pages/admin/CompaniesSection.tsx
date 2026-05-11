@@ -17,8 +17,10 @@ export function CompaniesSection() {
   const [showCreate, setShowCreate] = useState(false);
 
   const companiesQuery = useQuery({
-    queryKey: queryKeys.companies.all,
-    queryFn: () => companiesApi.list(),
+    queryKey: [...queryKeys.companies.all, "withTest"] as const,
+    // /admin lists all companies including is_test=true ones (server gates this
+    // behind isInstanceAdmin). The 🧪 badge below distinguishes them.
+    queryFn: () => companiesApi.list({ includeTest: true }),
   });
 
   const statsQuery = useQuery({
@@ -79,7 +81,19 @@ export function CompaniesSection() {
                     onClick={() => setSelectedCompany(c)}
                     className="border-b border-border last:border-0 cursor-pointer hover:bg-muted/30 transition-colors"
                   >
-                    <td className="px-4 py-3 font-medium">{c.name}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        {c.name}
+                        {(c as Company & { isTest?: boolean }).isTest && (
+                          <span
+                            className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+                            title="Test company — hidden from client boards"
+                          >
+                            🧪 Test
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{c.issuePrefix}</code>
                     </td>

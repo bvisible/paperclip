@@ -18,6 +18,13 @@ export interface Company {
   feedbackDataSharingConsentByUserId: string | null;
   feedbackDataSharingTermsVersion: string | null;
   brandColor: string | null;
+  //// Neocompany Modification — is_test flag for hidden dev/test companies
+  // True for companies tagged as test (__TEST_E2E__ etc.). Filtered out of
+  // client boards; visible only on /admin surfaces for instance admins.
+  // Optional in the type for back-compat with payloads predating the migration;
+  // server default is `false`.
+  isTest?: boolean;
+  //// End Neocompany Modification
   logoAssetId: string | null;
   logoUrl: string | null;
   createdAt: Date;
