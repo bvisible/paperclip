@@ -1,0 +1,69 @@
+# //// Neocompany Modification — CI for the NeoCompany fork branch
+# Runs on push to `neocompany` and on any PR targeting `neocompany`.
+# Lighter than upstream's pr.yml: focuses on typecheck + build + unit tests
+# for the workspaces we actually ship to app.neocompany.ch. E2E and release-smoke
+# stay on the upstream master pipeline.
+# //// End Neocompany Modification
+
+name: Neocompany CI
+
+on:
+  push:
+    branches:
+      - neocompany
+  pull_request:
+    branches:
+      - neocompany
+
+concurrency:
+  group: neocompany-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Typecheck (all workspaces)
+        run: pnpm -r typecheck
+
+      - name: Build (all workspaces)
+        run: pnpm -r build
+
+      - name: Unit tests (vitest)
+        run: pnpm run test:run
+        env:
+          # Limit parallelism in CI to keep runtime reasonable.
+          VITEST_MAX_THREADS: 4
+
+      # Sanity: every fork-specific edit must carry the marker. If we forget,
+      # the marker count drops and the next upstream merge becomes opaque.
+      - name: Verify Neocompany Modification markers present
+        run: |
+          count=$(grep -r "Neocompany Modification" \
+                    --include="*.ts" --include="*.tsx" --include="*.sh" --include="*.md" \
+                    --exclude-dir=node_modules \
+                    --exclude-dir=.git \
+                    . 2>/dev/null | wc -l)
+          echo "Neocompany Modification markers found: $count"
+          if [ "$count" -lt 50 ]; then
+            echo "::error::Marker count is suspiciously low ($count < 50). Either a refactor accidentally removed them or the convention is breaking."
+            exit 1
+          fi
