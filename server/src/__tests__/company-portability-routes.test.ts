@@ -70,6 +70,12 @@ vi.mock("../services/feedback.js", () => ({
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  //// Neocompany Modification — companies.ts now imports agentInstructionsService
+  //// for the restored seed-agents call (commit e98669f8).
+  agentInstructionsService: () => ({
+    materializeManagedBundle: vi.fn(),
+  }),
+  //// End Neocompany Modification
   budgetService: () => mockBudgetService,
   companyPortabilityService: () => mockCompanyPortabilityService,
   companyService: () => mockCompanyService,
@@ -81,6 +87,11 @@ function registerCompanyRouteMocks() {
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
     agentService: () => mockAgentService,
+    //// Neocompany Modification — same as the top-level mock above.
+    agentInstructionsService: () => ({
+      materializeManagedBundle: vi.fn(),
+    }),
+    //// End Neocompany Modification
     budgetService: () => mockBudgetService,
     companyPortabilityService: () => mockCompanyPortabilityService,
     companyService: () => mockCompanyService,

@@ -42,6 +42,12 @@ const mockFeedbackService = vi.hoisted(() => ({
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
   agentService: () => mockAgentService,
+  //// Neocompany Modification — companies.ts now imports agentInstructionsService
+  //// for the restored seed-agents call (commit e98669f8).
+  agentInstructionsService: () => ({
+    materializeManagedBundle: vi.fn(),
+  }),
+  //// End Neocompany Modification
   budgetService: () => mockBudgetService,
   companyPortabilityService: () => mockCompanyPortabilityService,
   companyService: () => mockCompanyService,
