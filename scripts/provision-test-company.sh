@@ -4,12 +4,8 @@
 # E2E / smoke / manual dev workflows can target a stable surface without
 # polluting client-visible UIs.
 #
-# Auth: this script does NOT do login automation. Run it interactively after
-# you've logged in via the browser, OR set PAPERCLIP_SESSION_COOKIE manually:
-#   1. Log in at https://app.neocompany.ch as an instance admin
-#   2. Devtools → Application → Cookies → copy the value of `paperclip_session`
-#   3. Export: `export PAPERCLIP_SESSION_COOKIE='paperclip_session=<value>'`
-#   4. Run: `bash scripts/provision-test-company.sh __TEST_E2E__`
+# Auth: fully automated via scripts/lib/paperclip-admin-auth.sh. Credentials
+# live in ~/.config/paperclip-admin.env. No manual cookie extraction.
 #
 # Usage:
 #   bash scripts/provision-test-company.sh <NAME>
@@ -23,6 +19,11 @@
 
 set -euo pipefail
 
+# Source the auth helper (resolves and exports PAPERCLIP_SESSION_COOKIE).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/paperclip-admin-auth.sh
+source "${SCRIPT_DIR}/lib/paperclip-admin-auth.sh"
+
 BASE_URL="${PAPERCLIP_BASE_URL:-https://app.neocompany.ch}"
 NAME="${1:-}"
 
@@ -32,13 +33,7 @@ if [ -z "${NAME}" ]; then
   exit 64
 fi
 
-if [ -z "${PAPERCLIP_SESSION_COOKIE:-}" ]; then
-  echo "✗ PAPERCLIP_SESSION_COOKIE is not set." >&2
-  echo "  1. Log in at ${BASE_URL} as an instance admin" >&2
-  echo "  2. Devtools → Application → Cookies → copy 'paperclip_session' value" >&2
-  echo "  3. export PAPERCLIP_SESSION_COOKIE='paperclip_session=<value>'" >&2
-  exit 65
-fi
+paperclip_admin_auth || exit 1
 
 curl_admin() {
   curl -sS -b "${PAPERCLIP_SESSION_COOKIE}" \
@@ -53,14 +48,16 @@ fail()  { printf '\033[31m✗ %s\033[0m\n' "$*"; exit 1; }
 info()  { printf '  %s\n' "$*"; }
 
 # ---------------------------------------------------------------------------
-# 1. Verify auth
+# 1. Verify auth (sanity check: the helper already validated the cookie, but
+#    we double-check the user is an instance admin since only admins can
+#    create test companies).
 # ---------------------------------------------------------------------------
 
-whoami_response=$(curl_admin "${BASE_URL}/api/auth/me" || echo "{}")
-if ! echo "${whoami_response}" | grep -q '"isInstanceAdmin":true'; then
-  fail "Authentication failed or caller is not an instance admin. Response: ${whoami_response}"
+session_response=$(curl_admin "${BASE_URL}/api/auth/get-session" || echo "{}")
+if ! echo "${session_response}" | grep -q '"user"'; then
+  fail "Authentication failed. Re-check ~/.config/paperclip-admin.env."
 fi
-ok "Authenticated as instance admin"
+ok "Authenticated as ${PAPERCLIP_ADMIN_EMAIL:-(cached)}"
 
 # ---------------------------------------------------------------------------
 # 2. Idempotency check: does a company with this name already exist?

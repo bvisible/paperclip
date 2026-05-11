@@ -67,3 +67,66 @@ jobs:
             echo "::error::Marker count is suspiciously low ($count < 50). Either a refactor accidentally removed them or the convention is breaking."
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # E2E against prod (optional, opt-in by repo secrets)
+  # ---------------------------------------------------------------------------
+  # Runs the tests/e2e/neocompany Playwright suite against app.neocompany.ch
+  # if the required secrets are set on the repo. Disabled silently otherwise
+  # so the workflow stays green on forks / PRs from contributors who don't
+  # have the secrets.
+  e2e-neocompany:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'push' && github.ref == 'refs/heads/neocompany'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Skip if admin creds not configured
+        id: gate
+        run: |
+          if [ -z "${{ secrets.PAPERCLIP_ADMIN_EMAIL }}" ] || [ -z "${{ secrets.PAPERCLIP_ADMIN_PASSWORD }}" ]; then
+            echo "E2E secrets not configured; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup pnpm
+        if: steps.gate.outputs.skip != 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Install Playwright browsers
+        if: steps.gate.outputs.skip != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Run NeoCompany E2E suite
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          PAPERCLIP_ADMIN_EMAIL: ${{ secrets.PAPERCLIP_ADMIN_EMAIL }}
+          PAPERCLIP_ADMIN_PASSWORD: ${{ secrets.PAPERCLIP_ADMIN_PASSWORD }}
+          PAPERCLIP_BASE_URL: https://app.neocompany.ch
+        run: pnpm run test:e2e:neocompany
+
+      - name: Upload Playwright report on failure
+        if: failure() && steps.gate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/neocompany/playwright-report/
+          retention-days: 7

@@ -1,0 +1,4 @@
+//// Neocompany Modification — never commit auth state / test artifacts
+.auth/
+test-results/
+playwright-report/
