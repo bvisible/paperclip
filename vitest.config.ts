@@ -16,8 +16,9 @@ export default defineConfig({
       "server",
       "ui",
       "cli",
-      //// Neocompany Modification — register the neocompany-tools test project
+      //// Neocompany Modification — register the neocompany-tools + paperclip-chat test projects
       "packages/plugins/neocompany-tools",
+      "packages/plugins/paperclip-chat",
       //// End Neocompany Modification
     ],
   },

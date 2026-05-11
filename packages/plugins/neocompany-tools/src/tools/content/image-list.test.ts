@@ -18,7 +18,7 @@ async function seedImage(
     externalId: string;
     status?: "pending" | "approved" | "rejected";
     batchId?: string;
-    source?: "generated" | "uploaded";
+    source?: "generated" | "upload";
     tags?: string[];
     prompt?: string;
   },
@@ -96,9 +96,9 @@ describe("runImageList", () => {
     const runCtx = makeRunCtx();
 
     await seedImage(entities, runCtx, { externalId: "g", source: "generated" });
-    await seedImage(entities, runCtx, { externalId: "u", source: "uploaded" });
+    await seedImage(entities, runCtx, { externalId: "u", source: "upload" });
 
-    const result = await runImageList({ source: "uploaded" }, undefined, runCtx, ctxAccess);
+    const result = await runImageList({ source: "upload" }, undefined, runCtx, ctxAccess);
     const data = result.data as { images: Array<{ id: string }> };
     expect(data.images.map((i) => i.id)).toEqual(["u"]);
   });

@@ -6,227 +6,28 @@ import type {
   ChatStreamEvent,
   ChatAdapterInfo,
 } from "./types.js";
+//// Neocompany Modification — accumulateText + createStreamJsonParser extracted
+//// to dedicated modules so the streaming-defense logic and multi-format parser
+//// can be unit-tested without spinning up the whole plugin worker.
+import { accumulateText } from "./text-accumulation.js";
+import { createStreamJsonParser } from "./stream-parser.js";
+//// End Neocompany Modification
 
 const PLUGIN_NAME = "paperclip-chat";
 
-/**
- * Defensive text accumulation for streamed chat events.
- *
- * The openclaw-gateway adapter is *supposed* to forward token-level
- * deltas (`data.delta`). On follow-up turns running on a thread that
- * already has prior history (since NORA's Wave 7.1b externalId upsert
- * started reusing threads across messages) two upstream artefacts
- * have been observed:
- *
- *   1. Cumulative snapshots — a single `data.text` event carries the
- *      full assistant message so far instead of just the new token.
- *      Naive `prev + incoming` then yields
- *      "OuiOui,, je je me me sou souviviensens..."
- *
- *   2. Duplicate events — the same token chunk is forwarded twice in
- *      a row, producing "SuperSuper,, et et toi toi ?".
- *
- * This helper tolerates BOTH:
- *   • If `incoming` is strictly longer than `prev` AND starts with it,
- *     treat as a cumulative snapshot → replace.
- *   • Else if `prev` already ends with `incoming` (the previous event's
- *     payload is being repeated), treat as a duplicate → skip.
- *   • Otherwise (genuine delta), append.
- *
- * Pure deltas always fall into the third branch because they don't
- * start with the existing content and prev doesn't end with them —
- * behavior unchanged for the well-behaved adapter case.
- *
- * Caveat for the duplicate detection branch: a legitimate user phrase
- * like "ha ha" would, in this defensive logic, lose its second "ha" if
- * each "ha" arrived as its own event. In practice multi-token chunks
- * are emitted as a single event, and even when split they won't trip
- * the suffix-match in plain prose. Acceptable trade-off vs the user-
- * visible Wave 7.1e bug.
- */
-function accumulateText(prev: string, incoming: string): string {
-  if (!incoming) return prev;
-  // (1) Cumulative snapshot: incoming carries everything we have plus more.
-  if (incoming.length > prev.length && incoming.startsWith(prev)) {
-    return incoming;
-  }
-  // (2) Duplicate event: the same chunk we just appended is being sent
-  //     a second time. Skip rather than append.
-  if (incoming.length <= prev.length && prev.endsWith(incoming)) {
-    return prev;
-  }
-  // (3) Genuine delta — append as before.
-  return prev + incoming;
-}
+//// Neocompany Modification — accumulateText moved to ./text-accumulation.ts
+//// (see import at the top of this file). Body removed here to avoid a
+//// duplicate-binding error; behaviour is identical.
+//// End Neocompany Modification
 
 // ---------------------------------------------------------------------------
 // Claude stream-json parser
 // ---------------------------------------------------------------------------
 
-/**
- * Buffers raw stdout chunks and emits parsed ChatStreamEvents for each
- * complete JSON line from Claude CLI's `--output-format stream-json`.
- */
-function createStreamJsonParser(emit: (event: ChatStreamEvent) => void) {
-  let buffer = "";
-  return {
-    push(chunk: string) {
-      buffer += chunk;
-      const lines = buffer.split(/\r?\n/);
-      // Keep the last (possibly incomplete) line in the buffer
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-
-        // ── OpenClaw Gateway event format ────────────────────────
-        // Lines look like: [openclaw-gateway:event] run=<id> stream=<name> data=<json>
-        const ocgMatch = trimmed.match(/^\[openclaw-gateway:event\]\s+.*?stream=(\S+)\s+data=(\{.*\})\s*$/);
-        if (ocgMatch) {
-          const stream = ocgMatch[1];
-          try {
-            const data = JSON.parse(ocgMatch[2]) as Record<string, unknown>;
-            if (stream === "assistant") {
-              const text = (data.delta as string | undefined) ?? (data.text as string | undefined);
-              if (typeof text === "string" && text.length > 0) {
-                emit({ type: "text", text });
-              }
-            } else if (stream === "tool_use") {
-              const name = (data.name as string) ?? "tool";
-              emit({ type: "tool_use", name, input: data.input });
-            } else if (stream === "tool_result") {
-              const content = typeof data.content === "string" ? data.content : JSON.stringify(data.content ?? "");
-              emit({ type: "tool_result", content, isError: data.isError === true || data.is_error === true });
-            } else if (stream === "item") {
-              // OpenClaw Gateway emits `stream=item` for its native tool
-              // calls (sessions_spawn, read, write, exec, edit, …). Map
-              // them to the same tool_use / tool_result events so the
-              // retry-narration filter and the UI tool-call rendering
-              // both react correctly.
-              const kind = data.kind as string | undefined;
-              const phase = data.phase as string | undefined;
-              if (kind === "tool" || kind === "command") {
-                const name = (data.name as string) ?? (kind === "command" ? "exec" : "tool");
-                if (phase === "start") {
-                  emit({ type: "tool_use", name, input: data.meta ?? data.title });
-                } else if (phase === "end") {
-                  const out = (data.output as string | undefined) ?? (data.result as string | undefined) ?? "";
-                  const failed =
-                    data.status === "error" ||
-                    data.status === "failed" ||
-                    (typeof data.exitCode === "number" && data.exitCode !== 0);
-                  emit({ type: "tool_result", content: out, isError: failed });
-                }
-                // `update` / `delta` phases stream progress; we ignore them
-                // here because the tool call is already open in the segment
-                // list and the UI does not need every keystroke.
-              }
-            } else if (stream === "error") {
-              const msg = (data.error as string | undefined) ?? (data.message as string | undefined) ?? "error";
-              emit({ type: "error", text: msg });
-            }
-          } catch { /* skip malformed JSON */ }
-          continue;
-        }
-
-        try {
-          const obj = JSON.parse(trimmed) as Record<string, unknown>;
-          const type = obj.type as string | undefined;
-
-          // ── Claude CLI stream-json format ──────────────────────────
-          // The CLI emits: system (init), assistant (full message),
-          // user (tool_result), and result (final summary).
-          if (type === "assistant") {
-            const message = obj.message as Record<string, unknown> | undefined;
-            const content = Array.isArray(message?.content) ? message!.content : [];
-            for (const blockRaw of content) {
-              if (typeof blockRaw !== "object" || blockRaw === null || Array.isArray(blockRaw)) continue;
-              const block = blockRaw as Record<string, unknown>;
-              const blockType = block.type as string | undefined;
-              if (blockType === "text" && typeof block.text === "string") {
-                emit({ type: "text", text: block.text });
-              } else if (blockType === "thinking" && typeof block.thinking === "string") {
-                emit({ type: "thinking", text: block.thinking });
-              } else if (blockType === "tool_use") {
-                emit({
-                  type: "tool_use",
-                  name: (block.name as string) ?? "tool",
-                  input: block.input,
-                });
-              }
-            }
-          } else if (type === "user") {
-            // Tool results come back as user messages with tool_result blocks
-            const message = obj.message as Record<string, unknown> | undefined;
-            const content = Array.isArray(message?.content) ? message!.content : [];
-            for (const blockRaw of content) {
-              if (typeof blockRaw !== "object" || blockRaw === null || Array.isArray(blockRaw)) continue;
-              const block = blockRaw as Record<string, unknown>;
-              if ((block.type as string) === "tool_result") {
-                let resultContent = "";
-                if (typeof block.content === "string") {
-                  resultContent = block.content;
-                } else if (Array.isArray(block.content)) {
-                  resultContent = block.content
-                    .map((p: unknown) => {
-                      if (typeof p === "string") return p;
-                      if (typeof p === "object" && p !== null && (p as Record<string, unknown>).type === "text") {
-                        return (p as Record<string, unknown>).text as string;
-                      }
-                      return "";
-                    })
-                    .filter(Boolean)
-                    .join("\n");
-                }
-                emit({
-                  type: "tool_result",
-                  content: resultContent,
-                  isError: block.is_error === true,
-                });
-              }
-            }
-          } else if (type === "system" && obj.subtype === "init") {
-            if (typeof obj.session_id === "string") {
-              emit({ type: "session_init", sessionId: obj.session_id });
-            }
-          } else if (type === "result") {
-            const usage = obj.usage as Record<string, unknown> | undefined;
-            emit({
-              type: "result",
-              usage: usage ? {
-                input_tokens: (usage.input_tokens as number) ?? 0,
-                output_tokens: (usage.output_tokens as number) ?? 0,
-              } : undefined,
-              costUsd: typeof obj.total_cost_usd === "number" ? obj.total_cost_usd
-                : typeof obj.cost_usd === "number" ? obj.cost_usd
-                : undefined,
-            });
-          }
-
-          // ── Anthropic API streaming format (fallback) ──────────────
-          // In case the adapter emits raw API events instead of CLI format.
-          if (type === "content_block_delta") {
-            const delta = obj.delta as Record<string, unknown> | undefined;
-            if (delta?.type === "text_delta" && typeof delta.text === "string") {
-              emit({ type: "text", text: delta.text });
-            }
-            if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
-              emit({ type: "thinking", text: delta.thinking });
-            }
-          }
-        } catch {
-          // Not valid JSON — skip
-        }
-      }
-    },
-    /** Flush any remaining buffer content */
-    flush() {
-      if (buffer.trim()) {
-        this.push("\n");
-      }
-    },
-  };
-}
+//// Neocompany Modification — createStreamJsonParser moved to ./stream-parser.ts
+//// (see import at the top of this file). Body removed here to avoid a
+//// duplicate-binding error; behaviour is identical.
+//// End Neocompany Modification
 
 // ---------------------------------------------------------------------------
 // State key helpers — all chat data lives in plugin.state
