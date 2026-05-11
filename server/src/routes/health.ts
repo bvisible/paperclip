@@ -3,6 +3,9 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { and, count, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { heartbeatRuns, instanceUserRoles, invites } from "@paperclipai/db";
+//// Neocompany Modification — extra schemas for fork health stats
+import { agents, companies, plugins } from "@paperclipai/db";
+//// End Neocompany Modification
 import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
 import { readPersistedDevServerStatus, toDevServerHealthStatus } from "../dev-server-status.js";
 import { logger } from "../middleware/logger.js";
@@ -27,6 +30,90 @@ function hasDevServerStatusToken(providedToken: string | undefined) {
   if (expected.length !== provided.length) return false;
   return timingSafeEqual(expected, provided);
 }
+
+//// Neocompany Modification — fork health stats
+//
+// Exposes the runtime contract that scripts/smoke-prod-neocompany.sh + the
+// UptimeRobot / healthcheck.io probes look for: which fork plugins are
+// activated and ready, how many agents / companies live on the instance,
+// and a coarse `health` flag that goes "degraded" when a known invariant
+// breaks (e.g. seed agents missing — see Phase 2.C PENDING_BUG).
+//
+// Scoped to "full details" callers (instance_admin in authenticated mode,
+// anyone in local_trusted mode) — keeps internal counts out of public
+// scrape surfaces.
+interface NeocompanyHealthStats {
+  health: "ok" | "degraded";
+  warnings: string[];
+  plugins: Array<{ pluginKey: string; status: string }>;
+  pluginsExpected: number;
+  pluginsReady: number;
+  agentsTotal: number;
+  companiesTotal: number;
+  testCompaniesTotal: number;
+  testCompaniesMissingAgents: number;
+}
+
+const EXPECTED_FORK_PLUGINS = ["neocompany-tools", "paperclip-chat"] as const;
+
+async function collectNeocompanyHealth(db: Db): Promise<NeocompanyHealthStats> {
+  const pluginRows = await db
+    .select({ pluginKey: plugins.pluginKey, status: plugins.status })
+    .from(plugins)
+    .where(inArray(plugins.pluginKey, [...EXPECTED_FORK_PLUGINS]));
+
+  const pluginsReady = pluginRows.filter((p) => p.status === "ready").length;
+
+  const [agentsRow] = await db.select({ count: count() }).from(agents);
+  const agentsTotal = Number(agentsRow?.count ?? 0);
+
+  const companyRows = await db
+    .select({ id: companies.id, isTest: companies.isTest })
+    .from(companies);
+  const companiesTotal = companyRows.length;
+  const testCompanies = companyRows.filter((c) => c.isTest === true);
+
+  let testCompaniesMissingAgents = 0;
+  if (testCompanies.length > 0) {
+    const testCompanyIds = testCompanies.map((c) => c.id);
+    const agentsPerCompany = await db
+      .select({ companyId: agents.companyId, count: count() })
+      .from(agents)
+      .where(inArray(agents.companyId, testCompanyIds))
+      .groupBy(agents.companyId);
+    const withAgents = new Set(agentsPerCompany.map((r) => r.companyId));
+    testCompaniesMissingAgents = testCompanies.filter(
+      (c) => !withAgents.has(c.id),
+    ).length;
+  }
+
+  const warnings: string[] = [];
+  if (pluginsReady !== EXPECTED_FORK_PLUGINS.length) {
+    warnings.push(
+      `expected ${EXPECTED_FORK_PLUGINS.length} fork plugins ready, got ${pluginsReady}`,
+    );
+  }
+  if (testCompaniesMissingAgents > 0) {
+    warnings.push(
+      `${testCompaniesMissingAgents} test compan${
+        testCompaniesMissingAgents === 1 ? "y has" : "ies have"
+      } no seeded agents (seedDefaultAgentsForCompany regression)`,
+    );
+  }
+
+  return {
+    health: warnings.length === 0 ? "ok" : "degraded",
+    warnings,
+    plugins: pluginRows.map((p) => ({ pluginKey: p.pluginKey, status: p.status })),
+    pluginsExpected: EXPECTED_FORK_PLUGINS.length,
+    pluginsReady,
+    agentsTotal,
+    companiesTotal,
+    testCompaniesTotal: testCompanies.length,
+    testCompaniesMissingAgents,
+  };
+}
+//// End Neocompany Modification
 
 export function healthRoutes(
   db?: Db,
@@ -130,6 +217,28 @@ export function healthRoutes(
       return;
     }
 
+    //// Neocompany Modification — fork stats (best-effort: DB failures here
+    //// must not crash the health endpoint itself, so we wrap in try/catch
+    //// and surface degraded status rather than 500).
+    let neocompany: NeocompanyHealthStats | undefined;
+    try {
+      neocompany = await collectNeocompanyHealth(db);
+    } catch (error) {
+      logger.warn({ err: error }, "Neocompany health stats probe failed");
+      neocompany = {
+        health: "degraded",
+        warnings: ["fork-stats-unreachable"],
+        plugins: [],
+        pluginsExpected: EXPECTED_FORK_PLUGINS.length,
+        pluginsReady: 0,
+        agentsTotal: 0,
+        companiesTotal: 0,
+        testCompaniesTotal: 0,
+        testCompaniesMissingAgents: 0,
+      };
+    }
+    //// End Neocompany Modification
+
     res.json({
       status: "ok",
       version: serverVersion,
@@ -142,6 +251,9 @@ export function healthRoutes(
         companyDeletionEnabled: opts.companyDeletionEnabled,
       },
       ...(devServer ? { devServer } : {}),
+      //// Neocompany Modification — fork stats appended to the full-details payload
+      neocompany,
+      //// End Neocompany Modification
     });
   });
 
