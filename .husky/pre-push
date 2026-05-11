@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# //// Neocompany Modification — pre-push hook
+# Heavier gate before code leaves the laptop:
+#   1. Refuse pushes to `master` from a non-sync workflow (we keep `master`
+#      a mirror of upstream paperclipai; pushes should only happen after a
+#      deliberate upstream sync).
+#   2. Run a marker-count check — the //// Neocompany Modification convention
+#      is how upstream merges stay tractable. If the count drops below the
+#      floor, something quietly stripped them.
+#   3. Run the full test suite (vitest across all workspaces).
+#
+# Bypass with `git push --no-verify` when force-pushing a known-safe branch.
+# //// End Neocompany Modification
+
+set -e
+
+# Read which refs are being pushed (stdin format: <local ref> <local sha> <remote ref> <remote sha>)
+while read -r local_ref _local_sha remote_ref _remote_sha; do
+  case "${remote_ref}" in
+    refs/heads/master)
+      echo "✗ pre-push: refusing to push to master."
+      echo "  master is a mirror of upstream paperclipai/paperclip on this fork."
+      echo "  If you really mean to sync, use 'git push --no-verify origin master'."
+      exit 1
+      ;;
+  esac
+done
+
+echo "▸ Verify '//// Neocompany Modification' marker floor..."
+count=$(grep -r "Neocompany Modification" \
+          --include="*.ts" --include="*.tsx" --include="*.sh" --include="*.md" \
+          --exclude-dir=node_modules \
+          --exclude-dir=.git \
+          --exclude-dir=dist \
+          . 2>/dev/null | wc -l | tr -d ' ')
+echo "  Markers found: ${count}"
+if [ "${count}" -lt 50 ]; then
+  echo "✗ Marker count ${count} < 50 — something looks wrong."
+  echo "  Either a refactor stripped the convention or the floor needs updating."
+  exit 1
+fi
+
+echo "▸ Run full vitest suite..."
+pnpm -w run test:run
+
+echo "✓ pre-push checks passed"

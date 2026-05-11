@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# //// Neocompany Modification — pre-commit hook
+# Run lint-staged: for every .ts/.tsx staged file, execute the vitest tests
+# that depend on it (vitest --related). Fast (<10s typically) and only
+# triggers on files actually touched.
+#
+# Bypass with `git commit --no-verify` when WIP / known-failing.
+# //// End Neocompany Modification
+
+pnpm exec lint-staged

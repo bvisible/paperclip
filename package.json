@@ -52,12 +52,15 @@
     "test:release-smoke": "npx playwright test --config tests/release-smoke/playwright.config.ts",
     "test:release-smoke:headed": "npx playwright test --config tests/release-smoke/playwright.config.ts --headed",
     "metrics:paperclip-commits": "tsx scripts/paperclip-commit-metrics.ts",
-    "perf:issue-chat-long-thread": "node scripts/measure-issue-chat-long-thread.mjs"
+    "perf:issue-chat-long-thread": "node scripts/measure-issue-chat-long-thread.mjs",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "cross-env": "^10.1.0",
     "esbuild": "^0.27.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.4",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   },
@@ -72,5 +75,11 @@
     "overrides": {
       "rollup": ">=4.59.0"
     }
+  },
+  "//// Neocompany Modification — lint-staged config": "Run vitest --related on staged TS files so pre-commit only triggers tests touching what changed. Tunable below.",
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "pnpm exec vitest related --run --no-coverage --passWithNoTests"
+    ]
   }
 }
