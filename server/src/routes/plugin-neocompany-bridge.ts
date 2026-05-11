@@ -19,11 +19,21 @@
  */
 
 import { Router } from "express";
+import { eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { agents } from "@paperclipai/db";
 import { pluginRegistryService } from "../services/plugin-registry.js";
 import { pluginStateStore } from "../services/plugin-state-store.js";
 import { invalidateNeocompanyAllowlistCache } from "../services/plugin-tool-dispatcher.js";
 import { createPluginSecretsHandler } from "../services/plugin-secrets-handler.js";
+import {
+  accessService,
+  agentInstructionsService,
+  agentService,
+  logActivity,
+} from "../services/index.js";
+import { seedDefaultAgentsForCompany } from "../services/seed-agents.js";
+import { loadInstructionsBundleForNewAgent } from "../services/default-agent-instructions.js";
 import { assertInstanceAdmin, assertBoard } from "./authz.js";
 import { notFound } from "../errors.js";
 
@@ -97,6 +107,111 @@ function createPlatformConfigRoutes(db: Db): Router {
       res.json({ isAdmin: true });
     } catch {
       res.json({ isAdmin: false });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /bridge/reseed-agents — re-run the seed-fleet loop on a company
+  //
+  // Idempotent (skips seedKeys already present on the target). Needed for
+  // companies that existed BEFORE the seed-agents wiring was restored on
+  // 2026-05-11 — POST /api/companies seeds new ones automatically, but
+  // existing rows must be backfilled. Instance-admin only.
+  // -----------------------------------------------------------------------
+
+  const agentsSvc = agentService(db);
+  const access = accessService(db);
+  const instructions = agentInstructionsService();
+
+  router.post("/plugins/neocompany-tools/bridge/reseed-agents", async (req, res) => {
+    assertInstanceAdmin(req);
+    const companyId = (req.body as { companyId?: string } | undefined)?.companyId;
+    if (!companyId || typeof companyId !== "string") {
+      res.status(400).json({ error: "companyId required" });
+      return;
+    }
+
+    // Discover seedKeys already present so we don't double-create.
+    const existingRows = await db
+      .select({ id: agents.id, metadata: agents.metadata })
+      .from(agents)
+      .where(eq(agents.companyId, companyId));
+    const existingSeedKeys = new Set<string>();
+    for (const row of existingRows) {
+      const md = (row.metadata ?? {}) as Record<string, unknown>;
+      const key = md.seedKey;
+      if (typeof key === "string" && key.length > 0) existingSeedKeys.add(key);
+    }
+
+    const actorUserId = "actor" in req && req.actor && typeof req.actor === "object"
+      ? ((req.actor as { userId?: string }).userId ?? null)
+      : null;
+
+    try {
+      const created = await seedDefaultAgentsForCompany(
+        companyId,
+        {
+          createAgent: (cid, input) =>
+            agentsSvc.create(cid, input as Parameters<typeof agentsSvc.create>[1]),
+          materializeBundleForNewAgent: async (agent) => {
+            const adapterConfig = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+            const instructionsTemplate =
+              typeof adapterConfig.instructionsTemplate === "string"
+                ? (adapterConfig.instructionsTemplate as string)
+                : null;
+            const files = await loadInstructionsBundleForNewAgent({
+              role: agent.role,
+              instructionsTemplate,
+            });
+            const result = await instructions.materializeManagedBundle(agent, files, {
+              entryFile: "AGENTS.md",
+              replaceExisting: false,
+            });
+            await agentsSvc.update(agent.id, { adapterConfig: result.adapterConfig });
+          },
+          grantDefaultAgentAccess: async (cid, agentId, grantedByUserId) => {
+            await access.ensureMembership(cid, "agent", agentId, "member", "active");
+            await access.setPrincipalPermission(
+              cid,
+              "agent",
+              agentId,
+              "tasks:assign",
+              true,
+              grantedByUserId,
+            );
+          },
+          logActivity: async ({ companyId: cid, agentId, actorUserId: aid, seedKey }) => {
+            await logActivity(db, {
+              companyId: cid,
+              actorType: "user",
+              actorId: aid ?? "board",
+              action: "agent.seeded",
+              entityType: "agent",
+              entityId: agentId,
+              details: { seedKey, source: "reseed-agents" },
+            });
+          },
+        },
+        {
+          openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:3200",
+          openclawGatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN ?? "",
+          actorUserId,
+          enableHeartbeat: true,
+          heartbeatIntervalSec: 900,
+        },
+        existingSeedKeys,
+      );
+      res.json({
+        companyId,
+        created,
+        alreadyPresent: [...existingSeedKeys],
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[reseed-agents] failed", err);
+      res.status(500).json({
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 
