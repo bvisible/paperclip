@@ -28,6 +28,9 @@ export const companiesApi = {
     name: string;
     description?: string | null;
     budgetMonthlyCents?: number;
+    //// Neocompany Modification — isTest flag on create (instance admin only)
+    isTest?: boolean;
+    //// End Neocompany Modification
   }) =>
     api.post<Company>("/companies", data),
   update: (

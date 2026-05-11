@@ -279,6 +279,17 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
       throw forbidden("Instance admin required");
     }
+    //// Neocompany Modification — guard isTest=true behind instance_admin
+    // The validator already requires the caller to pass through assertBoard +
+    // isInstanceAdmin above, so isTest=true is only reachable by admins.
+    // We keep an explicit check here so a future refactor that loosens the
+    // outer ACL doesn't accidentally open isTest to non-admins.
+    if (req.body.isTest === true) {
+      if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
+        throw forbidden("Only instance admins can create test companies");
+      }
+    }
+    //// End Neocompany Modification
     const company = await svc.create(req.body);
     await access.ensureMembership(company.id, "user", req.actor.userId ?? "local-board", "owner", "active");
     await logActivity(db, {

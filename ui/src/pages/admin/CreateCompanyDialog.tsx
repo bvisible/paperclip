@@ -19,12 +19,18 @@ export function CreateCompanyDialog({ onClose }: Props) {
   const { pushToast } = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  //// Neocompany Modification — isTest flag in create dialog
+  const [isTest, setIsTest] = useState(false);
+  //// End Neocompany Modification
 
   const createMut = useMutation({
     mutationFn: () =>
       companiesApi.create({
         name: name.trim(),
         description: description.trim() || null,
+        //// Neocompany Modification — propagate isTest flag to server
+        isTest,
+        //// End Neocompany Modification
       }),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: queryKeys.companies.all });
@@ -61,6 +67,24 @@ export function CreateCompanyDialog({ onClose }: Props) {
               placeholder="What this company does"
             />
           </div>
+          {/* //// Neocompany Modification — isTest checkbox for dev/test companies */}
+          <label className="flex items-start gap-2 cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={isTest}
+              onChange={(e) => setIsTest(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-input"
+            />
+            <span className="flex-1 text-sm">
+              <span className="font-medium inline-flex items-center gap-1.5">
+                <span>🧪 Test company</span>
+              </span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                Hidden from client boards. Use for E2E / smoke / manual dev.
+              </span>
+            </span>
+          </label>
+          {/* //// End Neocompany Modification */}
         </div>
 
         <div className="flex justify-end gap-2 mt-5">

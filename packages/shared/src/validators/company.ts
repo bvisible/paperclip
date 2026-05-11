@@ -18,6 +18,12 @@ export const createCompanySchema = z.object({
   description: z.string().optional().nullable(),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   attachmentMaxBytes: attachmentMaxBytesSchema.optional(),
+  //// Neocompany Modification — accept is_test flag on create
+  // Only honoured server-side when the caller is an instance admin.
+  // Non-admin POSTs that set isTest=true are rejected upstream of the
+  // service (route layer). Default false keeps existing behaviour.
+  isTest: z.boolean().optional().default(false),
+  //// End Neocompany Modification
 });
 
 export type CreateCompany = z.infer<typeof createCompanySchema>;
