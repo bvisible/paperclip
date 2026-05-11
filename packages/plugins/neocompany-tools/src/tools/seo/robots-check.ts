@@ -12,14 +12,17 @@ export interface SeoRobotsCheckParams {
 }
 
 function classifyBot(content: string, botName: string): string {
+  const lower = content.toLowerCase();
   const needle = `user-agent: ${botName.toLowerCase()}`;
-  const index = content.toLowerCase().indexOf(needle);
+  const index = lower.indexOf(needle);
   if (index === -1) return "not mentioned (allowed by default)";
-  const after = content.substring(index);
+  const after = lower.substring(index);
   const nextAgent = after.indexOf("user-agent:", 1);
   const section = nextAgent > 0 ? after.substring(0, nextAgent) : after;
-  if (section.includes("disallow: /")) return "BLOCKED";
-  if (section.includes("allow: /")) return "allowed";
+  // Order matters: check "disallow: /" BEFORE "allow: /" because the latter
+  // is a substring of the former and would otherwise match first.
+  if (/(^|\n)\s*disallow:\s*\/(\s|$)/.test(section)) return "BLOCKED";
+  if (/(^|\n)\s*allow:\s*\/(\s|$)/.test(section)) return "allowed";
   return "partially restricted";
 }
 

@@ -16,6 +16,9 @@ export default defineConfig({
       "server",
       "ui",
       "cli",
+      //// Neocompany Modification — register the neocompany-tools test project
+      "packages/plugins/neocompany-tools",
+      //// End Neocompany Modification
     ],
   },
 });
