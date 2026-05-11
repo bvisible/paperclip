@@ -83,14 +83,18 @@ describe("GET /api/companies — is_test filter", () => {
     });
   });
 
-  it("excludes test companies by default for instance admins", async () => {
+  it("includes test companies by default for instance admins", async () => {
     const res = await request(appWithActor({ isInstanceAdmin: true })).get("/api/companies");
     expect(res.status).toBe(200);
-    expect(listMock).toHaveBeenCalledWith({ includeTest: false });
-    expect(res.body.map((c: { id: string }) => c.id)).toEqual(["c-real"]);
+    // Admins always see test companies — they need them on the regular
+    // /:companyPrefix/* routes to actually use them as workspaces.
+    expect(listMock).toHaveBeenCalledWith({ includeTest: true });
+    const ids = res.body.map((c: { id: string }) => c.id);
+    expect(ids).toContain("c-real");
+    expect(ids).toContain("c-test");
   });
 
-  it("includes test companies when instance admin passes ?includeTest=true", async () => {
+  it("?includeTest=true is accepted for back-compat (admins already see all)", async () => {
     const res = await request(appWithActor({ isInstanceAdmin: true })).get(
       "/api/companies?includeTest=true",
     );
@@ -101,25 +105,24 @@ describe("GET /api/companies — is_test filter", () => {
     expect(ids).toContain("c-test");
   });
 
-  it("ignores ?includeTest=true from non-admin users (test companies stay hidden)", async () => {
+  it("never returns test companies to non-admin users", async () => {
     const res = await request(
       appWithActor({ isInstanceAdmin: false, companyIds: ["c-real", "c-test"] }),
     ).get("/api/companies?includeTest=true");
     expect(res.status).toBe(200);
-    // Service is called with includeTest=false because caller is not admin.
+    // Service is called with includeTest=false because caller is not admin
+    // — query param is ignored for non-admins.
     expect(listMock).toHaveBeenCalledWith({ includeTest: false });
     expect(res.body.map((c: { id: string }) => c.id)).toEqual(["c-real"]);
   });
 
-  it("allows local_implicit (dev) callers to see test companies on request", async () => {
-    const res = await request(appWithActor({ source: "local_implicit" })).get(
-      "/api/companies?includeTest=true",
-    );
+  it("local_implicit (dev) callers see test companies by default", async () => {
+    const res = await request(appWithActor({ source: "local_implicit" })).get("/api/companies");
     expect(res.status).toBe(200);
     expect(listMock).toHaveBeenCalledWith({ includeTest: true });
   });
 
-  it("accepts ?includeTest=1 as a valid truthy value", async () => {
+  it("?includeTest=1 still flips on (no-op for admins, ignored for non-admins)", async () => {
     const res = await request(appWithActor({ isInstanceAdmin: true })).get(
       "/api/companies?includeTest=1",
     );
