@@ -25,7 +25,9 @@ interface OpenPageRankResponseEntry {
 }
 
 function normaliseDomain(input: string): string {
-  return input.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+  // trim() FIRST so leading/trailing whitespace doesn't defeat the `^`
+  // anchor of the protocol-strip regex.
+  return input.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
 }
 
 export async function runSeoCompetitorPageRank(
