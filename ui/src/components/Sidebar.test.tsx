@@ -70,6 +70,16 @@ vi.mock("@/plugins/slots", () => ({
   PluginSlotOutlet: () => null,
 }));
 
+//// Neocompany Modification — mock PluginLauncherOutlet (added in patch #7)
+// Patch #7 renders <PluginLauncherOutlet placementZones={["sidebar"]}>
+// inside <Sidebar>. The component requires a <PluginLauncherProvider> in
+// the tree; without it the hook throws. We stub it out for unit tests
+// since the launcher rendering itself has its own dedicated tests.
+vi.mock("@/plugins/launchers", () => ({
+  PluginLauncherOutlet: () => null,
+}));
+//// End Neocompany Modification
+
 vi.mock("./SidebarCompanyMenu", () => ({
   SidebarCompanyMenu: () => <div>Company menu</div>,
 }));

@@ -41,6 +41,12 @@ import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
+//// Neocompany Modification — mount the NeoCompany /plugins/.../bridge router
+// Exposes /api/plugins/neocompany-tools/bridge/* (am-i-admin probe, OAuth
+// callbacks, platform config). Without this mount the /admin/* UI redirects
+// to "/" because adminApi.checkIsAdmin() 404s.
+import { createPlatformConfigRoutes } from "./routes/plugin-neocompany-bridge.js";
+//// End Neocompany Modification
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -284,6 +290,9 @@ export async function createApp(
       { workerManager },
     ),
   );
+  //// Neocompany Modification — NeoCompany plugin bridge (admin probe + OAuth)
+  api.use(createPlatformConfigRoutes(db));
+  //// End Neocompany Modification
   api.use(adapterRoutes());
   api.use(
     accessRoutes(db, {

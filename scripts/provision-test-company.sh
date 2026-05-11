@@ -38,6 +38,8 @@ paperclip_admin_auth || exit 1
 curl_admin() {
   curl -sS -b "${PAPERCLIP_SESSION_COOKIE}" \
        -H "Content-Type: application/json" \
+       -H "Origin: ${BASE_URL}" \
+       -H "Referer: ${BASE_URL}/" \
        --max-time 30 \
        "$@"
 }

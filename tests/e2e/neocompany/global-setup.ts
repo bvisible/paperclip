@@ -17,7 +17,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AUTH_FILE = join(__dirname, ".auth", "admin.json");
-const REQUIRED_COMPANIES = ["__TEST_E2E__", "__TEST_SMOKE__", "__TEST_MANUAL__"];
+// Names chosen so deriveIssuePrefixBase yields distinct 3-letter prefixes
+// (EET / SMO / MAN). See scripts/provision-all-test-companies.sh for the why.
+const REQUIRED_COMPANIES = ["__E2E_TEST__", "__SMOKE_TEST__", "__MANUAL_TEST__"];
 
 function loadCredentials(): { email: string; password: string } {
   if (process.env.PAPERCLIP_ADMIN_EMAIL && process.env.PAPERCLIP_ADMIN_PASSWORD) {

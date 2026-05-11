@@ -118,7 +118,13 @@ describe("PluginPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the breadcrumb and Back button on a legacy plugin route (no routeSidebar)", async () => {
+  //// Neocompany Modification — obsolete after patch #9 (chromeless PluginPage)
+  // We deliberately removed the "Back" button from PluginPage to give plugins
+  // the full viewport (paperclip-chat composer, content editor, etc.). The
+  // upstream assertions on "Back" no longer hold on this fork.
+  // Un-skip if you re-introduce the Back button.
+  //// End Neocompany Modification
+  it.skip("renders the breadcrumb and Back button on a legacy plugin route (no routeSidebar)", async () => {
     mockParams.pluginRoutePath = "wiki";
     mockPluginsApi.listUiContributions.mockResolvedValue([pageContribution()]);
 
@@ -136,7 +142,11 @@ describe("PluginPage", () => {
     });
   });
 
-  it("uses a route title and hides the Back button when a routeSidebar matches the active route", async () => {
+  //// Neocompany Modification — obsolete after patch #9 (chromeless PluginPage)
+  // routeSidebar logic was simplified by our chromeless layout — no Back
+  // button to hide either way. Un-skip if upstream behaviour returns.
+  //// End Neocompany Modification
+  it.skip("uses a route title and hides the Back button when a routeSidebar matches the active route", async () => {
     mockParams.pluginRoutePath = "wiki";
     mockPluginsApi.listUiContributions.mockResolvedValue([
       pageContribution({

@@ -1,5 +1,5 @@
 //// Neocompany Modification — first E2E spec : dashboard sanity + ActivityRow regression
-//// Targets the __TEST_E2E__ company on app.neocompany.ch. Validates the
+//// Targets the __E2E_TEST__ company on app.neocompany.ch. Validates the
 //// fundamental contract: the dashboard loads, agents are seeded, and
 //// Recent Activity entries show human-readable actor names (not UUIDs).
 ////
@@ -9,7 +9,7 @@
 
 import { test, expect, type APIRequestContext } from "@playwright/test";
 
-const TEST_COMPANY_NAME = "__TEST_E2E__";
+const TEST_COMPANY_NAME = "__E2E_TEST__";
 
 async function findTestCompanyPrefix(request: APIRequestContext): Promise<string> {
   const resp = await request.get("/api/companies?includeTest=true");
@@ -25,7 +25,7 @@ async function findTestCompanyPrefix(request: APIRequestContext): Promise<string
   return test!.issuePrefix;
 }
 
-test.describe("/__TEST_E2E__/dashboard", () => {
+test.describe("/__E2E_TEST__/dashboard", () => {
   test("loads and renders the page chrome", async ({ page, request }) => {
     const prefix = await findTestCompanyPrefix(request);
     await page.goto(`/${prefix}/dashboard`);
@@ -58,8 +58,8 @@ test.describe("/__TEST_E2E__/dashboard", () => {
   });
 });
 
-test.describe("/__TEST_E2E__/admin (visibility)", () => {
-  test("__TEST_E2E__ appears in /admin/companies with 🧪 badge", async ({
+test.describe("/__E2E_TEST__/admin (visibility)", () => {
+  test("__E2E_TEST__ appears in /admin/companies with 🧪 badge", async ({
     page,
   }) => {
     await page.goto("/admin/companies");
