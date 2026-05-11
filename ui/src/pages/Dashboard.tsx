@@ -26,6 +26,13 @@ import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRa
 import { PageSkeleton } from "../components/PageSkeleton";
 import type { Agent, Issue } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
+//// Neocompany Modification — resolve plugin actorId → displayName in Recent Activity
+// Plugins emit activity events with `actorType: "plugin"` and `actorId: <pluginId UUID>`.
+// Without resolution, the UI shows the raw UUID instead of the plugin display name.
+// We fetch UI contributions (which carry pluginId + displayName) and build a lookup map
+// passed down to <ActivityRow>.
+import { pluginsApi } from "../api/plugins";
+//// End Neocompany Modification
 
 const DASHBOARD_ACTIVITY_LIMIT = 10;
 
@@ -87,6 +94,25 @@ export function Dashboard() {
     () => buildCompanyUserProfileMap(companyMembers?.users),
     [companyMembers?.users],
   );
+
+  //// Neocompany Modification — pluginMap for Recent Activity actor resolution
+  // listUiContributions returns one row per (company, plugin) with pluginId,
+  // pluginKey, displayName. We build a Map<pluginId, displayName> so ActivityRow
+  // can resolve actorType="plugin" events to a human-readable name.
+  const { data: pluginContributions } = useQuery({
+    queryKey: queryKeys.plugins.uiContributions,
+    queryFn: () => pluginsApi.listUiContributions(),
+    enabled: !!selectedCompanyId,
+  });
+
+  const pluginMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of pluginContributions ?? []) {
+      map.set(p.pluginId, p.displayName);
+    }
+    return map;
+  }, [pluginContributions]);
+  //// End Neocompany Modification
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
   const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
@@ -327,6 +353,9 @@ export function Dashboard() {
                       event={event}
                       agentMap={agentMap}
                       userProfileMap={userProfileMap}
+                      /* //// Neocompany Modification — pluginMap for actorType=plugin resolution */
+                      pluginMap={pluginMap}
+                      /* //// End Neocompany Modification */
                       entityNameMap={entityNameMap}
                       entityTitleMap={entityTitleMap}
                       className={animatedActivityIds.has(event.id) ? "activity-row-enter" : undefined}

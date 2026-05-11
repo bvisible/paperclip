@@ -23,12 +23,18 @@ interface ActivityRowProps {
   event: ActivityEvent;
   agentMap: Map<string, Agent>;
   userProfileMap?: Map<string, CompanyUserProfile>;
+  //// Neocompany Modification — pluginMap for actorType="plugin" resolution
+  // Map<pluginId (UUID), displayName>. Built from pluginsApi.listUiContributions()
+  // by the caller. When omitted, plugin actors fall back to their UUID — the
+  // upstream behaviour before this patch.
+  pluginMap?: Map<string, string>;
+  //// End Neocompany Modification
   entityNameMap: Map<string, string>;
   entityTitleMap?: Map<string, string>;
   className?: string;
 }
 
-export function ActivityRow({ event, agentMap, userProfileMap, entityNameMap, entityTitleMap, className }: ActivityRowProps) {
+export function ActivityRow({ event, agentMap, userProfileMap, pluginMap, entityNameMap, entityTitleMap, className }: ActivityRowProps) {
   const verb = formatActivityVerb(event.action, event.details, { agentMap, userProfileMap });
 
   const isHeartbeatEvent = event.entityType === "heartbeat_run";
@@ -48,7 +54,21 @@ export function ActivityRow({ event, agentMap, userProfileMap, entityNameMap, en
 
   const actor = event.actorType === "agent" ? agentMap.get(event.actorId) : null;
   const userProfile = event.actorType === "user" ? userProfileMap?.get(event.actorId) : null;
-  const actorName = actor?.name ?? (event.actorType === "system" ? "System" : userProfile?.label ?? (event.actorType === "user" ? "Board" : event.actorId || "Unknown"));
+  //// Neocompany Modification — resolve actorType="plugin" via pluginMap
+  // Plugins emit activity events with actorId set to the plugin UUID. Without
+  // resolution, the row displays the raw UUID (e.g. "af5f5888-...") instead of
+  // a human-readable name ("neocompany-tools"). Falls back to UUID if the
+  // pluginMap doesn't carry the entry (e.g. plugin was disabled mid-session).
+  const pluginName = event.actorType === "plugin" ? pluginMap?.get(event.actorId) : null;
+  //// End Neocompany Modification
+  const actorName =
+    actor?.name
+    ?? (event.actorType === "system" ? "System" : null)
+    //// Neocompany Modification — prefer resolved plugin name over UUID
+    ?? pluginName
+    //// End Neocompany Modification
+    ?? userProfile?.label
+    ?? (event.actorType === "user" ? "Board" : event.actorId || "Unknown");
   const actorAvatarUrl = userProfile?.image ?? null;
 
   const inner = (
