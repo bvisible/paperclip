@@ -124,6 +124,14 @@ function createBasePaperclipEnv(options: TestPaperclipEnv) {
   env.PAPERCLIP_INSTANCE_ID = options.instanceId;
   env.PAPERCLIP_CONTEXT = path.join(options.paperclipHome, "context.json");
   env.PAPERCLIP_AUTH_STORE = path.join(options.paperclipHome, "auth.json");
+  //// Neocompany Modification — opt out of the fork's default seed-agents fleet
+  // for this upstream test. The fleet (Nora/Lyra/…/Pixel) is wired into
+  // POST /api/companies in our fork (server/src/routes/companies.ts), which
+  // changes this test's exported-agent count from 1 to 10. The seed loop
+  // honours this env var (see server/src/services/seed-agents.ts) so the
+  // upstream assertions stay tractable without forking the test itself.
+  env.PAPERCLIP_SKIP_DEFAULT_AGENTS = "1";
+  //// End Neocompany Modification
   if (options.shellHome) {
     env.HOME = options.shellHome;
   }

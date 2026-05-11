@@ -16,6 +16,7 @@ import { badRequest, forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
+  agentInstructionsService,
   agentService,
   budgetService,
   companyPortabilityService,
@@ -23,6 +24,10 @@ import {
   feedbackService,
   logActivity,
 } from "../services/index.js";
+//// Neocompany Modification — seed agents wiring (Phase 2.C bug fix)
+import { seedDefaultAgentsForCompany } from "../services/seed-agents.js";
+import { loadInstructionsBundleForNewAgent } from "../services/default-agent-instructions.js";
+//// End Neocompany Modification
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
@@ -34,6 +39,9 @@ export function companyRoutes(db: Db, storage?: StorageService) {
   const access = accessService(db);
   const budgets = budgetService(db);
   const feedback = feedbackService(db);
+  //// Neocompany Modification — seed agents helper
+  const instructions = agentInstructionsService();
+  //// End Neocompany Modification
 
   function parseBooleanQuery(value: unknown) {
     return value === true || value === "true" || value === "1";
@@ -303,6 +311,73 @@ export function companyRoutes(db: Db, storage?: StorageService) {
       entityId: company.id,
       details: { name: company.name },
     });
+    //// Neocompany Modification — provision the default seed-agent fleet
+    // Restored 2026-05-11: this call existed in d7575da3 but was lost in a
+    // subsequent upstream sync. Without it, /api/companies POST creates a
+    // company that has zero agents — paperclip-chat then fails on
+    // sendMessage because no agent matches the adapter type.
+    // Failures here do NOT unwind the company creation: they're logged and
+    // the operator sees a warning. The reconcile CLI can fix a partial
+    // seed later.
+    try {
+      await seedDefaultAgentsForCompany(
+        company.id,
+        {
+          createAgent: (companyId, input) =>
+            agents.create(companyId, input as Parameters<typeof agents.create>[1]),
+          materializeBundleForNewAgent: async (agent) => {
+            const adapterConfig = (agent.adapterConfig ?? {}) as Record<string, unknown>;
+            const instructionsTemplate =
+              typeof adapterConfig.instructionsTemplate === "string"
+                ? (adapterConfig.instructionsTemplate as string)
+                : null;
+            const files = await loadInstructionsBundleForNewAgent({
+              role: agent.role,
+              instructionsTemplate,
+            });
+            const result = await instructions.materializeManagedBundle(agent, files, {
+              entryFile: "AGENTS.md",
+              replaceExisting: false,
+            });
+            await agents.update(agent.id, { adapterConfig: result.adapterConfig });
+          },
+          grantDefaultAgentAccess: async (companyId, agentId, grantedByUserId) => {
+            await access.ensureMembership(companyId, "agent", agentId, "member", "active");
+            await access.setPrincipalPermission(
+              companyId,
+              "agent",
+              agentId,
+              "tasks:assign",
+              true,
+              grantedByUserId,
+            );
+          },
+          logActivity: async ({ companyId, agentId, actorUserId, seedKey }) => {
+            await logActivity(db, {
+              companyId,
+              actorType: "user",
+              actorId: actorUserId ?? "board",
+              action: "agent.seeded",
+              entityType: "agent",
+              entityId: agentId,
+              details: { seedKey },
+            });
+          },
+        },
+        {
+          openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:3200",
+          openclawGatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN ?? "",
+          actorUserId: req.actor.userId ?? null,
+          enableHeartbeat: true,
+          heartbeatIntervalSec: 900,
+        },
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[company.create] seed agents failed", err);
+    }
+    //// End Neocompany Modification
+
     if (company.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(
         company.id,

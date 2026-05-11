@@ -28,7 +28,15 @@ vi.mock("../services/index.js", () => ({
   }),
   agentService: () => ({
     getById: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
   }),
+  //// Neocompany Modification — agentInstructionsService is imported by companies.ts
+  //// for the seed-agents call site (restored 2026-05-11).
+  agentInstructionsService: () => ({
+    materializeManagedBundle: vi.fn(),
+  }),
+  //// End Neocompany Modification
   feedbackService: () => ({
     listIssueVotesForUser: vi.fn(),
     listFeedbackTraces: vi.fn(),
