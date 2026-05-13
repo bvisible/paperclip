@@ -98,6 +98,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Local Cursor agent",
     icon: MousePointer2,
   },
+  cursor_cloud: {
+    label: "Cursor Cloud",
+    description: "Managed remote Cursor agent",
+    icon: MousePointer2,
+  },
   //// Neocompany Modification — patch #4 (drop comingSoon for openclaw_gateway)
   // OpenClaw is our primary adapter (production on app.neocompany.ch).
   // Removing the `comingSoon` flag exposes it in the visual adapter picker.
