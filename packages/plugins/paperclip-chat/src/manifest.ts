@@ -43,7 +43,12 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Default Adapter",
         description: "Which adapter to use by default for new threads",
         default: "openclaw_gateway",
-        enum: ["claude_local", "codex_local", "opencode_local", "openclaw_gateway"],
+        //// Neocompany Modification — hermes_local added as a selectable adapter
+        //// (Hermes migration). The runtime default still follows the
+        //// PAPERCLIP_SEED_ADAPTER env flag via defaultChatAdapterType() in
+        //// worker.ts; this enum just lets an operator pick it explicitly.
+        enum: ["claude_local", "codex_local", "opencode_local", "openclaw_gateway", "hermes_local"],
+        //// End Neocompany Modification
       },
       systemPromptOverride: {
         type: "string",

@@ -114,7 +114,23 @@ const ADAPTER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   codex: "Codex",
   opencode: "OpenCode",
+  //// Neocompany Modification — hermes_local adapter label (Hermes migration)
+  hermes_local: "Hermes Agent",
+  //// End Neocompany Modification
 };
+
+//// Neocompany Modification — chat default adapter follows PAPERCLIP_SEED_ADAPTER
+// Keeps the chat surface coherent with seed-agents.ts: when the fleet is
+// seeded on hermes_local, new chat threads default to hermes_local too;
+// otherwise the legacy openclaw_gateway default is unchanged. sendMessage
+// matches agents by adapterType, so a mismatch here would mean "no agent
+// found" — this keeps the two in lockstep behind a single flag.
+function defaultChatAdapterType(): string {
+  return process.env.PAPERCLIP_SEED_ADAPTER === "hermes_local"
+    ? "hermes_local"
+    : "openclaw_gateway";
+}
+//// End Neocompany Modification
 
 function adapterTypeLabel(adapterType: string): string {
   return ADAPTER_LABELS[adapterType] ?? adapterType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -155,7 +171,8 @@ const plugin = definePlugin({
       const companyId = params.companyId as string;
       if (!companyId) {
         return [
-          { type: "openclaw_gateway", label: "OpenClaw", available: true, models: [] },
+          //// Neocompany Modification — fallback adapter follows PAPERCLIP_SEED_ADAPTER
+          { type: defaultChatAdapterType(), label: adapterTypeLabel(defaultChatAdapterType()), available: true, models: [] },
         ] as ChatAdapterInfo[];
       }
       try {
@@ -180,11 +197,13 @@ const plugin = definePlugin({
         }
         const adapters = Array.from(adapterMap.values());
         return adapters.length > 0 ? adapters : [
-          { type: "openclaw_gateway", label: "OpenClaw", available: true, models: [] },
+          //// Neocompany Modification — fallback adapter follows PAPERCLIP_SEED_ADAPTER
+          { type: defaultChatAdapterType(), label: adapterTypeLabel(defaultChatAdapterType()), available: true, models: [] },
         ];
       } catch {
         return [
-          { type: "openclaw_gateway", label: "OpenClaw", available: true, models: [] },
+          //// Neocompany Modification — fallback adapter follows PAPERCLIP_SEED_ADAPTER
+          { type: defaultChatAdapterType(), label: adapterTypeLabel(defaultChatAdapterType()), available: true, models: [] },
         ] as ChatAdapterInfo[];
       }
     });
@@ -192,7 +211,9 @@ const plugin = definePlugin({
     // ── Action: create thread ───────────────────────────────────────
     ctx.actions.register("createThread", async (params: Record<string, unknown>) => {
       const companyId = params.companyId as string;
-      const adapterType = (params.adapterType as string) ?? "openclaw_gateway";
+      //// Neocompany Modification — default adapter follows PAPERCLIP_SEED_ADAPTER
+      const adapterType = (params.adapterType as string) ?? defaultChatAdapterType();
+      //// End Neocompany Modification
       const model = (params.model as string) ?? "";
       const title = (params.title as string) ?? "New Chat";
       // Optional: callers (e.g. NORA bridge) can target a specific agent by id
