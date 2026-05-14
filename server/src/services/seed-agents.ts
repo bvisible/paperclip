@@ -266,6 +266,26 @@ export interface SeedAgentOptions {
   heartbeatIntervalSec?: number;
 }
 
+//// Neocompany Modification — Hermes adapter migration (feature-flagged)
+// `PAPERCLIP_SEED_ADAPTER` selects which adapter newly-seeded agents use.
+// Default "openclaw_gateway" keeps the legacy behaviour untouched — the
+// migration to "hermes_local" only takes effect once this flag is flipped.
+// This keeps Phase 2 safe to ship before the prod-side prerequisites
+// (hermes CLI installed, Codex OAuth coexistence) are verified.
+//   - openclaw_gateway: per-agent OpenClaw workspace, shell-provisioned at
+//     seed time via `provisionIsolatedAgent`.
+//   - hermes_local: per-(company,user,agent) HERMES_HOME, resolved at RUNTIME
+//     by the registry wrapper (server/src/adapters/registry.ts) — nothing to
+//     provision at seed time.
+type SeedAdapterType = "openclaw_gateway" | "hermes_local";
+
+function resolveSeedAdapterType(): SeedAdapterType {
+  return process.env.PAPERCLIP_SEED_ADAPTER === "hermes_local"
+    ? "hermes_local"
+    : "openclaw_gateway";
+}
+//// End Neocompany Modification
+
 /**
  * Provision every agent in SEED_AGENTS for a newly created company.
  *
@@ -278,6 +298,10 @@ export interface SeedAgentOptions {
  *     PAPERCLIP_SKIP_DEFAULT_AGENTS=1): skips default seed. Neoffice provides
  *     its own agent fleet (Nora/Sophie/Marc/Léa/Thomas/Vincent) via a separate
  *     post-install seed script — avoids polluting the company with inert agents.
+ *
+ * Adapter-aware (Neocompany): see `resolveSeedAdapterType` — the fleet is
+ * seeded on `openclaw_gateway` (default) or `hermes_local` per the
+ * `PAPERCLIP_SEED_ADAPTER` env flag.
  */
 export async function seedDefaultAgentsForCompany(
   companyId: string,
@@ -293,16 +317,37 @@ export async function seedDefaultAgentsForCompany(
     return [];
   }
 
+  //// Neocompany Modification — resolve the seed adapter once per call
+  const seedAdapterType = resolveSeedAdapterType();
+  //// End Neocompany Modification
+
   const created: Array<{ agentId: string; seedKey: string }> = [];
   for (const spec of SEED_AGENTS) {
     if (existingSeedKeys.has(spec.seedKey)) continue;
 
-    const adapterConfig: Record<string, unknown> = {
-      url: options.openclawGatewayUrl,
-      headers: { "x-openclaw-token": options.openclawGatewayToken },
-      // The materializer uses this to pick the right onboarding-assets dir.
-      instructionsTemplate: spec.instructionsTemplate,
-    };
+    //// Neocompany Modification — adapter-specific config (openclaw_gateway | hermes_local)
+    const adapterConfig: Record<string, unknown> =
+      seedAdapterType === "hermes_local"
+        ? {
+            // Provider `openai-codex` = ChatGPT Pro OAuth, no API key —
+            // same auth model as the openclaw_gateway path. `model` is
+            // left unset so Hermes uses its configured Codex default.
+            // HERMES_HOME is NOT set here: the registry wrapper injects it
+            // per (company, user, agent) at runtime.
+            provider: "openai-codex",
+            persistSession: true,
+            timeoutSec: 300,
+            // Kept so materializeBundleForNewAgent still writes the
+            // onboarding-assets bundle (AGENTS.md) for this seed.
+            instructionsTemplate: spec.instructionsTemplate,
+          }
+        : {
+            url: options.openclawGatewayUrl,
+            headers: { "x-openclaw-token": options.openclawGatewayToken },
+            // The materializer uses this to pick the right onboarding-assets dir.
+            instructionsTemplate: spec.instructionsTemplate,
+          };
+    //// End Neocompany Modification
 
     const runtimeConfig = {
       heartbeat: {
@@ -323,7 +368,9 @@ export async function seedDefaultAgentsForCompany(
       role: spec.role,
       title: spec.title,
       icon: spec.icon,
-      adapterType: "openclaw_gateway",
+      //// Neocompany Modification — adapter from PAPERCLIP_SEED_ADAPTER flag
+      adapterType: seedAdapterType,
+      //// End Neocompany Modification
       adapterConfig,
       runtimeConfig,
       metadata,
@@ -342,7 +389,15 @@ export async function seedDefaultAgentsForCompany(
     // Multi-tenant isolation: provision a per-agent OpenClaw workspace so
     // memory never leaks between agents/companies. See
     // server/src/services/openclaw-isolated-agents.ts for the shell plumbing.
-    if (services.provisionIsolatedAgent && services.patchAgentAdapterConfig) {
+    //// Neocompany Modification — only the openclaw_gateway path provisions a
+    //// workspace at seed time. The hermes_local path isolates memory at
+    //// runtime via HERMES_HOME (registry wrapper) — nothing to do here.
+    if (
+      seedAdapterType === "openclaw_gateway" &&
+      services.provisionIsolatedAgent &&
+      services.patchAgentAdapterConfig
+    ) {
+    //// End Neocompany Modification
       try {
         const iso = await services.provisionIsolatedAgent({
           companyId,
