@@ -77,14 +77,17 @@ describe("seedDefaultAgentsForCompany — PAPERCLIP_SEED_ADAPTER flag", () => {
   let prevAdapter: string | undefined;
   let prevDeployment: string | undefined;
   let prevSkip: string | undefined;
+  let prevHermesCmd: string | undefined;
 
   beforeEach(() => {
     prevAdapter = process.env.PAPERCLIP_SEED_ADAPTER;
     prevDeployment = process.env.PAPERCLIP_DEPLOYMENT;
     prevSkip = process.env.PAPERCLIP_SKIP_DEFAULT_AGENTS;
+    prevHermesCmd = process.env.PAPERCLIP_HERMES_COMMAND;
     // Ensure the deployment-skip guard does not short-circuit the seed loop.
     delete process.env.PAPERCLIP_DEPLOYMENT;
     delete process.env.PAPERCLIP_SKIP_DEFAULT_AGENTS;
+    delete process.env.PAPERCLIP_HERMES_COMMAND;
   });
 
   afterEach(() => {
@@ -94,6 +97,8 @@ describe("seedDefaultAgentsForCompany — PAPERCLIP_SEED_ADAPTER flag", () => {
     else process.env.PAPERCLIP_DEPLOYMENT = prevDeployment;
     if (prevSkip === undefined) delete process.env.PAPERCLIP_SKIP_DEFAULT_AGENTS;
     else process.env.PAPERCLIP_SKIP_DEFAULT_AGENTS = prevSkip;
+    if (prevHermesCmd === undefined) delete process.env.PAPERCLIP_HERMES_COMMAND;
+    else process.env.PAPERCLIP_HERMES_COMMAND = prevHermesCmd;
   });
 
   it("defaults to openclaw_gateway when the flag is unset", async () => {
@@ -140,6 +145,31 @@ describe("seedDefaultAgentsForCompany — PAPERCLIP_SEED_ADAPTER flag", () => {
       expect(cfg.headers).toBeUndefined();
       // instructionsTemplate kept so the onboarding bundle still materializes.
       expect(typeof cfg.instructionsTemplate).toBe("string");
+      // hermesCommand omitted when PAPERCLIP_HERMES_COMMAND is unset (adapter
+      // keeps its bare "hermes" default).
+      expect(cfg.hermesCommand).toBeUndefined();
+    }
+  });
+
+  it("injects hermesCommand into the hermes config when PAPERCLIP_HERMES_COMMAND is set", async () => {
+    process.env.PAPERCLIP_SEED_ADAPTER = "hermes_local";
+    process.env.PAPERCLIP_HERMES_COMMAND = "/home/ubuntu/.hermes-venv/bin/hermes";
+    const h = makeServices();
+    await seedDefaultAgentsForCompany("co-1", h.services, OPTIONS);
+    for (const c of h.created) {
+      const cfg = c.input.adapterConfig as Record<string, unknown>;
+      expect(cfg.hermesCommand).toBe("/home/ubuntu/.hermes-venv/bin/hermes");
+    }
+  });
+
+  it("does NOT add hermesCommand to the openclaw_gateway config even when the env is set", async () => {
+    delete process.env.PAPERCLIP_SEED_ADAPTER; // openclaw default
+    process.env.PAPERCLIP_HERMES_COMMAND = "/home/ubuntu/.hermes-venv/bin/hermes";
+    const h = makeServices();
+    await seedDefaultAgentsForCompany("co-1", h.services, OPTIONS);
+    for (const c of h.created) {
+      const cfg = c.input.adapterConfig as Record<string, unknown>;
+      expect(cfg.hermesCommand).toBeUndefined();
     }
   });
 

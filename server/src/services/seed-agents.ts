@@ -284,6 +284,16 @@ function resolveSeedAdapterType(): SeedAdapterType {
     ? "hermes_local"
     : "openclaw_gateway";
 }
+
+// On the NeoCompany prod box `hermes` is installed in a dedicated venv
+// (~/.hermes-venv/bin/hermes), NOT on the service PATH. The adapter defaults
+// `hermesCommand` to bare "hermes"; we override it via env when the binary
+// lives elsewhere. Unset → adapter keeps its "hermes" default (upstream
+// behaviour, e.g. when hermes IS on PATH).
+function resolveHermesCommand(): string | undefined {
+  const cmd = process.env.PAPERCLIP_HERMES_COMMAND?.trim();
+  return cmd && cmd.length > 0 ? cmd : undefined;
+}
 //// End Neocompany Modification
 
 /**
@@ -331,12 +341,18 @@ export async function seedDefaultAgentsForCompany(
         ? {
             // Provider `openai-codex` = ChatGPT Pro OAuth, no API key —
             // same auth model as the openclaw_gateway path. `model` is
-            // left unset so Hermes uses its configured Codex default.
+            // left unset so Hermes uses its config.yaml Codex default.
             // HERMES_HOME is NOT set here: the registry wrapper injects it
             // per (company, user, agent) at runtime.
             provider: "openai-codex",
             persistSession: true,
             timeoutSec: 300,
+            // Point at the venv-installed hermes binary when it's not on
+            // the service PATH (PAPERCLIP_HERMES_COMMAND). Omitted → adapter
+            // keeps its bare "hermes" default.
+            ...(resolveHermesCommand()
+              ? { hermesCommand: resolveHermesCommand() }
+              : {}),
             // Kept so materializeBundleForNewAgent still writes the
             // onboarding-assets bundle (AGENTS.md) for this seed.
             instructionsTemplate: spec.instructionsTemplate,
