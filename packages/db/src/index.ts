@@ -33,3 +33,9 @@ export {
 export { issueRelations } from "./schema/issue_relations.js";
 export { issueReferenceMentions } from "./schema/issue_reference_mentions.js";
 export * from "./schema/index.js";
+
+//// Neocompany Modification — re-export common drizzle query helpers
+//// so repo-root scripts (which have no workspace node_modules and can't
+//// resolve "drizzle-orm" directly) can build queries via @paperclipai/db.
+export { eq, and, or, inArray, sql, desc, asc } from "drizzle-orm";
+//// End Neocompany Modification
