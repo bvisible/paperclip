@@ -130,6 +130,9 @@ import { buildExternalAdapters } from "./plugin-loader.js";
 import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
+//// Neocompany Modification — per-(company,user,agent) HERMES_HOME isolation
+import { ensureHermesHome } from "../services/hermes-isolated-agents.js";
+//// End Neocompany Modification
 
 function readConfiguredCommand(config: Record<string, unknown>, fallback: string): string {
   const value = typeof config.command === "string" ? config.command.trim() : "";
@@ -403,10 +406,55 @@ const piLocalAdapter: ServerAdapterModule = {
 // intentional until hermes ships a matching AdapterExecutionContext type.
 const executeHermesLocal = hermesExecute as unknown as ServerAdapterModule["execute"];
 
+//// Neocompany Modification — resolve + inject per-run HERMES_HOME
+// The hermes_local adapter stores persistent memory under ~/.hermes by
+// default — a single global path shared by every agent + company. We
+// resolve a per-(company, user, agent) HERMES_HOME and inject it into
+// adapterConfig.env so memory never leaks between clients, nor between
+// users of the same client. `userId` comes from ctx.context.actorUserId
+// (propagated into run.contextSnapshot by plugin-host-services patch #2);
+// runs with no human actor (scheduled heartbeats, task assignments) fall
+// back to the `_system` bucket. No-op when PAPERCLIP_HERMES_ISOLATED != 1.
+async function injectHermesHome<
+  T extends {
+    agent: { id: string; companyId: string; adapterConfig?: unknown };
+    context?: Record<string, unknown>;
+  },
+>(ctx: T): Promise<T> {
+  const actorUserId =
+    typeof ctx.context?.actorUserId === "string" ? ctx.context.actorUserId : null;
+  const home = await ensureHermesHome(ctx.agent.companyId, actorUserId, ctx.agent.id);
+  if (!home) return ctx;
+  const existingConfig =
+    typeof ctx.agent.adapterConfig === "object" && ctx.agent.adapterConfig !== null
+      ? (ctx.agent.adapterConfig as Record<string, unknown>)
+      : {};
+  const existingEnv =
+    typeof existingConfig.env === "object" &&
+    existingConfig.env !== null &&
+    !Array.isArray(existingConfig.env)
+      ? (existingConfig.env as Record<string, string>)
+      : {};
+  return {
+    ...ctx,
+    agent: {
+      ...ctx.agent,
+      adapterConfig: {
+        ...existingConfig,
+        env: { ...existingEnv, HERMES_HOME: home },
+      },
+    },
+  };
+}
+//// End Neocompany Modification
+
 const hermesLocalAdapter: ServerAdapterModule = {
   type: "hermes_local",
   execute: async (ctx) => {
-    const normalizedCtx = normalizeHermesConfig(ctx);
+    //// Neocompany Modification — isolate Hermes memory per (company, user, agent)
+    const isolatedCtx = await injectHermesHome(ctx);
+    //// End Neocompany Modification
+    const normalizedCtx = normalizeHermesConfig(isolatedCtx);
     if (!normalizedCtx.authToken) return executeHermesLocal(normalizedCtx);
 
     const existingConfig = (normalizedCtx.agent.adapterConfig ?? {}) as Record<string, unknown>;
