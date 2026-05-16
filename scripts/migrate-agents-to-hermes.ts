@@ -78,6 +78,16 @@ interface MigrationOutcome {
   detail: string;
 }
 
+// `hermes claw migrate` exits 0 even when its underlying Python script is
+// missing — it just prints "Migration script not found." and returns. If we
+// trusted that exit code we would mark every agent as "migrated" and then
+// `--apply` would flip the DB row WITHOUT having actually copied the
+// OpenClaw memory, silently destroying the agent's history.
+// We sniff the output for the known marker and surface it as an error so the
+// outer try/catch marks the agent as `failed` and `--apply` keeps the DB
+// untouched.
+const MIGRATION_SCRIPT_MISSING_MARKER = "Migration script not found";
+
 async function runHermesClawMigrate(
   source: string,
   hermesHome: string,
@@ -91,7 +101,15 @@ async function runHermesClawMigrate(
     maxBuffer: 16 * 1024 * 1024,
     timeout: 10 * 60_000,
   });
-  return [stdout, stderr].filter(Boolean).join("\n").trim();
+  const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
+  if (combined.includes(MIGRATION_SCRIPT_MISSING_MARKER)) {
+    throw new Error(
+      `hermes claw migrate skill not installed (openclaw-migration / openclaw_to_hermes.py missing) — ` +
+        `running --apply would flip adapterType without copying OpenClaw memory. ` +
+        `Install the skill on the prod box before retrying.`,
+    );
+  }
+  return combined;
 }
 
 function hermesAdapterConfig(previous: Record<string, unknown>): Record<string, unknown> {
