@@ -44,15 +44,12 @@
  *   tsx scripts/migrate-agents-to-hermes.ts --company <uuid> --apply
  */
 
-import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { cp, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { agents, companies, createDb, eq } from "../packages/db/src/index.js";
 import { loadConfig } from "../server/src/config.js";
 import { resolveHermesHome } from "../server/src/services/hermes-isolated-agents.js";
-
-const execFileAsync = promisify(execFile);
 
 function parseFlag(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -67,7 +64,6 @@ function hasFlag(name: string): boolean {
 
 const APPLY = hasFlag("--apply");
 const ONLY_COMPANY = parseFlag("--company");
-const HERMES_CMD = process.env.PAPERCLIP_HERMES_COMMAND?.trim() || "hermes";
 const WORKSPACE_ROOT =
   process.env.OPENCLAW_ISOLATED_WORKSPACE_ROOT || "/home/ubuntu/.openclaw/workspaces";
 
@@ -78,38 +74,116 @@ interface MigrationOutcome {
   detail: string;
 }
 
-// `hermes claw migrate` exits 0 even when its underlying Python script is
-// missing — it just prints "Migration script not found." and returns. If we
-// trusted that exit code we would mark every agent as "migrated" and then
-// `--apply` would flip the DB row WITHOUT having actually copied the
-// OpenClaw memory, silently destroying the agent's history.
-// We sniff the output for the known marker and surface it as an error so the
-// outer try/catch marks the agent as `failed` and `--apply` keeps the DB
-// untouched.
-const MIGRATION_SCRIPT_MISSING_MARKER = "Migration script not found";
+interface CopyPlanEntry {
+  src: string;
+  dst: string;
+  kind: "file" | "dir";
+  bytes: number;
+}
 
-async function runHermesClawMigrate(
-  source: string,
-  hermesHome: string,
-  dryRun: boolean,
-): Promise<string> {
-  const args = ["claw", "migrate", "--source", source];
-  if (dryRun) args.push("--dry-run");
-  else args.push("--yes");
-  const { stdout, stderr } = await execFileAsync(HERMES_CMD, args, {
-    env: { ...process.env, HERMES_HOME: hermesHome },
-    maxBuffer: 16 * 1024 * 1024,
-    timeout: 10 * 60_000,
-  });
-  const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
-  if (combined.includes(MIGRATION_SCRIPT_MISSING_MARKER)) {
-    throw new Error(
-      `hermes claw migrate skill not installed (openclaw-migration / openclaw_to_hermes.py missing) — ` +
-        `running --apply would flip adapterType without copying OpenClaw memory. ` +
-        `Install the skill on the prod box before retrying.`,
-    );
+// We initially tried delegating to `hermes claw migrate` (upstream), but its
+// `openclaw_to_hermes.py` only understands a standard `~/.openclaw/` install
+// root with `config.yaml`/`state.db`/`profiles/`. Our adapter writes per-agent
+// workspaces under `~/.openclaw/workspaces/{companyId}-{role}/` with a much
+// simpler layout (SOUL.md, MEMORY.md, memory/*.md, AGENTS.md, IDENTITY.md…),
+// and the upstream script reports "Nothing to migrate" on them.
+// Discovery: 2026-05-16 dry-run on Reed Blake — see Obsidian
+// Neocompany/fork/plan-migration-hermes.md.
+//
+// We do the copy ourselves with a small, explicit mapping that survives a
+// future Hermes upgrade.
+const TOP_LEVEL_KEEP = [
+  "AGENTS.md",
+  "IDENTITY.md",
+  "USER.md",
+  "TOOLS.md",
+  "BOOTSTRAP.md",
+  "HEARTBEAT.md",
+  "DREAMS.md",
+] as const;
+
+async function buildCopyPlan(source: string, hermesHome: string): Promise<CopyPlanEntry[]> {
+  const plan: CopyPlanEntry[] = [];
+
+  const soulSrc = join(source, "SOUL.md");
+  if (existsSync(soulSrc)) {
+    const dstSoul = join(hermesHome, "SOUL.md");
+    // Hermes seeds its own SOUL.md the first time the agent runs. If we have
+    // never run the agent on Hermes yet (no file) we ship the OpenClaw soul as
+    // the seed. Otherwise we file it under imported-from-openclaw/ so the
+    // Hermes soul stays authoritative.
+    const dst = existsSync(dstSoul)
+      ? join(hermesHome, "imported-from-openclaw", "SOUL.md")
+      : dstSoul;
+    plan.push({ src: soulSrc, dst, kind: "file", bytes: statSync(soulSrc).size });
   }
-  return combined;
+
+  const memorySrc = join(source, "MEMORY.md");
+  if (existsSync(memorySrc)) {
+    plan.push({
+      src: memorySrc,
+      dst: join(hermesHome, "memories", "openclaw-MEMORY.md"),
+      kind: "file",
+      bytes: statSync(memorySrc).size,
+    });
+  }
+
+  const memoryDirSrc = join(source, "memory");
+  if (existsSync(memoryDirSrc) && statSync(memoryDirSrc).isDirectory()) {
+    const dstDir = join(hermesHome, "memories", "openclaw");
+    const size = await dirSize(memoryDirSrc);
+    plan.push({ src: memoryDirSrc, dst: dstDir, kind: "dir", bytes: size });
+  }
+
+  for (const file of TOP_LEVEL_KEEP) {
+    const src = join(source, file);
+    if (existsSync(src)) {
+      plan.push({
+        src,
+        dst: join(hermesHome, "imported-from-openclaw", file),
+        kind: "file",
+        bytes: statSync(src).size,
+      });
+    }
+  }
+  return plan;
+}
+
+async function dirSize(dir: string): Promise<number> {
+  // Lightweight recursive sum — workspaces stay well under a few MB.
+  const { readdir } = await import("node:fs/promises");
+  let total = 0;
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) total += await dirSize(p);
+    else if (entry.isFile()) total += (await stat(p)).size;
+  }
+  return total;
+}
+
+function formatPlan(plan: CopyPlanEntry[]): string {
+  if (plan.length === 0) return "        (nothing to migrate)";
+  const totalBytes = plan.reduce((sum, e) => sum + e.bytes, 0);
+  const lines = plan.map(
+    (e) => `        ${e.kind === "dir" ? "▸" : "·"} ${e.src} → ${e.dst} (${formatBytes(e.bytes)})`,
+  );
+  lines.push(`        total: ${plan.length} entr${plan.length === 1 ? "y" : "ies"}, ${formatBytes(totalBytes)}`);
+  return lines.join("\n");
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / 1024 / 1024).toFixed(2)}MB`;
+}
+
+async function applyCopyPlan(plan: CopyPlanEntry[]): Promise<void> {
+  for (const entry of plan) {
+    const dstParent = entry.dst.substring(0, entry.dst.lastIndexOf("/"));
+    await mkdir(dstParent, { recursive: true });
+    await cp(entry.src, entry.dst, { recursive: entry.kind === "dir", force: true });
+  }
 }
 
 function hermesAdapterConfig(previous: Record<string, unknown>): Record<string, unknown> {
@@ -207,29 +281,28 @@ async function main() {
         console.log(`  ▸ ${agent.name} (${agent.role})`);
         console.log(`      source:      ${workspace}`);
         console.log(`      HERMES_HOME: ${hermesHome}`);
-        const preview = await runHermesClawMigrate(workspace, hermesHome, /* dryRun */ true);
-        console.log(
-          "      [dry-run preview]\n" +
-            preview.split("\n").map((l) => `        ${l}`).join("\n"),
-        );
+        const plan = await buildCopyPlan(workspace, hermesHome);
+        console.log("      [copy plan]\n" + formatPlan(plan));
+
+        if (plan.length === 0) {
+          // Empty workspace — nothing to migrate. We still flip the DB row on
+          // --apply since the agent is supposed to move to Hermes anyway.
+          console.log("      (workspace empty — no files to copy)");
+        }
 
         if (!APPLY) {
-          console.log(`      (dry-run) WOULD set adapterType=hermes_local + rewrite adapterConfig`);
+          console.log(`      (dry-run) WOULD copy ${plan.length} entries + set adapterType=hermes_local`);
           outcomes.push({
             agentId: agent.id,
             name: agent.name,
             status: "migrated",
-            detail: "dry-run only",
+            detail: `dry-run only (${plan.length} entries)`,
           });
           continue;
         }
 
-        // Real migration: run hermes claw migrate for effect, then flip the DB row.
-        const applied = await runHermesClawMigrate(workspace, hermesHome, /* dryRun */ false);
-        console.log(
-          "      [applied]\n" +
-            applied.split("\n").map((l) => `        ${l}`).join("\n"),
-        );
+        await applyCopyPlan(plan);
+        console.log(`      ✓ Copied ${plan.length} entries into ${hermesHome}`);
         const newConfig = hermesAdapterConfig(
           (agent.adapterConfig ?? {}) as Record<string, unknown>,
         );
@@ -242,7 +315,7 @@ async function main() {
           agentId: agent.id,
           name: agent.name,
           status: "migrated",
-          detail: "applied",
+          detail: `applied (${plan.length} entries)`,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
