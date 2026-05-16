@@ -9,39 +9,54 @@
  * For each openclaw_gateway agent it:
  *   1. Resolves the agent's isolated OpenClaw workspace
  *      (`{OPENCLAW_ISOLATED_WORKSPACE_ROOT}/{companyId}-{role}`).
- *   2. Runs `hermes claw migrate --source <workspace>` with HERMES_HOME
- *      pointed at the agent's `_system` bucket — Hermes' own command parses
- *      MEMORY.md / SOUL.md / skills and merges them. The accumulated OpenClaw
- *      memory had no per-user dimension, so it lands in the `_system` bucket;
- *      post-migration chat runs get their own `{userId}` bucket (resolved at
- *      runtime by the registry wrapper).
+ *   2. Copies the workspace memory files into the agent's HERMES_HOME
+ *      (`_system` bucket — accumulated OpenClaw memory had no per-user
+ *      dimension, so it lands in `_system`; post-migration chat runs get
+ *      their own `{userId}` bucket via the registry wrapper at runtime).
+ *      Mapping (handled by buildCopyPlan):
+ *        SOUL.md            → HERMES_HOME/SOUL.md (or imported-from-openclaw/
+ *                              SOUL.md if Hermes already seeded one)
+ *        MEMORY.md          → HERMES_HOME/memories/openclaw-MEMORY.md
+ *        memory/**          → HERMES_HOME/memories/openclaw/**
+ *        AGENTS.md, IDENTITY.md, USER.md, TOOLS.md, BOOTSTRAP.md,
+ *        HEARTBEAT.md, DREAMS.md → HERMES_HOME/imported-from-openclaw/*
+ *      Skipped: .git/, .openclaw/, paperclip-claimed-api-key.json
+ *
+ *      Why not `hermes claw migrate`? Upstream's openclaw_to_hermes.py only
+ *      understands a full ~/.openclaw install root (config.yaml, state.db,
+ *      profiles/). Our adapter writes a flat per-agent workspace, so the
+ *      upstream tool reports "Nothing to migrate". See plan-migration-hermes.
  *   3. Updates the agent row: adapterType → "hermes_local", adapterConfig →
  *      the hermes shape (provider openai-codex, persistSession, timeoutSec,
  *      hermesCommand). HERMES_HOME is NOT baked into adapterConfig — the
  *      registry wrapper resolves it per (company, user, agent) at runtime.
  *
  * SAFETY:
- *   - Dry-run by default. Pass `--apply` to actually run the migration +
- *     write the DB. Without it the script only previews (`hermes claw
- *     migrate --dry-run`) and prints the DB changes it WOULD make.
+ *   - Dry-run by default. `--apply` to actually copy + write the DB.
  *   - Idempotent: agents already on `hermes_local` are skipped.
  *   - `--company <id>` scopes to one company; default = all companies.
+ *   - `--agent <id>` further scopes to a single agent (test rollout).
+ *   - `--limit N` caps the number of agents migrated per company (progressive
+ *     rollout — start with --limit 1 to validate one before the rest).
  *   - A workspace that doesn't exist on disk is skipped with a warning (the
  *     agent stays on openclaw_gateway — re-run after fixing).
  *
- * Must run ON the prod box (needs the DB, the OpenClaw workspaces, and the
- * `hermes` binary). Env:
- *   PAPERCLIP_HERMES_COMMAND               (default: "hermes")
+ * Must run ON the prod box (needs the DB and the OpenClaw workspaces). Env:
+ *   PAPERCLIP_HERMES_COMMAND               (default: "hermes" — baked into
+ *                                            new adapterConfig but unused by
+ *                                            the copy itself)
  *   OPENCLAW_ISOLATED_WORKSPACE_ROOT       (default: "/home/ubuntu/.openclaw/workspaces")
  *   PAPERCLIP_HERMES_HOME_ROOT             (default: "/var/lib/paperclip/hermes")
  *   PAPERCLIP_HERMES_ISOLATED=1            (must be set for HERMES_HOME resolution)
  *   DATABASE_URL                           (else loadConfig() / embedded pg)
  *
  * Usage:
- *   tsx scripts/migrate-agents-to-hermes.ts                      # dry-run, all
- *   tsx scripts/migrate-agents-to-hermes.ts --company <uuid>     # dry-run, one
- *   tsx scripts/migrate-agents-to-hermes.ts --apply              # real, all
- *   tsx scripts/migrate-agents-to-hermes.ts --company <uuid> --apply
+ *   tsx scripts/migrate-agents-to-hermes.ts                              # dry-run all
+ *   tsx scripts/migrate-agents-to-hermes.ts --company <uuid>             # dry-run one
+ *   tsx scripts/migrate-agents-to-hermes.ts --company <uuid> --limit 1   # dry-run, first agent only
+ *   tsx scripts/migrate-agents-to-hermes.ts --apply                      # real, all
+ *   tsx scripts/migrate-agents-to-hermes.ts --company <uuid> --limit 1 --apply  # real, one agent
+ *   tsx scripts/migrate-agents-to-hermes.ts --agent <uuid> --apply       # real, exact agent
  */
 
 import { existsSync, statSync } from "node:fs";
@@ -64,6 +79,9 @@ function hasFlag(name: string): boolean {
 
 const APPLY = hasFlag("--apply");
 const ONLY_COMPANY = parseFlag("--company");
+const ONLY_AGENT = parseFlag("--agent");
+const LIMIT_RAW = parseFlag("--limit");
+const LIMIT = LIMIT_RAW ? Math.max(1, Number.parseInt(LIMIT_RAW, 10) || 0) : null;
 const WORKSPACE_ROOT =
   process.env.OPENCLAW_ISOLATED_WORKSPACE_ROOT || "/home/ubuntu/.openclaw/workspaces";
 
@@ -246,11 +264,27 @@ async function main() {
       .from(agents)
       .where(eq(agents.companyId, company.id));
 
-    const openclawAgents = agentRows.filter((a) => a.adapterType === "openclaw_gateway");
+    let openclawAgents = agentRows.filter((a) => a.adapterType === "openclaw_gateway");
     const alreadyHermes = agentRows.filter((a) => a.adapterType === "hermes_local");
+    const eligibleTotal = openclawAgents.length;
+    if (ONLY_AGENT) {
+      openclawAgents = openclawAgents.filter((a) => a.id === ONLY_AGENT);
+    }
+    if (LIMIT !== null) {
+      openclawAgents = openclawAgents.slice(0, LIMIT);
+    }
+    const filterDesc = [
+      ONLY_AGENT ? `agent=${ONLY_AGENT}` : null,
+      LIMIT !== null ? `limit=${LIMIT}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
     console.log(
       `\n── company ${company.name} (${company.id}) — ` +
-        `${openclawAgents.length} openclaw, ${alreadyHermes.length} already hermes ──`,
+        `${openclawAgents.length}/${eligibleTotal} openclaw selected, ` +
+        `${alreadyHermes.length} already hermes` +
+        (filterDesc ? ` (${filterDesc})` : "") +
+        ` ──`,
     );
 
     for (const agent of openclawAgents) {
@@ -358,6 +392,13 @@ async function main() {
   if (!APPLY) {
     console.log("\nThis was a DRY RUN. Re-run with --apply to perform the migration.");
   }
+
+  // Close the postgres pool so the process exits cleanly. Without this, tsx
+  // hangs forever and CI invocations end with timeout (exit 124).
+  const closable = db as unknown as {
+    $client?: { end?: (opts: { timeout?: number }) => Promise<unknown> };
+  };
+  await closable.$client?.end?.({ timeout: 5 }).catch(() => undefined);
 }
 
 void main().catch((error) => {
