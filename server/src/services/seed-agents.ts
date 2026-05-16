@@ -345,6 +345,10 @@ export async function seedDefaultAgentsForCompany(
             // HERMES_HOME is NOT set here: the registry wrapper injects it
             // per (company, user, agent) at runtime.
             provider: "openai-codex",
+            // hermes-paperclip-adapter defaults to "anthropic/claude-sonnet-4"
+            // which Codex rejects (wrong namespace). Pin gpt-5.5 explicitly
+            // to match the HERMES_HOME config.yaml the registry seeds.
+            model: "gpt-5.5",
             persistSession: true,
             timeoutSec: 300,
             // Point at the venv-installed hermes binary when it's not on
@@ -353,6 +357,14 @@ export async function seedDefaultAgentsForCompany(
             ...(resolveHermesCommand()
               ? { hermesCommand: resolveHermesCommand() }
               : {}),
+            // --yolo bypasses Hermes' interactive approval prompts for
+            // shell/terminal tools. In a non-interactive chat invocation
+            // (`hermes chat -q ... -Q`) nobody is there to confirm — without
+            // --yolo every tool call comes back "BLOCKED: User denied" and
+            // the model falls back to silence (paperclip-chat then renders
+            // its "Je n'ai pas réussi à traiter cette demande" placeholder).
+            // Discovered 2026-05-16 via the agent.log of a Scout run.
+            extraArgs: ["--yolo"],
             // Kept so materializeBundleForNewAgent still writes the
             // onboarding-assets bundle (AGENTS.md) for this seed.
             instructionsTemplate: spec.instructionsTemplate,

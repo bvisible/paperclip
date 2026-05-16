@@ -3737,6 +3737,12 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           errorCode: updated.errorCode ?? null,
           startedAt: updated.startedAt ? new Date(updated.startedAt).toISOString() : null,
           finishedAt: updated.finishedAt ? new Date(updated.finishedAt).toISOString() : null,
+          //// Neocompany Modification — expose resultJson on terminal status so
+          //// non-streaming adapters (hermes-paperclip-adapter writes a plain
+          //// "session_id:X\n<response>" block, not Claude stream-json) can
+          //// surface their final response to paperclip-chat. The plugin reads
+          //// event.payload.resultJson.result and injects it as a text segment.
+          resultJson: updated.resultJson,
         },
       });
       publishRunLifecyclePluginEvent(updated);

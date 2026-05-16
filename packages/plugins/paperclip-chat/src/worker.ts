@@ -819,6 +819,21 @@ const plugin = definePlugin({
             // Terminal events from the host (run status changes)
             if (event.eventType === "done") {
               activeParser.flush();
+              //// Neocompany Modification — adapters that don't stream Claude
+              //// stream-json (notably hermes-paperclip-adapter, which writes
+              //// "[hermes] ..." lines + a final "session_id: X\n<response>"
+              //// block) leave the parser empty. The host still gets the
+              //// adapter's executionResult.resultJson, which it forwards in
+              //// payload.resultJson. Inject the final text as a synthetic
+              //// "text" segment so the result handler keeps it.
+              const adapterResult =
+                (event.payload?.resultJson as Record<string, unknown> | undefined)?.result ??
+                (event.payload?.resultJson as Record<string, unknown> | undefined)?.summary ??
+                event.payload?.summary;
+              if (typeof adapterResult === "string" && adapterResult.trim().length > 0) {
+                activeHandler({ type: "text", text: adapterResult });
+              }
+              //// End Neocompany Modification
               activeHandler({
                 type: "result",
                 usage: event.payload?.usage as ChatStreamEvent["usage"],
