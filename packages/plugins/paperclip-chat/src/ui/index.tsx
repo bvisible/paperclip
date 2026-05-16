@@ -1144,6 +1144,19 @@ export function ChatPage(_props: PluginPageProps) {
   const selectedThread = threads?.find((t) => t.id === selectedThreadId) ?? null;
   const isStreaming = selectedThread?.status === "running" || sending;
 
+  //// Neocompany Modification — sync selectedAdapter with what's actually available
+  // The useState default is "openclaw_gateway" but on a fleet migrated to
+  // hermes_local that adapter is gone — without this effect, selectedAdapter
+  // stays on a non-available type, the footer falls back to its "Claude" label
+  // via the ?? in line above, and sendMessage POSTs adapterType=openclaw_gateway
+  // which 502s because no agent matches. Sync once adapters load.
+  useEffect(() => {
+    if (availableAdapters.length === 0) return;
+    const isValid = availableAdapters.some((a) => a.type === selectedAdapter);
+    if (!isValid) setSelectedAdapter(availableAdapters[0].type);
+  }, [availableAdapters, selectedAdapter]);
+  //// End Neocompany Modification
+
   // Slash command detection
   const slashMatch = input.match(/^\/(\w*)$/);
   const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : null;
