@@ -991,7 +991,12 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
         },
 
         async invoke(agentId: string, companyId: string, opts: { prompt: string; reason?: string }) {
-          return callHost("agents.invoke", { agentId, companyId, prompt: opts.prompt, reason: opts.reason });
+          //// Neocompany Modification — spread opts so any future field added to
+          //// the public PluginAgents.invoke type auto-forwards. Hand-listing
+          //// fields here is how `sessions.sendMessage` silently dropped
+          //// actorUserId for months (fixed in c5cc86ff, 2026-05-18).
+          return callHost("agents.invoke", { agentId, companyId, ...opts });
+          //// End Neocompany Modification
         },
 
         managed: {
@@ -1010,12 +1015,14 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
 
         sessions: {
           async create(agentId: string, companyId: string, opts?: { taskKey?: string; reason?: string }) {
+            //// Neocompany Modification — spread opts so any future field added to
+            //// the public PluginAgentSessionsClient.create type auto-forwards.
             return callHost("agents.sessions.create", {
               agentId,
               companyId,
-              taskKey: opts?.taskKey,
-              reason: opts?.reason,
+              ...(opts ?? {}),
             });
+            //// End Neocompany Modification
           },
 
           async list(agentId: string, companyId: string) {
@@ -1037,24 +1044,27 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             noraTraceId?: string | null;
             //// End Neocompany Modification
           }) {
-            if (opts.onEvent) {
-              sessionEventCallbacks.set(sessionId, opts.onEvent);
+            //// Neocompany Modification — strip onEvent (not serializable across
+            //// JSON-RPC) and spread the rest so any field added to the public
+            //// PluginAgentSessionsClient.sendMessage type auto-forwards. Hand-
+            //// listing fields here is what silently dropped actorUserId/
+            //// noraTraceId until 2026-05-18 (commit c5cc86ff). Keep the spread
+            //// pattern; never enumerate fields by hand again.
+            const { onEvent, ...forwardable } = opts;
+            if (onEvent) {
+              sessionEventCallbacks.set(sessionId, onEvent);
             }
             try {
               return await callHost("agents.sessions.sendMessage", {
                 sessionId,
                 companyId,
-                prompt: opts.prompt,
-                reason: opts.reason,
-                //// Neocompany Modification — forward auxiliary scoping fields
-                actorUserId: opts.actorUserId,
-                noraTraceId: opts.noraTraceId,
-                //// End Neocompany Modification
+                ...forwardable,
               });
             } catch (err) {
               sessionEventCallbacks.delete(sessionId);
               throw err;
             }
+            //// End Neocompany Modification
           },
 
           async close(sessionId: string, companyId: string) {
