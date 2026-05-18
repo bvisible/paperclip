@@ -672,6 +672,17 @@ export async function startServer(): Promise<StartedServer> {
       logger.error({ err }, "startup reconciliation of persisted runtime services failed");
     });
 
+  //// Neoffice Modification: osiris-boot-maintenance
+  //// Why: Boot wires up the 3 retention/maintenance services that bound
+  ////      growth on small Neoffice instances (Osiris 4 GB RAM scenario).
+  ////      applyMaintenanceIndexes recreates a bounded GIN index +
+  ////      partial heartbeat_runs index. startPluginLogRetention was
+  ////      dormant upstream — Neoffice wires it. startActivityLogRetention
+  ////      is Neoffice-only (cf services/activity-log-retention.ts).
+  ////      All non-fatal: a failure logs and continues so a hiccup never
+  ////      aborts boot.
+  //// Date: 2026-05-07
+  //// Refs: NORA #27 — Osiris RAM/swap saturation rootcause (commit 2323fde7)
   // Maintenance: idempotent index optimisations + retention sweeps for the
   // activity_log and plugin_logs tables. Both retention services log only
   // when they actually delete rows, and they swallow errors so a transient
@@ -681,6 +692,7 @@ export async function startServer(): Promise<StartedServer> {
   });
   startPluginLogRetention(db as any);
   startActivityLogRetention(db as any);
+  //// End Neoffice Modification: osiris-boot-maintenance
 
   if (config.heartbeatSchedulerEnabled) {
     const heartbeat = heartbeatService(db as any, { pluginWorkerManager });

@@ -1,4 +1,13 @@
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: All auth fetch calls below must prefix the URL with API_BASE
+////      (Vite-resolved from PAPERCLIP_BASE_URL) so they hit /paperclip/auth/*
+////      on Neoffice tenants instead of /auth/* which 404s through nginx.
+////      See ui/src/api/client.ts for API_BASE definition + import comment
+////      in ui/src/context/LiveUpdatesProvider.tsx for full rationale.
+//// Date: 2026-05-04
+//// Refs: NORA #26 [[NORA/26-quickchat-mobile-paperclip]], NORA #27 Phase R-V6
 import { API_BASE } from "./client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import {
   authSessionSchema,
   currentUserProfileSchema,

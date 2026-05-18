@@ -1,3 +1,15 @@
+//// Neoffice Modification: osiris-maintenance-indexes
+//// Why: New service ONLY in the Neoffice fork. Drops + recreates the GIN
+////      trigram index on issue_comments.body with a `WHERE length(body)
+////      <= 16384` predicate to bound index bloat from large plugin
+////      bodies (1.1 GB / 59 rows observed on Osiris). Also creates a
+////      partial index on heartbeat_runs(status) to make the /health
+////      tick query (SELECT count WHERE status IN ('queued','running'))
+////      sargable. Idempotent, runs at boot, failures non-fatal.
+////      Upstream has no equivalent — small instance optimisation.
+//// Date: 2026-05-07
+//// Refs: NORA #27 — Osiris RAM/swap saturation rootcause (commit 2323fde7)
+//// (Entire file is NeoCompany-only; closing marker at EOF.)
 import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
@@ -75,3 +87,4 @@ export async function applyMaintenanceIndexes(db: Db): Promise<void> {
     }
   }
 }
+//// End Neoffice Modification: osiris-maintenance-indexes

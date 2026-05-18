@@ -338,6 +338,24 @@ function resolveClaimedApiKeyPath(value: unknown): string {
   return nonEmpty(value) ?? DEFAULT_CLAIMED_API_KEY_PATH;
 }
 
+//// Neoffice Modification: openclaw-gateway-clienttools-phase2.2
+//// Why: NeoCompany-fork only. The openclaw-gateway adapter exposes
+////      Paperclip plugin tools (nora-frappe-tools etc.) as OpenAI-style
+////      `clientTools` in the agent.run payload, so Qwen3.6 in OpenClaw
+////      can invoke them via native `tool_calls` instead of emitting
+////      <tool_call> text or shelling to curl. Required for NORA's
+////      delegate_to_specialist + business tool dispatch pattern.
+////      Spans through the wakeRun function — successive sections are
+////      tagged inline with "NORA Phase X" comments; this block marker
+////      indicates the entire 1400+ lines insertion is NeoCompany-only.
+////      Sub-phases: Phase 4 (sync executor descriptor), Phase 5 (per-agent
+////      tool filter), Phase 6 (Phase 2.2 roundtrip loop removed with
+////      patch 7 sync), Phase 7 (prompt size optimisation).
+//// Date: 2026-05-10 (rapatriement Osiris)
+//// Refs: NORA #19 [[NORA/19-function-calls-natifs/04-architecture]],
+////       [[NORA/22-paperclip-only-evaluation]]. End marker at the
+////       function block exit (search "End Neoffice Modification:
+////       openclaw-gateway-clienttools-phase2.2").
 // =============================================================================
 // NORA function-calls native — Phase 2.2
 // =============================================================================
@@ -366,6 +384,11 @@ function resolveClaimedApiKeyPath(value: unknown): string {
 // is unreachable, the function returns null/empty arrays and the run proceeds
 // without clientTools — falling back to the legacy behaviour rather than
 // failing the wake.
+//// End Neoffice Modification: openclaw-gateway-clienttools-phase2.2
+//// (Sub-sections below — fetchAvailableTools, executeClientTool,
+////  wakeRun client-tools roundtrip — are NeoCompany-only too and are
+////  tagged inline with their "NORA Phase X" comments. Search for those
+////  to find each sub-block.)
 
 function expandHomePath(path: string): string {
   if (path.startsWith("~/")) {

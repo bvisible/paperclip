@@ -1,3 +1,15 @@
+//// Neoffice Modification: osiris-activity-log-retention
+//// Why: New service ONLY in the Neoffice fork. activity_log on Osiris
+////      reached 1 GB / 837 rows (1.2 MB/row) because the `details` JSONB
+////      embeds full referenced-issue lists per comment. Plugin-log
+////      retention service exists upstream but was never paired with an
+////      activity_log equivalent. TTL 30d (env PAPERCLIP_ACTIVITY_LOG_
+////      RETENTION_DAYS), batch 10k rows, sweep every 6h. Upstream has
+////      no equivalent — small instance optimisation. Bounded growth
+////      lets Osiris-class tenants survive months without manual cleanup.
+//// Date: 2026-05-07
+//// Refs: NORA #27 — Osiris RAM/swap saturation rootcause (commit 2323fde7)
+//// (Entire file is NeoCompany-only; closing marker at EOF.)
 import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
@@ -119,3 +131,4 @@ export function startActivityLogRetention(db: Db): () => void {
 
   return () => clearInterval(timer);
 }
+//// End Neoffice Modification: osiris-activity-log-retention

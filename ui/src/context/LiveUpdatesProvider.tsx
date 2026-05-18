@@ -1,7 +1,16 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type { Agent, Issue, IssueComment, LiveEvent } from "@paperclipai/shared";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: Paperclip is served under /paperclip/ behind nginx on Neoffice
+////      tenants (same-domain coexistence with Frappe). All client-side
+////      URLs must prefix with API_BASE (set by Vite from PAPERCLIP_BASE_URL).
+////      Without this the WebSocket connect URL on line ~963 hits
+////      wss://host/companies/... which 404s through nginx routing.
+//// Date: 2026-05-04
+//// Refs: NORA #26 [[NORA/26-quickchat-mobile-paperclip]], NORA #27 Phase R-V6
 import { API_BASE } from "../api/client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import type { RunForIssue } from "../api/activity";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import type { CompanyUserDirectoryResponse } from "../api/access";
@@ -960,7 +969,14 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
     const connect = () => {
       if (closed) return;
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      //// Neoffice Modification: vite-base-paperclip-prefix
+      //// Why: WebSocket URL must include the API_BASE prefix on Neoffice
+      ////      tenants where Paperclip is served under /paperclip/. See
+      ////      import comment above for full rationale.
+      //// Date: 2026-05-04
+      //// Refs: NORA #26, NORA #27 Phase R-V6
       const url = `${protocol}://${window.location.host}${API_BASE}/companies/${encodeURIComponent(liveCompanyId)}/events/ws`;
+      //// End Neoffice Modification: vite-base-paperclip-prefix
       const nextSocket = new WebSocket(url);
       socket = nextSocket;
 

@@ -45,6 +45,17 @@ export type MigrationState =
       reason: "no-migration-journal-empty-db" | "no-migration-journal-non-empty-db" | "pending-migrations";
     };
 
+//// Neoffice Modification: osiris-db-pool-config
+//// Why: postgres.js defaults are max=10, idle_timeout=0 which means idle
+////      backends are never reaped. On Osiris (4 GB RAM) the pool stabilised
+////      at 9 idle backends (~630 MB Postgres backend RSS) and never came
+////      back down, contributing to swap saturation observed 2026-05-07.
+////      Tight pool + idle reaping + max lifetime + connect timeout caps
+////      keep memory bounded on small Neoffice instances. All values are
+////      env-overridable (PAPERCLIP_DB_*) so NeoCompany prod can override
+////      to its own sizing without forking again.
+//// Date: 2026-05-07
+//// Refs: NORA #27 — Osiris RAM/swap saturation rootcause analysis (commit 2323fde7)
 // Pool sizing for the application client.
 // Defaults to a tight pool with idle connection reaping so the postgres.js
 // client does not retain idle backends indefinitely (postgres.js's default
@@ -71,6 +82,7 @@ export function createDb(url: string) {
   });
   return drizzlePg(sql, { schema });
 }
+//// End Neoffice Modification: osiris-db-pool-config
 
 export async function getPostgresDataDirectory(url: string): Promise<string | null> {
   const sql = createUtilitySql(url);

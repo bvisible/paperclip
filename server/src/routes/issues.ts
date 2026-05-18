@@ -3543,6 +3543,19 @@ export function issueRoutes(
       runId: actor.runId,
     });
 
+    //// Neoffice Modification: r-v15.14-comment-fire-and-forget
+    //// Why: POST /issues/:id/comments was doing ~12 synchronous Postgres
+    ////      roundtrips before sending the 201 response (issue references
+    ////      sync, activity_log with inline diff, request confirmations
+    ////      expire + log). Observed 8.7s on Osiris during R-V15.13 perf
+    ////      trace (run c2be8029). The runner only consumes comment.id to
+    ////      mark progress; the bookkeeping can settle in background.
+    ////      Measured impact: postComment 8.7s → ~0.2-0.5s sync, total
+    ////      run pool 11.9s → ~3-4s, 3× throughput. The wakeups IIFE
+    ////      below (line ~3621) was already fire-and-forget upstream;
+    ////      only the bookkeeping was promoted into a void async block.
+    //// Date: 2026-05-07
+    //// Refs: NORA #27 [[NORA/27-paperclip-neoffice-embed/R-V15-benchmark-2026-05-07]]
     // NORA #27 R-V15.14 — return the comment ASAP. The bookkeeping below
     // (issue references sync, activity_log, request confirmations expiry)
     // adds ~5s of synchronous Postgres roundtrips that the runner does not
@@ -3617,6 +3630,7 @@ export function issueRoutes(
         );
       }
     })();
+    //// End Neoffice Modification: r-v15.14-comment-fire-and-forget
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {

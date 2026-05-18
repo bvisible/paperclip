@@ -2340,6 +2340,7 @@ export function issueService(db: Db) {
       ]);
       const statsByIssueId = new Map(statsRows.map((row) => [row.issueId, row]));
       const lastActivityByIssueId = new Map(lastActivityRows.map((row) => [row.issueId, row]));
+      //// End Neoffice Modification: nora-issues-skip-last-activity-stats
       //// Neoffice Modification: nora-issues-skip-attention-and-productivity
       //// Why: listIssueBlockerAttentionMap and listIssueProductivityReviewMap
       ////      both scan activity_log (1M+ rows on Osiris) without a LIMIT
