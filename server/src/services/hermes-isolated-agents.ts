@@ -30,7 +30,8 @@
  * for local dev / smoke tests, NOT safe for prod multi-tenant.
  */
 
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** Bucket used when a run has no human actor (scheduled / task-driven runs). */
@@ -85,9 +86,47 @@ export function resolveHermesHome(
 }
 
 /**
+ * Files that each isolated HERMES_HOME must inherit from the default
+ * `~/.hermes/` install. Hermes' `setup` writes both — `auth.json` carries
+ * the Codex OAuth refresh token, `config.yaml` selects provider + model.
+ * Without them every fresh per-(company,user,agent) bucket falls into
+ * "Hermes isn't configured yet" and chat runs end silently.
+ *
+ * The default install path is `~/.hermes/` and is the only authoritative
+ * source — we never re-auth from inside an isolated home.
+ */
+const HERMES_DEFAULT_HOME_FILES = ["auth.json", "config.yaml"] as const;
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function seedHermesHomeCredentials(home: string): Promise<void> {
+  const defaultHome = process.env.HERMES_DEFAULT_HOME?.trim() || join(homedir(), ".hermes");
+  for (const filename of HERMES_DEFAULT_HOME_FILES) {
+    const target = join(home, filename);
+    if (await fileExists(target)) continue;
+    const source = join(defaultHome, filename);
+    if (!(await fileExists(source))) continue;
+    await copyFile(source, target);
+  }
+}
+
+/**
  * Ensure the `HERMES_HOME` directory (and its `memories/` subdir) exists.
  * No-op + returns `null` when isolation is disabled. Returns the resolved
  * path on success so the caller can inject it into the adapter env.
+ *
+ * Also seeds `auth.json` + `config.yaml` from the default `~/.hermes/`
+ * install when they are missing (idempotent). The Hermes CLI uses these
+ * to talk to its provider — a fresh per-(company,user,agent) bucket has
+ * neither, so without this step every chat run aborts with "Hermes isn't
+ * configured yet".
  */
 export async function ensureHermesHome(
   companyId: string,
@@ -97,5 +136,6 @@ export async function ensureHermesHome(
   const home = resolveHermesHome(companyId, userId, agentId);
   if (!home) return null;
   await mkdir(join(home, "memories"), { recursive: true });
+  await seedHermesHomeCredentials(home);
   return home;
 }

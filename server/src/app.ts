@@ -41,6 +41,9 @@ import { accessRoutes } from "./routes/access.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { adapterRoutes } from "./routes/adapters.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
+//// Neocompany Modification — SSE stream bus for plugin worker→UI live events
+import { createPluginStreamBus } from "./services/plugin-stream-bus.js";
+//// End Neocompany Modification
 //// Neocompany Modification — mount the NeoCompany /plugins/.../bridge router
 // Exposes /api/plugins/neocompany-tools/bridge/* (am-i-admin probe, OAuth
 // callbacks, platform config). Without this mount the /admin/* UI redirects
@@ -243,6 +246,12 @@ export async function createApp(
   });
   const hostServiceCleanup = createPluginHostServiceCleanup(lifecycle, hostServicesDisposers);
   let viteHtmlRenderer: ReturnType<typeof createCachedViteHtmlRenderer> | null = null;
+  //// Neocompany Modification — single streamBus instance shared between the
+  //// plugin loader (worker→bus on streams.emit) and the /bridge/stream route
+  //// (bus→SSE client). Without it, the SSE endpoint returns 501 and chat
+  //// runs only update the UI on the persisted message poll, not live.
+  const streamBus = createPluginStreamBus();
+  //// End Neocompany Modification
   const loader = pluginLoader(
     db,
     {
@@ -251,6 +260,9 @@ export async function createApp(
     },
     {
       workerManager,
+      //// Neocompany Modification — pass streamBus to wire worker→SSE fanout
+      streamBus,
+      //// End Neocompany Modification
       eventBus,
       jobScheduler: scheduler,
       jobStore,
@@ -287,7 +299,9 @@ export async function createApp(
       { scheduler, jobStore },
       { workerManager },
       { toolDispatcher },
-      { workerManager },
+      //// Neocompany Modification — provide streamBus to /bridge/stream route
+      { workerManager, streamBus },
+      //// End Neocompany Modification
     ),
   );
   //// Neocompany Modification — NeoCompany plugin bridge (admin probe + OAuth)

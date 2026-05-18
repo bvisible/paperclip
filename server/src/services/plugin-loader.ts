@@ -43,6 +43,9 @@ import { pluginManifestValidator } from "./plugin-manifest-validator.js";
 import { pluginCapabilityValidator } from "./plugin-capability-validator.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import type { PluginWorkerManager, WorkerStartOptions, WorkerToHostHandlers } from "./plugin-worker-manager.js";
+//// Neocompany Modification — SSE stream bus type for runtime services
+import type { PluginStreamBus } from "./plugin-stream-bus.js";
+//// End Neocompany Modification
 import type { PluginEventBus } from "./plugin-event-bus.js";
 import type { PluginJobScheduler } from "./plugin-job-scheduler.js";
 import type { PluginJobStore } from "./plugin-job-store.js";
@@ -223,6 +226,15 @@ export interface PluginInstallOptions {
 export interface PluginRuntimeServices {
   /** Worker process manager for spawning and managing plugin workers. */
   workerManager: PluginWorkerManager;
+  //// Neocompany Modification — wire SSE stream bus into spawned workers
+  /**
+   * Optional pub/sub bus that fans plugin-side `streams.emit`/`streams.open`/
+   * `streams.close` notifications out to SSE clients via the
+   * `/plugins/:pluginId/bridge/stream/:channel` route. When omitted, the
+   * upstream behaviour is preserved (501 on the SSE endpoint, no realtime).
+   */
+  streamBus?: PluginStreamBus;
+  //// End Neocompany Modification
   /** Event bus for registering plugin event subscriptions. */
   eventBus: PluginEventBus;
   /** Job scheduler for registering plugin cron jobs. */
@@ -1811,6 +1823,28 @@ export function pluginLoader(
       // ------------------------------------------------------------------
       // 5. Spawn worker process
       // ------------------------------------------------------------------
+      //// Neocompany Modification — bind worker stream notifications to bus
+      // When a streamBus is provisioned (server/src/app.ts), translate the
+      // worker's streams.open/emit/close JSON-RPC notifications into bus
+      // publishes so the /bridge/stream/:channel SSE route can fan them out
+      // to UI clients. Without this, every paperclip-chat run looks "stuck
+      // in Thinking..." until persistence catches up.
+      const onStreamNotification: WorkerStartOptions["onStreamNotification"] | undefined =
+        runtimeServices?.streamBus
+          ? (method, params) => {
+              const channel = typeof params.channel === "string" ? params.channel : "";
+              const companyId = typeof params.companyId === "string" ? params.companyId : "";
+              if (!channel || !companyId) return;
+              if (method === "streams.open") {
+                runtimeServices.streamBus!.publish(pluginId, channel, companyId, params, "open");
+              } else if (method === "streams.close") {
+                runtimeServices.streamBus!.publish(pluginId, channel, companyId, params, "close");
+              } else if (method === "streams.emit") {
+                runtimeServices.streamBus!.publish(pluginId, channel, companyId, params.event, "message");
+              }
+            }
+          : undefined;
+      //// End Neocompany Modification
       const workerOptions: WorkerStartOptions = {
         entrypointPath: workerEntrypoint,
         manifest,
@@ -1824,6 +1858,9 @@ export function pluginLoader(
           PAPERCLIP_DEPLOYMENT_MODE: instanceInfo.deploymentMode ?? "",
           PAPERCLIP_DEPLOYMENT_EXPOSURE: instanceInfo.deploymentExposure ?? "",
         },
+        //// Neocompany Modification — wire stream notifications to bus
+        onStreamNotification,
+        //// End Neocompany Modification
       };
 
       // Repo-local plugin installs can resolve workspace TS sources at runtime

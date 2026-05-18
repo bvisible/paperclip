@@ -1394,13 +1394,35 @@ export function pluginRoutes(
 
     assertPluginBridgeScope(req, body?.companyId);
 
+    //// Neocompany Modification — inject _actor (parity with /bridge/action)
+    // The legacy /bridge/action route (line ~1219) injects the authenticated
+    // board actor into params._actor so paperclip-chat.createThread can
+    // stamp thread.createdBy. The shorter /actions/:key route (this one) is
+    // what the UI actually hits and was missing the same injection, so every
+    // chat thread landed with createdBy=null — defeating per-user HERMES_HOME
+    // bucket isolation (everything fell back to _system). Same logic here.
+    const actorInjected =
+      req.actor.type === "board" && typeof req.actor.userId === "string" && req.actor.userId.length > 0
+        ? { userId: req.actor.userId, userName: req.actor.userName ?? null }
+        : null;
+    const noraTraceId =
+      (req.headers["x-nora-trace-id"] as string | undefined) ??
+      (req.headers["X-Nora-Trace-Id" as unknown as string] as unknown as string | undefined) ??
+      null;
+    const enrichedParams = {
+      ...(body?.params ?? {}),
+      _actor: actorInjected,
+      _noraTraceId: noraTraceId,
+    };
+    //// End Neocompany Modification
+
     try {
       const result = await bridgeDeps.workerManager.call(
         plugin.id,
         "performAction",
         {
           key,
-          params: body?.params ?? {},
+          params: enrichedParams,
           renderEnvironment: body?.renderEnvironment ?? null,
         },
       );

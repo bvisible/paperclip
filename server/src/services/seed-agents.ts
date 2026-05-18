@@ -294,6 +294,29 @@ function resolveHermesCommand(): string | undefined {
   const cmd = process.env.PAPERCLIP_HERMES_COMMAND?.trim();
   return cmd && cmd.length > 0 ? cmd : undefined;
 }
+
+// hermes-paperclip-adapter's built-in DEFAULT_PROMPT_TEMPLATE is a heartbeat
+// wake-up workflow (lists assigned issues, checks backlog, calls back). For
+// paperclip-chat conversations the user types a free-form message and expects
+// a direct reply, so we override the template with one that:
+//   1. Includes {{taskBody}} (= the user's message, mapped in via
+//      registry.ts injectChatPrompt from ctx.context.chatPrompt).
+//   2. Explicitly forbids the heartbeat workflow.
+//   3. Keeps Paperclip API access available (with the auth guard that the
+//      registry wrapper prepends to any custom template).
+export const HERMES_CHAT_PROMPT_TEMPLATE = `You are {{agentName}}, an AI agent employee in a Paperclip-managed company (id: {{companyId}}).
+
+You are in a direct conversation with a human user — NOT a heartbeat wake-up. Respond naturally and conversationally to the user's message. Do not list issues, do not check for assigned work, do not perform any task-discovery routine unless the user explicitly asks for one.
+
+## The user said:
+
+{{taskBody}}
+
+## Your turn
+
+Reply directly to the user. Be concise, useful, and natural. If you genuinely need data from Paperclip to answer (e.g. the user asked about issues, costs, or company state), call the appropriate Paperclip API via the terminal tool using curl against {{paperclipApiUrl}} — but only when the user's question requires it. Otherwise just answer in plain prose.
+
+Keep your reply focused. No agenda, no boilerplate, no "Heartbeat complete" framing.`;
 //// End Neocompany Modification
 
 /**
@@ -365,6 +388,13 @@ export async function seedDefaultAgentsForCompany(
             // its "Je n'ai pas réussi à traiter cette demande" placeholder).
             // Discovered 2026-05-16 via the agent.log of a Scout run.
             extraArgs: ["--yolo"],
+            // Override the adapter's heartbeat DEFAULT_PROMPT_TEMPLATE with
+            // a chat-oriented one. Paired with registry.ts injectChatPrompt
+            // which copies ctx.context.chatPrompt → ctx.config.taskBody so
+            // {{taskBody}} in the template renders the user message.
+            // Without this, a "bonjour" in chat triggers Hermes' assigned-
+            // issues lookup workflow instead of a conversational reply.
+            promptTemplate: HERMES_CHAT_PROMPT_TEMPLATE,
             // Kept so materializeBundleForNewAgent still writes the
             // onboarding-assets bundle (AGENTS.md) for this seed.
             instructionsTemplate: spec.instructionsTemplate,

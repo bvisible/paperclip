@@ -406,6 +406,40 @@ const piLocalAdapter: ServerAdapterModule = {
 // intentional until hermes ships a matching AdapterExecutionContext type.
 const executeHermesLocal = hermesExecute as unknown as ServerAdapterModule["execute"];
 
+//// Neocompany Modification — surface chat prompt to Hermes' buildPrompt
+// The hermes-paperclip-adapter buildPrompt() only renders a small set of
+// template variables — agentId, agentName, companyId, runId, taskId,
+// taskTitle, taskBody, commentId, wakeReason, projectName, paperclipApiUrl.
+// The paperclip-chat plugin propagates the user's chat message into
+// ctx.context.chatPrompt (see plugin-host-services.ts:1855), but the
+// adapter never reads that field — it falls back to its DEFAULT_PROMPT_TEMPLATE
+// (a heartbeat workflow), and the user message is silently dropped.
+// We map ctx.context.chatPrompt → ctx.config.taskBody so a custom
+// promptTemplate using {{taskBody}} can surface the message. Paired with
+// CHAT_PROMPT_TEMPLATE in seed-agents.ts.
+function injectChatPrompt<
+  T extends { context?: Record<string, unknown>; config?: Record<string, unknown> },
+>(ctx: T): T {
+  const chatPrompt =
+    typeof ctx.context?.chatPrompt === "string" && ctx.context.chatPrompt.trim().length > 0
+      ? ctx.context.chatPrompt
+      : null;
+  if (!chatPrompt) return ctx;
+  const existingConfig = (ctx.config ?? {}) as Record<string, unknown>;
+  return {
+    ...ctx,
+    config: {
+      ...existingConfig,
+      // Override taskBody — the only existing variable available to template
+      // substitution that holds free-form text. Chat runs never have a real
+      // task assignment, so clobbering is safe (chatPrompt is only set on
+      // paperclip-chat sendMessage calls).
+      taskBody: chatPrompt,
+    },
+  };
+}
+//// End Neocompany Modification
+
 //// Neocompany Modification — resolve + inject per-run HERMES_HOME
 // The hermes_local adapter stores persistent memory under ~/.hermes by
 // default — a single global path shared by every agent + company. We
@@ -454,7 +488,10 @@ const hermesLocalAdapter: ServerAdapterModule = {
     //// Neocompany Modification — isolate Hermes memory per (company, user, agent)
     const isolatedCtx = await injectHermesHome(ctx);
     //// End Neocompany Modification
-    const normalizedCtx = normalizeHermesConfig(isolatedCtx);
+    //// Neocompany Modification — surface chatPrompt as {{taskBody}} for chat
+    const withChatPromptCtx = injectChatPrompt(isolatedCtx);
+    //// End Neocompany Modification
+    const normalizedCtx = normalizeHermesConfig(withChatPromptCtx);
     if (!normalizedCtx.authToken) return executeHermesLocal(normalizedCtx);
 
     const existingConfig = (normalizedCtx.agent.adapterConfig ?? {}) as Record<string, unknown>;

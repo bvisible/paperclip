@@ -1026,6 +1026,16 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             prompt: string;
             reason?: string;
             onEvent?: (event: AgentSessionEvent) => void;
+            //// Neocompany Modification — match the public AgentSessions type so
+            //// paperclip-chat's per-user session-key scoping actually reaches
+            //// the host. Without these forwards, params.actorUserId arrives null
+            //// in plugin-host-services.sessions.sendMessage, and the heartbeat
+            //// run's contextSnapshot lacks actorUserId → the registry wrapper's
+            //// injectHermesHome falls back to the `_system` bucket for every
+            //// chat run instead of `{userId}/{agentId}`.
+            actorUserId?: string | null;
+            noraTraceId?: string | null;
+            //// End Neocompany Modification
           }) {
             if (opts.onEvent) {
               sessionEventCallbacks.set(sessionId, opts.onEvent);
@@ -1036,6 +1046,10 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
                 companyId,
                 prompt: opts.prompt,
                 reason: opts.reason,
+                //// Neocompany Modification — forward auxiliary scoping fields
+                actorUserId: opts.actorUserId,
+                noraTraceId: opts.noraTraceId,
+                //// End Neocompany Modification
               });
             } catch (err) {
               sessionEventCallbacks.delete(sessionId);
