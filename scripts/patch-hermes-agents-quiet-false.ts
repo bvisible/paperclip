@@ -9,7 +9,6 @@
 //// re-run after future merges that change the adapter contract.
 //// End Neocompany Modification
 
-import "dotenv/config";
 import { Pool } from "pg";
 
 const pool = new Pool({

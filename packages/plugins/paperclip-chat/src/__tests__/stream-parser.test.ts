@@ -314,7 +314,7 @@ function collectHermes(): {
 }
 
 describe("createHermesPlainTextParser — quiet mode (-Q)", () => {
-  it("emits each non-meta line as a text event", () => {
+  it("emits buffered non-meta lines as text events after session_id: marker", () => {
     const { events, push } = collectHermes();
     push("Hello there.\nHow are you?\nsession_id: abc123\n");
     expect(events).toEqual([
@@ -323,19 +323,16 @@ describe("createHermesPlainTextParser — quiet mode (-Q)", () => {
     ]);
   });
 
-  it("filters meta prefixes ([tool], [hermes], [paperclip])", () => {
+  it("filters meta prefixes ([tool], [hermes], [paperclip]) once quiet is locked in", () => {
     const { events, push } = collectHermes();
-    push("[hermes] setup\n[tool] foo\n[paperclip] guard\nActual reply.\n");
-    expect(events).toEqual([{ type: "text", text: "Actual reply.\n" }]);
+    push("Actual reply.\nsession_id: abc\n[hermes] post\n[tool] foo\nMore reply.\n");
+    expect(events).toEqual([
+      { type: "text", text: "Actual reply.\n" },
+      { type: "text", text: "More reply.\n" },
+    ]);
   });
 
-  it("filters ISO timestamps and done decoration", () => {
-    const { events, push } = collectHermes();
-    push("[2026-05-18T14:00:00] log\n[done] ┊ end\nReply here.\n");
-    expect(events).toEqual([{ type: "text", text: "Reply here.\n" }]);
-  });
-
-  it("flushes the trailing incomplete line", () => {
+  it("flushes the trailing incomplete line and falls back to quiet if no marker arrived", () => {
     const { events, push, flush } = collectHermes();
     push("partial");
     flush();

@@ -284,50 +284,80 @@ function cleanHermesLine(line: string): string | null {
  */
 export function createHermesPlainTextParser(emit: (event: ChatStreamEvent) => void) {
   let buffer = "";
-  // `null` until we determine whether this run is quiet (legacy parser) or
-  // verbose (box-bounded). First non-blank line lets us decide:
-  //   - starts with `session_id:` or contains no `╭─` ever → quiet mode
-  //   - sees a `╭─ ⚕ Hermes …` opening                    → verbose mode
-  // Defaults to quiet when unsure, which keeps the previous behavior intact
-  // for any agent still pinned to quiet:true.
+  // Track which Hermes CLI mode the adapter was configured for. `null` until
+  // we see a definitive signal: any verbose-only marker (Query:/Initializing/
+  // `╭─`/`┊` preview/separator) flips to "verbose"; a `session_id:` line or
+  // any non-meta plain line before that flips to "quiet". Lines arriving
+  // before a mode is decided are buffered so we never leak the verbose
+  // preamble (it can contain the full system prompt as Hermes echoes it
+  // during agent initialization) into the chat as text events.
+  let mode: "unknown" | "quiet" | "verbose" = "unknown";
   let insideHermesBox = false;
+  let pendingLines: string[] = [];
 
-  function processLine(line: string) {
-    // Verbose mode: box-start detection switches us into "emit" state.
-    if (!insideHermesBox && HERMES_BOX_START_RE.test(line)) {
-      insideHermesBox = true;
-      return;
-    }
-    // Verbose mode: box-end detection switches us back out and silences
-    // the rest of the run (resume/session footer).
-    if (insideHermesBox && HERMES_BOX_END_RE.test(line)) {
-      insideHermesBox = false;
-      return;
-    }
-    if (insideHermesBox) {
-      // Strip the 4-space body indent that Hermes adds inside the box.
-      const dedented = line.replace(HERMES_INSIDE_INDENT_RE, "");
-      const cleaned = cleanHermesLine(dedented);
-      if (cleaned === null) return;
-      emit({ type: "text", text: cleaned + "\n" });
-      return;
-    }
-    // Verbose mode, outside the box: drop banner/tool-preview/footer noise.
-    if (HERMES_TOOL_PREVIEW_RE.test(line)) return;
-    if (HERMES_SEPARATOR_RE.test(line)) return;
-    for (const re of HERMES_VERBOSE_PREAMBLE) {
-      if (re.test(line)) return;
-    }
-    // Quiet mode (no box decoration). Fall back to the original filter so
-    // legacy agents still produce streaming text events.
+  function emitQuietLine(line: string) {
     const cleaned = cleanHermesLine(line);
     if (cleaned === null) return;
-    if (cleaned.length === 0) {
-      // Blank line: only emit if we've already emitted something — avoids
-      // a leading empty bubble before the banner-skip logic kicks in.
+    if (cleaned.length === 0) return;
+    emit({ type: "text", text: cleaned + "\n" });
+  }
+
+  function isVerboseMarker(line: string): boolean {
+    if (HERMES_BOX_START_RE.test(line)) return true;
+    if (HERMES_BOX_END_RE.test(line)) return true;
+    if (HERMES_TOOL_PREVIEW_RE.test(line)) return true;
+    if (HERMES_SEPARATOR_RE.test(line)) return true;
+    for (const re of HERMES_VERBOSE_PREAMBLE) {
+      if (re.test(line)) return true;
+    }
+    return false;
+  }
+
+  function processLine(line: string) {
+    if (mode === "unknown") {
+      if (isVerboseMarker(line)) {
+        mode = "verbose";
+        pendingLines = [];
+        // Fall through so the box-start (if any) flips insideHermesBox.
+      } else if (line.trim().startsWith("session_id:")) {
+        mode = "quiet";
+        // Flush previously-buffered lines through the quiet filter.
+        for (const buf of pendingLines) emitQuietLine(buf);
+        pendingLines = [];
+        // session_id: itself is a meta line → drop.
+        return;
+      } else {
+        pendingLines.push(line);
+        // Cap buffer to a reasonable size in case neither marker ever shows up.
+        if (pendingLines.length > 200) {
+          mode = "quiet";
+          for (const buf of pendingLines) emitQuietLine(buf);
+          pendingLines = [];
+        }
+        return;
+      }
+    }
+    if (mode === "verbose") {
+      if (!insideHermesBox && HERMES_BOX_START_RE.test(line)) {
+        insideHermesBox = true;
+        return;
+      }
+      if (insideHermesBox && HERMES_BOX_END_RE.test(line)) {
+        insideHermesBox = false;
+        return;
+      }
+      if (insideHermesBox) {
+        const dedented = line.replace(HERMES_INSIDE_INDENT_RE, "");
+        const cleaned = cleanHermesLine(dedented);
+        if (cleaned === null) return;
+        emit({ type: "text", text: cleaned + "\n" });
+      }
+      // Outside the box in verbose mode → silently drop everything (banner,
+      // tool previews, prompt echoes, resume footer).
       return;
     }
-    emit({ type: "text", text: cleaned + "\n" });
+    // mode === "quiet"
+    emitQuietLine(line);
   }
 
   return {
@@ -342,9 +372,18 @@ export function createHermesPlainTextParser(emit: (event: ChatStreamEvent) => vo
     },
     /** Flush any remaining buffer content (final unterminated line) */
     flush() {
-      if (buffer.length === 0) return;
-      processLine(buffer);
-      buffer = "";
+      if (buffer.length > 0) {
+        processLine(buffer);
+        buffer = "";
+      }
+      // If the stream ends before we ever picked a mode, treat the buffered
+      // lines as quiet output (best-effort): better to emit them than to
+      // silently drop the entire response.
+      if (mode === "unknown") {
+        mode = "quiet";
+        for (const buf of pendingLines) emitQuietLine(buf);
+        pendingLines = [];
+      }
     },
   };
 }
