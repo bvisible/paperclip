@@ -51,6 +51,7 @@ import type {
   PluginIssueWakeupBatchResult,
   PluginIssueWakeupResult,
   PluginJobContext,
+  PluginExecutionWorkspaceMetadata,
   PluginWorkspace,
   ToolRunContext,
   ToolResult,
@@ -793,6 +794,13 @@ export interface WorkerToHostMethods {
   "projects.getWorkspaceForIssue": [
     params: { issueId: string; companyId: string },
     result: PluginWorkspace | null,
+  ];
+  "executionWorkspaces.get": [
+    params: {
+      workspaceId: string;
+      companyId: string;
+    },
+    result: PluginExecutionWorkspaceMetadata | null,
   ];
   "projects.managed.get": [
     params: { projectKey: string; companyId: string },

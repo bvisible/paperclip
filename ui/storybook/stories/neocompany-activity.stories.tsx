@@ -31,7 +31,10 @@ function makeEvent(overrides: Partial<ActivityEvent> = {}): ActivityEvent {
 }
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
-  return {
+  // Cast via unknown to skip the strict shape — Agent picked up extra fields
+  // in upstream (urlKey, title, icon, reportsTo, …) that storybook stubs don't
+  // need to satisfy for visual rendering of ActivityRow.
+  return ({
     id: "agent-1",
     name: "Nora",
     role: "main",
@@ -43,7 +46,8 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     description: null,
     createdAt: new Date("2026-05-01T00:00:00Z").toISOString(),
     updatedAt: new Date("2026-05-01T00:00:00Z").toISOString(),
-  } as Agent;
+    ...overrides,
+  } as unknown) as Agent;
 }
 
 function makeUserProfile(): CompanyUserProfile {

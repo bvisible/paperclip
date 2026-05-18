@@ -149,6 +149,15 @@ export type {
   IssueBlockerAttention,
   IssueBlockerAttentionReason,
   IssueBlockerAttentionState,
+  IssueInboxAttentionKind,
+  IssueBlockedInboxAction,
+  IssueBlockedInboxAttention,
+  IssueBlockedInboxIssueRef,
+  IssueBlockedInboxOwner,
+  IssueBlockedInboxOwnerType,
+  IssueBlockedInboxReason,
+  IssueBlockedInboxSeverity,
+  IssueBlockedInboxState,
   IssueProductivityReview,
   IssueProductivityReviewTrigger,
   IssueRecoveryAction,
@@ -270,6 +279,7 @@ export type {
 } from "./secrets.js";
 export type {
   Routine,
+  RoutineEnvConfig,
   RoutineManagedByPlugin,
   RoutineVariable,
   RoutineVariableDefaultValue,

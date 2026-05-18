@@ -65,7 +65,7 @@ import { logger } from "../middleware/logger.js";
 /** Default timeout for RPC calls in milliseconds. Raised to 15 min (NeoCompany). */
 const DEFAULT_RPC_TIMEOUT_MS = 15 * 60 * 1_000;
 
-/** Hard upper bound for any RPC timeout. Raised to 15 min (NeoCompany). */
+/** Hard upper bound for any RPC timeout (15 minutes). Prevents unbounded waits. */
 const MAX_RPC_TIMEOUT_MS = 15 * 60 * 1_000;
 //// End Neocompany Modification
 

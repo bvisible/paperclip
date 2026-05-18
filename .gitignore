@@ -55,6 +55,8 @@ tests/e2e/playwright-report/
 tests/release-smoke/test-results/
 tests/release-smoke/playwright-report/
 .superset/
+.superpowers/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .claude/scheduled_tasks/
+.herenow

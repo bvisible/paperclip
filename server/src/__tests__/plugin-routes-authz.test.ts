@@ -630,11 +630,20 @@ describe.sequential("plugin tool and bridge authz", () => {
       .send({});
 
     expect(res.status).toBe(200);
+    //// Neocompany Modification — /actions/:key now enriches params with
+    //// _actor (board userId/userName) + _noraTraceId so paperclip-chat can
+    //// stamp thread.createdBy and the per-user HERMES_HOME bucket can be
+    //// resolved. Test updated to match the enriched payload contract.
+    //// Source patch: server/src/routes/plugins.ts (commit c5cc86ff, Fix #3).
     expect(call).toHaveBeenCalledWith(pluginId, "performAction", {
       key: "sync",
-      params: {},
+      params: {
+        _actor: { userId: "admin-1", userName: null },
+        _noraTraceId: null,
+      },
       renderEnvironment: null,
     });
+    //// End Neocompany Modification
   });
 
   it("rejects manual job triggers for non-admin board users", async () => {

@@ -27,11 +27,13 @@ import type {
   IssueComment,
   PluginIssueAssigneeSummary,
   PluginIssueOrchestrationSummary,
+  PluginExecutionWorkspaceMetadata,
 } from "@paperclipai/plugin-sdk";
 import type { CreateIssueThreadInteraction, IssueDocumentSummary } from "@paperclipai/shared";
 import { companyService } from "./companies.js";
 import { agentService } from "./agents.js";
 import { projectService } from "./projects.js";
+import { executionWorkspaceService } from "./execution-workspaces.js";
 import { issueService } from "./issues.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
 import { goalService } from "./goals.js";
@@ -48,6 +50,21 @@ import { pluginRegistryService } from "./plugin-registry.js";
 import { pluginStateStore } from "./plugin-state-store.js";
 import { pluginDatabaseService } from "./plugin-database.js";
 import { createPluginSecretsHandler } from "./plugin-secrets-handler.js";
+import { pluginManagedRoutineService } from "./plugin-managed-routines.js";
+import { pluginManagedSkillService } from "./plugin-managed-skills.js";
+import {
+  assertConfiguredLocalFolder,
+  assertWritableConfiguredLocalFolder,
+  getStoredLocalFolders,
+  deletePluginLocalFolderFile,
+  inspectPluginLocalFolder,
+  listPluginLocalFolderEntries,
+  preparePluginLocalFolder,
+  readPluginLocalFolderText,
+  requireLocalFolderDeclaration,
+  setStoredLocalFolder,
+  writePluginLocalFolderTextAtomic,
+} from "./plugin-local-folders.js";
 import { logActivity } from "./activity-log.js";
 import type { PluginEventBus } from "./plugin-event-bus.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
@@ -471,7 +488,7 @@ export function buildHostServices(
   // Upstream PR #5597 (LLM Wiki plugin host support) added a `manifest` option
   // that the LLM Wiki feature consumes downstream. Our vendored buildHostServices
   // does not currently use it, but we accept it so app.ts compiles.
-  options: { pluginWorkerManager?: PluginWorkerManager; manifest?: unknown } = {},
+  options: { pluginWorkerManager?: PluginWorkerManager; manifest?: import("@paperclipai/shared").PaperclipPluginManifestV1 } = {},
   //// End Neocompany Modification
 ): HostServices & { dispose(): void } {
   const registry = pluginRegistryService(db);
@@ -480,10 +497,22 @@ export function buildHostServices(
   const secretsHandler = createPluginSecretsHandler({ db, pluginId });
   const companies = companyService(db);
   const agents = agentService(db);
+  const managedRoutines = pluginManagedRoutineService(db, {
+    pluginId,
+    pluginKey,
+    manifest: options.manifest,
+    pluginWorkerManager: options.pluginWorkerManager,
+  });
+  const managedSkills = pluginManagedSkillService(db, {
+    pluginId,
+    pluginKey,
+    manifest: options.manifest,
+  });
   const heartbeat = heartbeatService(db, {
     pluginWorkerManager: options.pluginWorkerManager,
   });
   const projects = projectService(db);
+  const executionWorkspaces = executionWorkspaceService(db);
   const issues = issueService(db);
   const documents = documentService(db);
   const goals = goalService(db);
@@ -530,10 +559,56 @@ export function buildHostServices(
    */
   const ensurePluginAvailableForCompany = async (_companyId: string) => {};
 
+  const getLocalFolderDeclaration = (folderKey: string) =>
+    requireLocalFolderDeclaration(options.manifest?.localFolders, folderKey);
+
+  const getStoredLocalFolderConfig = async (companyId: string, folderKey: string) => {
+    ensureCompanyId(companyId);
+    await ensurePluginAvailableForCompany(companyId);
+    const settings = await registry.getCompanySettings(pluginId, companyId);
+    return getStoredLocalFolders(settings?.settingsJson)[folderKey] ?? null;
+  };
+
+  const inspectStoredLocalFolder = async (companyId: string, folderKey: string) =>
+    inspectPluginLocalFolder({
+      folderKey,
+      declaration: getLocalFolderDeclaration(folderKey),
+      storedConfig: await getStoredLocalFolderConfig(companyId, folderKey),
+    });
+
   const inCompany = <T extends { companyId: string | null | undefined }>(
     record: T | null | undefined,
     companyId: string,
   ): record is T => Boolean(record && record.companyId === companyId);
+
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+
+  const readProviderMetadata = (metadata: Record<string, unknown> | null | undefined) => {
+    if (!isRecord(metadata)) return null;
+    if (isRecord(metadata.providerMetadata)) return { ...metadata.providerMetadata };
+    const rebuild = metadata.rebuild;
+    if (!isRecord(rebuild)) return null;
+    const rebuildMetadata = rebuild.metadata;
+    if (!isRecord(rebuildMetadata) || !isRecord(rebuildMetadata.providerMetadata)) return null;
+    return { ...rebuildMetadata.providerMetadata };
+  };
+
+  const toPluginExecutionWorkspaceMetadata = (
+    workspace: NonNullable<Awaited<ReturnType<typeof executionWorkspaces.getById>>>,
+  ): PluginExecutionWorkspaceMetadata => ({
+    id: workspace.id,
+    companyId: workspace.companyId,
+    projectId: workspace.projectId,
+    projectWorkspaceId: workspace.projectWorkspaceId,
+    path: workspace.cwd ?? workspace.providerRef,
+    cwd: workspace.cwd,
+    repoUrl: workspace.repoUrl,
+    baseRef: workspace.baseRef,
+    branchName: workspace.branchName,
+    providerType: workspace.providerType,
+    providerMetadata: readProviderMetadata(workspace.metadata),
+  });
 
   const requireInCompany = <T extends { companyId: string | null | undefined }>(
     entityName: string,
@@ -764,37 +839,85 @@ export function buildHostServices(
       },
     },
 
-    //// Neocompany Modification — stub sections added upstream (NeoCompany fork)
-    // Upstream PRs (post v2026.427.0) added:
-    //   - localFolders.* — trusted company-scoped local folder helpers
-    //   - routines.managed.* — managed-routines sync
-    //   - skills.managed.*  — managed-skills sync
-    // Our fork does not consume these capabilities yet. We provide stub
-    // implementations that throw so any plugin trying to use them fails
-    // loudly and we know to implement them on demand. Migration path:
-    // implement when a NeoCompany plugin needs these capabilities.
     localFolders: {
-      async declarations(_params) { throw new Error("localFolders.declarations not implemented in NeoCompany fork"); },
-      async configure(_params) { throw new Error("localFolders.configure not implemented in NeoCompany fork"); },
-      async status(_params) { throw new Error("localFolders.status not implemented in NeoCompany fork"); },
-      async list(_params) { throw new Error("localFolders.list not implemented in NeoCompany fork"); },
-      async readText(_params) { throw new Error("localFolders.readText not implemented in NeoCompany fork"); },
-      async writeTextAtomic(_params) { throw new Error("localFolders.writeTextAtomic not implemented in NeoCompany fork"); },
-      async deleteFile(_params) { throw new Error("localFolders.deleteFile not implemented in NeoCompany fork"); },
+      async declarations() {
+        return options.manifest?.localFolders ?? [];
+      },
+
+      async configure(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const declaration = getLocalFolderDeclaration(params.folderKey);
+        const existing = await registry.getCompanySettings(pluginId, companyId);
+        const existingConfig = getStoredLocalFolders(existing?.settingsJson)[params.folderKey] ?? null;
+        await preparePluginLocalFolder({
+          folderKey: params.folderKey,
+          declaration,
+          storedConfig: existingConfig,
+          overrideConfig: { path: params.path },
+        });
+        const status = await inspectPluginLocalFolder({
+          folderKey: params.folderKey,
+          declaration,
+          storedConfig: existingConfig,
+          overrideConfig: { path: params.path },
+        });
+        const nextSettings = setStoredLocalFolder(existing?.settingsJson, params.folderKey, {
+          path: params.path,
+          access: status.access,
+          requiredDirectories: status.requiredDirectories,
+          requiredFiles: status.requiredFiles,
+        });
+        await registry.upsertCompanySettings(pluginId, companyId, {
+          enabled: existing?.enabled ?? true,
+          settingsJson: nextSettings,
+          lastError: status.healthy ? null : status.problems.map((item: { message: string }) => item.message).join("; "),
+        });
+        return status;
+      },
+
+      async status(params) {
+        return inspectStoredLocalFolder(params.companyId, params.folderKey);
+      },
+
+      async list(params) {
+        const status = await inspectStoredLocalFolder(params.companyId, params.folderKey);
+        assertConfiguredLocalFolder(status);
+        const listing = await listPluginLocalFolderEntries(status.realPath!, {
+          relativePath: params.relativePath,
+          recursive: params.recursive,
+          maxEntries: params.maxEntries,
+        });
+        return { ...listing, folderKey: params.folderKey };
+      },
+
+      async readText(params) {
+        const status = await inspectStoredLocalFolder(params.companyId, params.folderKey);
+        assertConfiguredLocalFolder(status);
+        return readPluginLocalFolderText(status.realPath!, params.relativePath);
+      },
+
+      async writeTextAtomic(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await preparePluginLocalFolder({
+          folderKey: params.folderKey,
+          declaration: getLocalFolderDeclaration(params.folderKey),
+          storedConfig: await getStoredLocalFolderConfig(companyId, params.folderKey),
+        });
+        const status = await inspectStoredLocalFolder(companyId, params.folderKey);
+        assertWritableConfiguredLocalFolder(status);
+        await writePluginLocalFolderTextAtomic(status.realPath!, params.relativePath, params.contents);
+        return inspectStoredLocalFolder(companyId, params.folderKey);
+      },
+
+      async deleteFile(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        const status = await inspectStoredLocalFolder(companyId, params.folderKey);
+        assertWritableConfiguredLocalFolder(status);
+        await deletePluginLocalFolderFile(status.realPath!, params.relativePath, params.folderKey);
+        return inspectStoredLocalFolder(companyId, params.folderKey);
+      },
     },
-    routines: {
-      async managedGet(_params) { throw new Error("routines.managed.get not implemented in NeoCompany fork"); },
-      async managedReconcile(_params) { throw new Error("routines.managed.reconcile not implemented in NeoCompany fork"); },
-      async managedReset(_params) { throw new Error("routines.managed.reset not implemented in NeoCompany fork"); },
-      async managedUpdate(_params) { throw new Error("routines.managed.update not implemented in NeoCompany fork"); },
-      async managedRun(_params) { throw new Error("routines.managed.run not implemented in NeoCompany fork"); },
-    },
-    skills: {
-      async managedGet(_params) { throw new Error("skills.managed.get not implemented in NeoCompany fork"); },
-      async managedReconcile(_params) { throw new Error("skills.managed.reconcile not implemented in NeoCompany fork"); },
-      async managedReset(_params) { throw new Error("skills.managed.reset not implemented in NeoCompany fork"); },
-    },
-    //// End Neocompany Modification
 
     state: {
       async get(params) {
@@ -1013,6 +1136,9 @@ export function buildHostServices(
             projectId: row.projectId,
             name,
             path,
+            repoUrl: row.repoUrl,
+            repoRef: row.repoRef,
+            defaultRef: row.defaultRef,
             isPrimary: row.isPrimary,
             createdAt: row.createdAt.toISOString(),
             updatedAt: row.updatedAt.toISOString(),
@@ -1032,6 +1158,9 @@ export function buildHostServices(
           projectId: project.id,
           name,
           path,
+          repoUrl: row?.repoUrl ?? project.codebase.repoUrl,
+          repoRef: row?.repoRef ?? project.codebase.repoRef,
+          defaultRef: row?.defaultRef ?? project.codebase.defaultRef,
           isPrimary: true,
           createdAt: (row?.createdAt ?? project.createdAt).toISOString(),
           updatedAt: (row?.updatedAt ?? project.updatedAt).toISOString(),
@@ -1055,27 +1184,115 @@ export function buildHostServices(
           projectId: project.id,
           name,
           path,
+          repoUrl: row?.repoUrl ?? project.codebase.repoUrl,
+          repoRef: row?.repoRef ?? project.codebase.repoRef,
+          defaultRef: row?.defaultRef ?? project.codebase.defaultRef,
           isPrimary: true,
           createdAt: (row?.createdAt ?? project.createdAt).toISOString(),
           updatedAt: (row?.updatedAt ?? project.updatedAt).toISOString(),
         };
       },
-      //// Neocompany Modification — managed-projects RPC stubs (NeoCompany fork)
-      // Upstream added managed-entities sync RPCs (projects.managed.*) for
-      // plugins that own a project hierarchy declaratively. Our fork does
-      // not consume these yet — stubs throw a clear error so callers fail
-      // loudly. Migration path: implement when a NeoCompany plugin needs
-      // managed-project semantics.
-      async getManaged(_params) {
-        throw new Error("projects.managed.get not implemented in NeoCompany fork");
+      async getManaged(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return projects.resolveManagedProject({
+          companyId,
+          pluginId,
+          pluginKey,
+          projectKey: params.projectKey,
+          createIfMissing: false,
+        });
       },
-      async reconcileManaged(_params) {
-        throw new Error("projects.managed.reconcile not implemented in NeoCompany fork");
+      async reconcileManaged(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return projects.resolveManagedProject({
+          companyId,
+          pluginId,
+          pluginKey,
+          projectKey: params.projectKey,
+        });
       },
-      async resetManaged(_params) {
-        throw new Error("projects.managed.reset not implemented in NeoCompany fork");
+      async resetManaged(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return projects.resolveManagedProject({
+          companyId,
+          pluginId,
+          pluginKey,
+          projectKey: params.projectKey,
+          reset: true,
+        });
       },
-      //// End Neocompany Modification
+    },
+
+    executionWorkspaces: {
+      async get(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        const workspace = await executionWorkspaces.getById(params.workspaceId);
+        if (inCompany(workspace, companyId)) {
+          return toPluginExecutionWorkspaceMetadata(workspace);
+        }
+        return null;
+      },
+    },
+
+    routines: {
+      async managedGet(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedRoutines.get(params.routineKey, companyId);
+      },
+      async managedReconcile(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedRoutines.reconcile(params.routineKey, companyId, {
+          assigneeAgentId: params.assigneeAgentId,
+          projectId: params.projectId,
+        });
+      },
+      async managedReset(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedRoutines.reset(params.routineKey, companyId, {
+          assigneeAgentId: params.assigneeAgentId,
+          projectId: params.projectId,
+        });
+      },
+      async managedUpdate(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedRoutines.update(params.routineKey, companyId, {
+          status: params.status,
+        });
+      },
+      async managedRun(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedRoutines.run(params.routineKey, companyId, {
+          assigneeAgentId: params.assigneeAgentId,
+          projectId: params.projectId,
+        });
+      },
+    },
+
+    skills: {
+      async managedGet(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedSkills.get(params.skillKey, companyId);
+      },
+      async managedReconcile(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedSkills.reconcile(params.skillKey, companyId);
+      },
+      async managedReset(params) {
+        const companyId = ensureCompanyId(params.companyId);
+        await ensurePluginAvailableForCompany(companyId);
+        return managedSkills.reset(params.skillKey, companyId);
+      },
     },
 
     issues: {
