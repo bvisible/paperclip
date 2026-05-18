@@ -4,6 +4,8 @@
 ////   1. [openclaw-gateway:event] lines (OCG native format)
 ////   2. Claude CLI --output-format stream-json (system/assistant/user/result)
 ////   3. Anthropic API streaming fallback (content_block_delta)
+//// Also exports createHermesPlainTextParser for hermes-paperclip-adapter
+//// (plain-text stdout, no JSON framing).
 //// End Neocompany Modification
 
 import type { ChatStreamEvent } from "./types.js";
@@ -173,3 +175,87 @@ export function createStreamJsonParser(emit: (event: ChatStreamEvent) => void) {
     },
   };
 }
+
+//// Neocompany Modification — Hermes plain-text streaming parser
+//
+// hermes-paperclip-adapter (used by every hermes_local agent) doesn't emit
+// Claude stream-json. Its CLI (`hermes chat -q ... -Q --yolo`) writes plain
+// text streamed by Codex token-by-token, interleaved with bracketed meta
+// lines and a final `session_id: <id>`. The Claude json parser above can't
+// make sense of any of it, so without this parser the UI never sees the
+// progressive response — only the final post-run harvest from
+// payload.resultJson.result (added in worker.ts at the done event) makes
+// the message appear, and only after Hermes finishes.
+//
+// This parser tails stdout line by line, filters the same meta the upstream
+// adapter strips in cleanResponse() (execute.js:185-220 — see
+// `HERMES_META_PREFIXES` below), and forwards everything else as
+// `{ type: "text", text: line + "\n" }`. The handler in worker.ts pushes
+// each text event into the UI stream channel via ctx.streams.emit, so the
+// chat bubble fills in live.
+//
+// Skip list mirrors the upstream cleanResponse precisely:
+//   - blank lines        → kept (paragraph separators)
+//   - "[tool]" prefix    → skip (subagent calls)
+//   - "[hermes]"         → skip (adapter setup logs)
+//   - "[paperclip]"      → skip (PAPERCLIP_API_KEY guard messages)
+//   - "session_id:"      → skip (Hermes prints this last; persisted via
+//                                resultJson.session_id by the adapter)
+//   - ISO timestamps     → skip (log decorations: `[2026-05-18T...]`)
+//   - `[done] ┊` line    → skip (CLI run-end marker)
+//   - lone emoji status  → skip (`✅ Completed`, `⏳ Running`, etc.)
+//   - `┊ 💬` decoration  → stripped (keep the chat content, drop the bullet)
+const HERMES_META_PREFIXES = ["[tool]", "[hermes]", "[paperclip]", "session_id:"] as const;
+const HERMES_ISO_TIMESTAMP = /^\[\d{4}-\d{2}-\d{2}T/;
+const HERMES_DONE_DECORATION = /^\[done\]\s*┊/;
+const HERMES_EMOJI_STATUS = /^\p{Emoji_Presentation}\s*(Completed|Running|Error)?\s*$/u;
+const HERMES_BUBBLE_DECORATION = /^[\s]*┊\s*💬\s*/;
+
+function cleanHermesLine(line: string): string | null {
+  const trimmed = line.trim();
+  // Keep blank lines so paragraph breaks survive in the UI rendering.
+  if (!trimmed) return "";
+  for (const prefix of HERMES_META_PREFIXES) {
+    if (trimmed.startsWith(prefix)) return null;
+  }
+  if (HERMES_ISO_TIMESTAMP.test(trimmed)) return null;
+  if (HERMES_DONE_DECORATION.test(trimmed)) return null;
+  if (HERMES_EMOJI_STATUS.test(trimmed)) return null;
+  // Strip the `┊ 💬` bullet but keep whatever followed it (the actual reply).
+  return line.replace(HERMES_BUBBLE_DECORATION, "");
+}
+
+/**
+ * Buffers raw stdout chunks from hermes-paperclip-adapter and emits a
+ * `{ type: "text" }` event per non-meta line. Pairs with worker.ts's
+ * adapter-aware parser selection so hermes_local threads stream live while
+ * claude_local / openclaw_gateway keep using `createStreamJsonParser`.
+ */
+export function createHermesPlainTextParser(emit: (event: ChatStreamEvent) => void) {
+  let buffer = "";
+  return {
+    push(chunk: string) {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      // Keep the last (possibly incomplete) line in the buffer
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const cleaned = cleanHermesLine(line);
+        if (cleaned === null) continue;
+        // Re-add the newline that split consumed so paragraphs survive
+        // once the handler concatenates all text events into fullResponse.
+        emit({ type: "text", text: cleaned + "\n" });
+      }
+    },
+    /** Flush any remaining buffer content (final unterminated line) */
+    flush() {
+      if (buffer.length === 0) return;
+      const cleaned = cleanHermesLine(buffer);
+      if (cleaned !== null && cleaned.length > 0) {
+        emit({ type: "text", text: cleaned });
+      }
+      buffer = "";
+    },
+  };
+}
+//// End Neocompany Modification

@@ -9,8 +9,10 @@ import type {
 //// Neocompany Modification — accumulateText + createStreamJsonParser extracted
 //// to dedicated modules so the streaming-defense logic and multi-format parser
 //// can be unit-tested without spinning up the whole plugin worker.
+//// createHermesPlainTextParser added for hermes_local agents (Hermes prints
+//// plain text streamed by Codex, not Claude stream-json).
 import { accumulateText } from "./text-accumulation.js";
-import { createStreamJsonParser } from "./stream-parser.js";
+import { createStreamJsonParser, createHermesPlainTextParser } from "./stream-parser.js";
 //// End Neocompany Modification
 
 const PLUGIN_NAME = "paperclip-chat";
@@ -676,7 +678,18 @@ const plugin = definePlugin({
           ctx.streams.emit(streamChannel, evt);
         };
 
-        const followUpParser = createStreamJsonParser(handleFollowUpParsed);
+        //// Neocompany Modification — adapter-aware parser selection
+        // hermes_local prints plain text on stdout; every other adapter we
+        // wire is Claude/OpenClaw stream-json. Picking the right parser per
+        // thread lets the UI see live token-by-token text on hermes runs
+        // instead of waiting for the done-event resultJson harvest below.
+        const pickParser = (handler: (evt: ChatStreamEvent) => void) =>
+          thread.adapterType === "hermes_local"
+            ? createHermesPlainTextParser(handler)
+            : createStreamJsonParser(handler);
+        //// End Neocompany Modification
+
+        const followUpParser = pickParser(handleFollowUpParsed);
 
         // Helper to process parsed stream events in primary phase
         const handleParsedEvent = (chatEvent: ChatStreamEvent) => {
@@ -786,8 +799,10 @@ const plugin = definePlugin({
           ctx.streams.emit(streamChannel, chatEvent);
         };
 
-        // Parse raw stdout chunks (Claude stream-json format) into events
-        const parser = createStreamJsonParser(handleParsedEvent);
+        //// Neocompany Modification — adapter-aware parser (Hermes plain text vs Claude json)
+        // See pickParser() comment near followUpParser above.
+        const parser = pickParser(handleParsedEvent);
+        //// End Neocompany Modification
 
         ctx.agents.sessions.sendMessage(sessionId, companyId, {
           prompt: enrichedMessage,
@@ -819,19 +834,27 @@ const plugin = definePlugin({
             // Terminal events from the host (run status changes)
             if (event.eventType === "done") {
               activeParser.flush();
-              //// Neocompany Modification — adapters that don't stream Claude
-              //// stream-json (notably hermes-paperclip-adapter, which writes
-              //// "[hermes] ..." lines + a final "session_id: X\n<response>"
-              //// block) leave the parser empty. The host still gets the
-              //// adapter's executionResult.resultJson, which it forwards in
-              //// payload.resultJson. Inject the final text as a synthetic
-              //// "text" segment so the result handler keeps it.
-              const adapterResult =
-                (event.payload?.resultJson as Record<string, unknown> | undefined)?.result ??
-                (event.payload?.resultJson as Record<string, unknown> | undefined)?.summary ??
-                event.payload?.summary;
-              if (typeof adapterResult === "string" && adapterResult.trim().length > 0) {
-                activeHandler({ type: "text", text: adapterResult });
+              //// Neocompany Modification — fallback harvest if the stream
+              //// produced no text. Originally added because Hermes plain text
+              //// wasn't parsed (Claude json parser ignored it), so the only
+              //// way to get the final response was payload.resultJson.result.
+              //// With createHermesPlainTextParser now wired (stream-parser.ts),
+              //// the stream usually fills text segments live — only fall back
+              //// when nothing was captured (e.g. the SSE stream raced ahead
+              //// of the done event and was lost, or a future adapter format
+              //// we haven't taught the parser yet).
+              const activeSegments = phase === "primary" ? segments.segments : (followUp?.segments.segments ?? []);
+              const streamGotText = activeSegments.some(
+                (seg) => seg.kind === "text" && typeof seg.content === "string" && seg.content.trim().length > 0,
+              );
+              if (!streamGotText) {
+                const adapterResult =
+                  (event.payload?.resultJson as Record<string, unknown> | undefined)?.result ??
+                  (event.payload?.resultJson as Record<string, unknown> | undefined)?.summary ??
+                  event.payload?.summary;
+                if (typeof adapterResult === "string" && adapterResult.trim().length > 0) {
+                  activeHandler({ type: "text", text: adapterResult });
+                }
               }
               //// End Neocompany Modification
               activeHandler({
