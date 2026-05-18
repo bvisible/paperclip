@@ -8,7 +8,14 @@ import { useCompany } from "@/context/CompanyContext";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { accessApi } from "../api/access";
 import { authApi } from "../api/auth";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: Invite landing form actions (sign-in / sign-up) POST to /paperclip/auth/*
+////      on Neoffice tenants. Without API_BASE the form posts to /auth/* and
+////      404s through nginx routing on Neoffice deployments.
+//// Date: 2026-05-04
+//// Refs: NORA #26, NORA #27 Phase R-V6
 import { API_BASE } from "../api/client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import { companiesApi } from "../api/companies";
 import { healthApi } from "../api/health";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";

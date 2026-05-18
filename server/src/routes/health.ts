@@ -17,6 +17,19 @@ function shouldExposeFullHealthDetails(
   return actorType === "board" || actorType === "agent";
 }
 
+//// Neoffice Modification: osiris-health-cache
+//// Why: /health is polled by every browser tab via Layout.tsx every 2-5s
+////      and the original handler issued `SELECT count(*) FROM heartbeat_runs
+////      WHERE status IN (queued,running)` with no companyId predicate.
+////      None of the existing composite indexes applied → full table scan
+////      every tick. On Osiris with 100+ rows and multiple tabs this
+////      produced visible LWLock contention. 5s in-memory cache + a partial
+////      index `heartbeat_runs(status) WHERE status IN ('queued','running')`
+////      (created idempotently by services/maintenance-indexes.ts) drops
+////      the cost by ~95%. Cache scoped per-process, so even with many
+////      replicas the load stays bounded.
+//// Date: 2026-05-07
+//// Refs: NORA #27 — Osiris RAM/swap saturation rootcause (commit 2323fde7)
 // Cache the active-run count to avoid hammering Postgres with a count(*) on
 // heartbeat_runs every time the UI polls /health (it polls per browser tab).
 // 5 s is short enough that "queued/running" never feels stale to the dev panel.
@@ -36,6 +49,7 @@ async function getCachedActiveRunCount(db: Db): Promise<number> {
   cachedActiveRunCount = { value, expiresAt: now + ACTIVE_RUN_COUNT_TTL_MS };
   return value;
 }
+//// End Neoffice Modification: osiris-health-cache
 
 function hasDevServerStatusToken(providedToken: string | undefined) {
   const expectedToken = process.env.PAPERCLIP_DEV_SERVER_STATUS_TOKEN?.trim();

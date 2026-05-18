@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { LiveEvent } from "@paperclipai/shared";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: Transcript WebSocket URL must include API_BASE on Neoffice tenants.
+////      Without it the connect URL hits /companies/.../events/ws (no
+////      /paperclip prefix) and 404s through nginx.
+//// Date: 2026-05-04
+//// Refs: NORA #26, NORA #27 Phase R-V6
 import { ApiError, API_BASE } from "../../api/client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import { instanceSettingsApi } from "../../api/instanceSettings";
 import { heartbeatsApi } from "../../api/heartbeats";
 import { buildTranscript, getUIAdapter, onAdapterChange, type RunLogChunk, type TranscriptEntry } from "../../adapters";

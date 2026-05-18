@@ -34,7 +34,14 @@ import type {
   PluginLauncherRenderEnvironment,
 } from "@paperclipai/shared";
 import { pluginsApi } from "@/api/plugins";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: Plugin bridge stream URL must include API_BASE on Neoffice tenants
+////      (/paperclip/ sub-path). Without it the SSE endpoint hits
+////      /plugins/.../bridge/stream/... and 404s through nginx routing.
+//// Date: 2026-05-04
+//// Refs: NORA #26, NORA #27 Phase R-V6
 import { ApiError, API_BASE } from "@/api/client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import { useToastActions, type ToastInput } from "@/context/ToastContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { isGlobalPath, normalizeCompanyPrefix } from "@/lib/company-routes";

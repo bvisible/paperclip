@@ -7,7 +7,14 @@ import {
   type ClaudeLoginResult,
   type AgentPermissionUpdate,
 } from "../api/agents";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: WebSocket connect URL for agent live runs must include API_BASE
+////      on Neoffice tenants (/paperclip/ sub-path). Without it the wss
+////      handshake hits /companies/.../events/ws and 404s through nginx.
+//// Date: 2026-05-04
+//// Refs: NORA #26, NORA #27 Phase R-V6
 import { API_BASE } from "../api/client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import { companySkillsApi } from "../api/companySkills";
 import { budgetsApi } from "../api/budgets";
 import { heartbeatsApi } from "../api/heartbeats";
