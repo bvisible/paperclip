@@ -29,11 +29,22 @@ import {
 } from "@paperclipai/db";
 import type {
   IssueBlockerAttention,
+  IssueCommentAuthorType,
+  IssueCommentMetadata,
+  IssueCommentPresentation,
   IssueProductivityReview,
   IssueProductivityReviewTrigger,
   IssueRelationIssueSummary,
 } from "@paperclipai/shared";
-import { clampIssueRequestDepth, extractAgentMentionIds, extractProjectMentionIds, isUuidLike } from "@paperclipai/shared";
+import {
+  clampIssueRequestDepth,
+  extractAgentMentionIds,
+  extractProjectMentionIds,
+  isUuidLike,
+  issueCommentAuthorTypeSchema,
+  issueCommentMetadataSchema,
+  issueCommentPresentationSchema,
+} from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -55,6 +66,25 @@ import {
 import { parseIssueGraphLivenessIncidentKey } from "./recovery/origins.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
+
+// Mirror of upstream's helper. Guards addComment against actors providing
+// an authorType that doesn't match their authentication. Kept local because
+// the upstream helper is module-scoped (not exported); duplicating preserves
+// the exact behaviour without requiring an upstream PR.
+function assertIssueCommentAuthorTypeAllowed(
+  actor: { agentId?: string | null; userId?: string | null },
+  authorType: IssueCommentAuthorType,
+) {
+  if (actor.agentId && authorType !== "agent") {
+    throw unprocessable("Comment authorType must match authenticated actor");
+  }
+  if (actor.userId && authorType !== "user") {
+    throw unprocessable("Comment authorType must match authenticated actor");
+  }
+  if (!actor.agentId && !actor.userId && authorType !== "system") {
+    throw unprocessable("System comments cannot use user or agent authorType without an author id");
+  }
+}
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
 //// Neoffice Modification: nora-issue-list-default-limit-cap
 //// Why: The upstream default of 500 issues per /api/companies/:id/issues
@@ -1458,6 +1488,18 @@ const issueListSelect = {
   hiddenAt: issues.hiddenAt,
   createdAt: issues.createdAt,
   updatedAt: issues.updatedAt,
+  // Upstream additions (2026-05 monitor mode + work mode). Selected as
+  // pass-through so the row type satisfies IssueWithLabels even though
+  // the Neoffice UI does not surface these fields. Keeping the columns
+  // adds 7 cheap-int / text-nullable fetches per issue row — negligible
+  // compared to the 25-50× speedup our other listIssues skips provide.
+  workMode: issues.workMode,
+  monitorNextCheckAt: issues.monitorNextCheckAt,
+  monitorWakeRequestedAt: issues.monitorWakeRequestedAt,
+  monitorLastTriggeredAt: issues.monitorLastTriggeredAt,
+  monitorAttemptCount: issues.monitorAttemptCount,
+  monitorNotes: issues.monitorNotes,
+  monitorScheduledBy: issues.monitorScheduledBy,
 };
 
 function withActiveRuns(
@@ -3662,6 +3704,12 @@ export function issueService(db: Db) {
       issueId: string,
       body: string,
       actor: { agentId?: string; userId?: string; runId?: string | null },
+      options?: {
+        authorType?: IssueCommentAuthorType | null;
+        presentation?: IssueCommentPresentation | null;
+        metadata?: IssueCommentMetadata | null;
+        createdAt?: Date | string | null;
+      },
     ) => {
       const issue = await db
         .select({ companyId: issues.companyId })
@@ -3675,6 +3723,13 @@ export function issueService(db: Db) {
         enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
       };
       const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
+      const authorType = issueCommentAuthorTypeSchema.parse(
+        options?.authorType ?? (actor.agentId ? "agent" : actor.userId ? "user" : "system"),
+      );
+      assertIssueCommentAuthorTypeAllowed(actor, authorType);
+      const presentation = issueCommentPresentationSchema.nullable().parse(options?.presentation ?? null);
+      const metadata = issueCommentMetadataSchema.nullable().parse(options?.metadata ?? null);
+      const createdAt = options?.createdAt ? new Date(options.createdAt) : null;
       const [comment] = await db
         .insert(issueComments)
         .values({
@@ -3682,8 +3737,12 @@ export function issueService(db: Db) {
           issueId,
           authorAgentId: actor.agentId ?? null,
           authorUserId: actor.userId ?? null,
+          authorType,
           createdByRunId: actor.runId ?? null,
           body: redactedBody,
+          presentation,
+          metadata,
+          ...(createdAt && !Number.isNaN(createdAt.getTime()) ? { createdAt } : {}),
         })
         .returning();
 

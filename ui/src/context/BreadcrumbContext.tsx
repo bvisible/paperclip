@@ -36,7 +36,20 @@ function breadcrumbsEqual(left: Breadcrumb[], right: Breadcrumb[]) {
   return true;
 }
 
-export function BreadcrumbProvider({ children }: { children: ReactNode }) {
+// Upstream symmetry — upstream exports `buildDocumentTitle(breadcrumbs, companyName)`
+// and accepts `companyName` on BreadcrumbProvider. Notre branche émettait
+// "<page> · NORA" sans companyName ; on aligne la signature pour satisfaire
+// les tests upstream tout en gardant le branding NORA quand IS_NEOFFICE.
+export function buildDocumentTitle(crumbs: Breadcrumb[], companyName?: string | null): string {
+  const pageParts = crumbs.length === 0
+    ? []
+    : [...crumbs].reverse().map((b) => b.label);
+  const companyPart = companyName?.trim() ? [companyName.trim()] : [];
+  const parts = [...pageParts, ...companyPart, TITLE_BRAND];
+  return parts.join(" · ");
+}
+
+export function BreadcrumbProvider({ children, companyName }: { children: ReactNode; companyName?: string | null }) {
   const [breadcrumbs, setBreadcrumbsState] = useState<Breadcrumb[]>([]);
   const [mobileToolbar, setMobileToolbarState] = useState<ReactNode | null>(null);
 
@@ -49,13 +62,8 @@ export function BreadcrumbProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (breadcrumbs.length === 0) {
-      document.title = TITLE_BRAND;
-    } else {
-      const parts = [...breadcrumbs].reverse().map((b) => b.label);
-      document.title = `${parts.join(" · ")} · ${TITLE_BRAND}`;
-    }
-  }, [breadcrumbs]);
+    document.title = buildDocumentTitle(breadcrumbs, companyName);
+  }, [breadcrumbs, companyName]);
 
   return (
     <BreadcrumbContext.Provider value={{ breadcrumbs, setBreadcrumbs, mobileToolbar, setMobileToolbar }}>
