@@ -5,7 +5,7 @@
 //// End Neocompany Modification
 
 import { describe, expect, it } from "vitest";
-import { createStreamJsonParser } from "../stream-parser.js";
+import { createHermesPlainTextParser, createStreamJsonParser } from "../stream-parser.js";
 import type { ChatStreamEvent } from "../types.js";
 
 function collect(): {
@@ -294,5 +294,127 @@ describe("createStreamJsonParser", () => {
       push('{"type":"content_block_delta","delta":{"type":"unknown_delta","text":"nope"}}\n');
       expect(events).toEqual([]);
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Hermes plain-text parser — handles both quiet (-Q) and verbose modes
+// ─────────────────────────────────────────────────────────────────────
+
+function collectHermes(): {
+  events: ChatStreamEvent[];
+  push: (chunk: string) => void;
+  flush: () => void;
+} {
+  const events: ChatStreamEvent[] = [];
+  const parser = createHermesPlainTextParser((event) => {
+    events.push(event);
+  });
+  return { events, push: parser.push.bind(parser), flush: parser.flush.bind(parser) };
+}
+
+describe("createHermesPlainTextParser — quiet mode (-Q)", () => {
+  it("emits each non-meta line as a text event", () => {
+    const { events, push } = collectHermes();
+    push("Hello there.\nHow are you?\nsession_id: abc123\n");
+    expect(events).toEqual([
+      { type: "text", text: "Hello there.\n" },
+      { type: "text", text: "How are you?\n" },
+    ]);
+  });
+
+  it("filters meta prefixes ([tool], [hermes], [paperclip])", () => {
+    const { events, push } = collectHermes();
+    push("[hermes] setup\n[tool] foo\n[paperclip] guard\nActual reply.\n");
+    expect(events).toEqual([{ type: "text", text: "Actual reply.\n" }]);
+  });
+
+  it("filters ISO timestamps and done decoration", () => {
+    const { events, push } = collectHermes();
+    push("[2026-05-18T14:00:00] log\n[done] ┊ end\nReply here.\n");
+    expect(events).toEqual([{ type: "text", text: "Reply here.\n" }]);
+  });
+
+  it("flushes the trailing incomplete line", () => {
+    const { events, push, flush } = collectHermes();
+    push("partial");
+    flush();
+    expect(events).toEqual([{ type: "text", text: "partial\n" }]);
+  });
+});
+
+describe("createHermesPlainTextParser — verbose mode (quiet:false)", () => {
+  it("only emits content inside the ╭─ Hermes box", () => {
+    const { events, push } = collectHermes();
+    push(
+      [
+        "Query: Hello",
+        "Initializing agent...",
+        "────────────────────────────────────────",
+        "",
+        "╭─ ⚕ Hermes ───────────────────────────╮",
+        "    Bonjour !",
+        "    Comment puis-je aider ?",
+        "╰──────────────────────────────────────╯",
+        "",
+        "Resume this session with:",
+        "  hermes --resume 20260518_xxx",
+        "Session:        20260518_xxx",
+        "Duration:       3s",
+        "Messages:       2 (1 user, 0 tool calls)",
+        "",
+      ].join("\n"),
+    );
+    expect(events).toEqual([
+      { type: "text", text: "Bonjour !\n" },
+      { type: "text", text: "Comment puis-je aider ?\n" },
+    ]);
+  });
+
+  it("strips the 4-space indent Hermes adds inside the box", () => {
+    const { events, push } = collectHermes();
+    push("╭─ ⚕ Hermes ─╮\n    indented reply line\n╰─╯\n");
+    expect(events).toEqual([{ type: "text", text: "indented reply line\n" }]);
+  });
+
+  it("emits lines progressively as chunks arrive (token-by-token simulation)", () => {
+    const { events, push } = collectHermes();
+    push("╭─ ⚕ Hermes ─╮\n");
+    expect(events).toEqual([]);
+    push("    1\n");
+    expect(events).toEqual([{ type: "text", text: "1\n" }]);
+    push("    2\n");
+    expect(events).toEqual([
+      { type: "text", text: "1\n" },
+      { type: "text", text: "2\n" },
+    ]);
+    push("╰─╯\n");
+    push("Resume this session with:\n");
+    // Box-end stops emission; postamble is dropped.
+    expect(events).toEqual([
+      { type: "text", text: "1\n" },
+      { type: "text", text: "2\n" },
+    ]);
+  });
+
+  it("ignores tool preview lines (┊ 💻 $ commands) outside the box", () => {
+    const { events, push } = collectHermes();
+    push(
+      [
+        "  ┊ 💻 $   ls -la                    0.4s",
+        "╭─ ⚕ Hermes ─╮",
+        "    Reply.",
+        "╰─╯",
+      ].join("\n") + "\n",
+    );
+    expect(events).toEqual([{ type: "text", text: "Reply.\n" }]);
+  });
+
+  it("handles chunks that split a line across multiple push calls", () => {
+    const { events, push } = collectHermes();
+    push("╭─ ⚕ Hermes ─╮\n    Hello, ");
+    expect(events).toEqual([]);
+    push("world!\n╰─╯\n");
+    expect(events).toEqual([{ type: "text", text: "Hello, world!\n" }]);
   });
 });

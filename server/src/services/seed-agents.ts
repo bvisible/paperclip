@@ -388,6 +388,15 @@ export async function seedDefaultAgentsForCompany(
             // its "Je n'ai pas réussi à traiter cette demande" placeholder).
             // Discovered 2026-05-16 via the agent.log of a Scout run.
             extraArgs: ["--yolo"],
+            // Disable the adapter's `-Q` quiet flag so Hermes streams its
+            // response line-by-line to stdout (with the `╭─ ⚕ Hermes ─╮`
+            // box decoration). With -Q on, Hermes buffers and flushes the
+            // entire response in one stdout write at the end — the chat UI
+            // only sees the reply at done-time. createHermesPlainTextParser
+            // strips the box decoration + headers so the chat bubble fills
+            // in progressively. Verified 2026-05-18 by timestamping each
+            // line of `hermes chat ... --yolo` vs `... -Q --yolo`.
+            quiet: false,
             // Override the adapter's heartbeat DEFAULT_PROMPT_TEMPLATE with
             // a chat-oriented one. Paired with registry.ts injectChatPrompt
             // which copies ctx.context.chatPrompt → ctx.config.taskBody so

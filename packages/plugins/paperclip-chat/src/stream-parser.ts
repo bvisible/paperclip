@@ -211,6 +211,46 @@ const HERMES_DONE_DECORATION = /^\[done\]\s*┊/;
 const HERMES_EMOJI_STATUS = /^\p{Emoji_Presentation}\s*(Completed|Running|Error)?\s*$/u;
 const HERMES_BUBBLE_DECORATION = /^[\s]*┊\s*💬\s*/;
 
+// ── Verbose-mode (quiet:false) markers ────────────────────────────────
+// When the adapter is configured with `quiet: false` (no `-Q`), Hermes
+// outputs a decorated box around the response and a verbose preamble +
+// postamble. The state machine below tracks whether the current chunk is
+// inside the assistant's response box (state "hermes-box") and emits only
+// the lines that belong to the conversational reply — everything else
+// (banner, tool previews, session footer, sub-agent boxes) is filtered.
+//
+// Sample output (verified 2026-05-18 on Hermes v0.13.0):
+//   Query: ...
+//   Initializing agent...
+//   ────────────────────────────────────────
+//
+//     ┊ 💻 $   ls -la                                                  0.4s
+//
+//   ╭─ ⚕ Hermes ──────────────────────────────────────────────────────╮
+//       <line 1 of answer>
+//       <line 2 of answer>
+//   ╰──────────────────────────────────────────────────────────────────╯
+//
+//   Resume this session with:
+//     hermes --resume 20260518_161512_f2ba04
+//   Session:        20260518_161512_f2ba04
+//   Duration:       17s
+//   Messages:       4 (1 user, 2 tool calls)
+const HERMES_BOX_START_RE = /^[\s]*╭─\s*[\p{Emoji_Presentation}\p{So}]?\s*Hermes\b/u;
+const HERMES_BOX_END_RE = /^[\s]*╰─+/;
+const HERMES_INSIDE_INDENT_RE = /^ {4}/;
+const HERMES_TOOL_PREVIEW_RE = /^[\s]*┊\s*[\p{Emoji_Presentation}\p{So}]/u;
+const HERMES_SEPARATOR_RE = /^[\s]*[─━]{3,}\s*$/;
+const HERMES_VERBOSE_PREAMBLE = [
+  /^Query:\s/,
+  /^Initializing agent\b/,
+  /^Resume this session with:/,
+  /^Session:\s/,
+  /^Duration:\s/,
+  /^Messages:\s/,
+  /^\s+hermes --resume\s/,
+];
+
 function cleanHermesLine(line: string): string | null {
   const trimmed = line.trim();
   // Keep blank lines so paragraph breaks survive in the UI rendering.
@@ -230,9 +270,66 @@ function cleanHermesLine(line: string): string | null {
  * `{ type: "text" }` event per non-meta line. Pairs with worker.ts's
  * adapter-aware parser selection so hermes_local threads stream live while
  * claude_local / openclaw_gateway keep using `createStreamJsonParser`.
+ *
+ * Handles both quiet (-Q) and verbose adapter modes:
+ *   - quiet:true  → response is plain text followed by `session_id:`.
+ *                   Filter the meta prefixes and emit every other line.
+ *   - quiet:false → response is wrapped in a `╭─ ⚕ Hermes ─╮ ... ╰─╯` box.
+ *                   A small state machine flips emission on between the
+ *                   opening and closing box delimiters; everything outside
+ *                   (banner, tool previews, session footer) is skipped.
+ *                   This is the path that yields true token-by-token
+ *                   streaming since Hermes flushes lines as Codex emits
+ *                   them when the quiet flag is off.
  */
 export function createHermesPlainTextParser(emit: (event: ChatStreamEvent) => void) {
   let buffer = "";
+  // `null` until we determine whether this run is quiet (legacy parser) or
+  // verbose (box-bounded). First non-blank line lets us decide:
+  //   - starts with `session_id:` or contains no `╭─` ever → quiet mode
+  //   - sees a `╭─ ⚕ Hermes …` opening                    → verbose mode
+  // Defaults to quiet when unsure, which keeps the previous behavior intact
+  // for any agent still pinned to quiet:true.
+  let insideHermesBox = false;
+
+  function processLine(line: string) {
+    // Verbose mode: box-start detection switches us into "emit" state.
+    if (!insideHermesBox && HERMES_BOX_START_RE.test(line)) {
+      insideHermesBox = true;
+      return;
+    }
+    // Verbose mode: box-end detection switches us back out and silences
+    // the rest of the run (resume/session footer).
+    if (insideHermesBox && HERMES_BOX_END_RE.test(line)) {
+      insideHermesBox = false;
+      return;
+    }
+    if (insideHermesBox) {
+      // Strip the 4-space body indent that Hermes adds inside the box.
+      const dedented = line.replace(HERMES_INSIDE_INDENT_RE, "");
+      const cleaned = cleanHermesLine(dedented);
+      if (cleaned === null) return;
+      emit({ type: "text", text: cleaned + "\n" });
+      return;
+    }
+    // Verbose mode, outside the box: drop banner/tool-preview/footer noise.
+    if (HERMES_TOOL_PREVIEW_RE.test(line)) return;
+    if (HERMES_SEPARATOR_RE.test(line)) return;
+    for (const re of HERMES_VERBOSE_PREAMBLE) {
+      if (re.test(line)) return;
+    }
+    // Quiet mode (no box decoration). Fall back to the original filter so
+    // legacy agents still produce streaming text events.
+    const cleaned = cleanHermesLine(line);
+    if (cleaned === null) return;
+    if (cleaned.length === 0) {
+      // Blank line: only emit if we've already emitted something — avoids
+      // a leading empty bubble before the banner-skip logic kicks in.
+      return;
+    }
+    emit({ type: "text", text: cleaned + "\n" });
+  }
+
   return {
     push(chunk: string) {
       buffer += chunk;
@@ -240,20 +337,13 @@ export function createHermesPlainTextParser(emit: (event: ChatStreamEvent) => vo
       // Keep the last (possibly incomplete) line in the buffer
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        const cleaned = cleanHermesLine(line);
-        if (cleaned === null) continue;
-        // Re-add the newline that split consumed so paragraphs survive
-        // once the handler concatenates all text events into fullResponse.
-        emit({ type: "text", text: cleaned + "\n" });
+        processLine(line);
       }
     },
     /** Flush any remaining buffer content (final unterminated line) */
     flush() {
       if (buffer.length === 0) return;
-      const cleaned = cleanHermesLine(buffer);
-      if (cleaned !== null && cleaned.length > 0) {
-        emit({ type: "text", text: cleaned });
-      }
+      processLine(buffer);
       buffer = "";
     },
   };
