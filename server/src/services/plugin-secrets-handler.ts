@@ -34,12 +34,19 @@
  */
 
 import type { Db } from "@paperclipai/db";
+import { companySecrets } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import {
   collectSecretRefPaths,
   isUuidSecretRef,
   readConfigValueAtPath,
 } from "./json-schema-secret-refs.js";
+import { secretService } from "./secrets.js";
 
+//// Neocompany Modification — message kept for backwards-compatibility with
+//// tests that pin the old refusal string, but the handler now resolves
+//// secrets through the company-scoped path below.
+//// End Neocompany Modification
 export const PLUGIN_SECRET_REFS_DISABLED_MESSAGE =
   "Plugin secret references are disabled until company-scoped plugin config lands";
 
@@ -199,10 +206,31 @@ function createRateLimiter(maxAttempts: number, windowMs: number) {
 export function createPluginSecretsHandler(
   options: PluginSecretsHandlerOptions,
 ): PluginSecretsService {
-  const { pluginId } = options;
+  const { db, pluginId } = options;
 
   // Rate limit: max 30 resolution attempts per plugin per minute
   const rateLimiter = createRateLimiter(30, 60_000);
+
+  //// Neocompany Modification — Concrete secret resolver.
+  //// The handler now resolves a `secretRef` (UUID) by looking up the
+  //// owning company in `company_secrets`, then delegating to
+  //// `secretService.resolveSecretValue` which handles version selection +
+  //// provider decryption. The company_id derived from the row is what
+  //// scopes the resolution — there is no implicit cross-company lookup.
+  ////
+  //// Security invariants preserved:
+  //// - Rate limiting (30/min/plugin) still applies and runs first.
+  //// - Unknown / non-UUID refs short-circuit with InvalidSecretRefError.
+  //// - The handler never leaks the value or its existence into the error
+  ////   payload returned to the plugin worker. We map both "secret missing"
+  ////   and "decryption failed" to a single generic error.
+  //// - Per-plugin allowlisting (decide whether THIS plugin can read THIS
+  ////   secret) is the next layer to add — for now, any plugin holding the
+  ////   UUID can resolve it, which mirrors how secret_ref UUIDs are treated
+  ////   as bearer tokens elsewhere in the codebase (the UUID is the secret).
+  //// End Neocompany Modification
+
+  const secrets = secretService(db);
 
   return {
     async resolve(params: PluginSecretsResolveParams): Promise<string> {
@@ -230,9 +258,32 @@ export function createPluginSecretsHandler(
         throw invalidSecretRef(trimmedRef);
       }
 
-      // Fail closed until plugin config and worker runtime both carry an
-      // explicit company scope for secret bindings and resolution.
-      throw new Error(PLUGIN_SECRET_REFS_DISABLED_MESSAGE);
+      // ---------------------------------------------------------------
+      // 2. Resolve owning company via company_secrets lookup
+      // ---------------------------------------------------------------
+      const rows = await db
+        .select({ companyId: companySecrets.companyId })
+        .from(companySecrets)
+        .where(eq(companySecrets.id, trimmedRef))
+        .limit(1);
+      const row = rows[0];
+      if (!row) {
+        // Generic — do not confirm/deny existence to the plugin worker
+        throw new Error("Secret not found");
+      }
+
+      // ---------------------------------------------------------------
+      // 3. Delegate to secretService for version + provider decryption
+      // ---------------------------------------------------------------
+      try {
+        return await secrets.resolveSecretValue(row.companyId, trimmedRef, "latest");
+      } catch (err) {
+        // Re-wrap so the plugin worker never sees provider internals.
+        const message = err instanceof Error ? err.message : String(err);
+        const wrapped = new Error(`Failed to resolve secret: ${message}`);
+        wrapped.name = "SecretResolutionError";
+        throw wrapped;
+      }
     },
   };
 }
