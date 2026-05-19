@@ -17,6 +17,7 @@ import { runImapPollJob } from "./email/poller.js";
 import { pollImapAccount } from "./email/imap-client.js";
 import type { EmailAccountData } from "./email/types.js";
 import { IMAGE_ENTITY_TYPE, type GeneratedImageData } from "./images/types.js";
+import type { BrandTemplateData } from "./templates/types.js";
 import { getProvider, listAvailableProviders } from "./integrations/registry.js";
 import type {
   PendingOAuthState,
@@ -579,6 +580,64 @@ const plugin = definePlugin({
       });
 
       return { ok: true, templateId };
+    });
+
+    //// Neocompany Modification — bridge action mirror of the templateApply tool.
+    //// The tool route (POST /api/plugins/tools/execute) requires a full
+    //// validated runContext (agent + heartbeat run + project all belonging
+    //// to the company), which makes sense for agent-initiated calls but
+    //// blocks board users who just want to render a PNG preview from the
+    //// template editor. Exposing the same compositing logic as an action
+    //// lets the UI call it via the bridge with only companyId + params,
+    //// which the bridge already authorizes via assertCompanyAccess.
+    //// End Neocompany Modification
+    ctx.actions.register("templateApply", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const templateId = params.templateId as string;
+      const sourceImageUrl = params.sourceImageUrl as string | undefined;
+      const logoUrl = params.logoUrl as string | undefined;
+      if (!companyId || !templateId || !sourceImageUrl) {
+        throw new Error("templateApply requires companyId, templateId and sourceImageUrl");
+      }
+      // Fetch the template entity by externalId stable slug, with a fallback
+      // to legacy rows referenced by internal UUID (same logic as the tool).
+      const externalMatches = await ctx.entities.list({
+        entityType: "brand_template",
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: templateId,
+        limit: 1,
+      });
+      let record = externalMatches[0] as typeof externalMatches[0] | undefined;
+      if (!record) {
+        const all = await ctx.entities.list({
+          entityType: "brand_template",
+          scopeKind: "company",
+          scopeId: companyId,
+        });
+        record = all.find((r) => r.id === templateId);
+      }
+      if (!record) throw new Error(`Template "${templateId}" not found in company`);
+      const tplData = record.data as { config: BrandTemplateData["config"]; width: number; height: number; name?: string };
+      const { compositeImage } = await import("./templates/compositor.js");
+      const result = await compositeImage(
+        sourceImageUrl,
+        tplData.config,
+        tplData.width,
+        tplData.height,
+        logoUrl,
+      );
+      const base64 = result.buffer.toString("base64");
+      const dataUrl = `data:${result.mimeType};base64,${base64}`;
+      return {
+        templateId,
+        templateName: tplData.name ?? "template",
+        width: tplData.width,
+        height: tplData.height,
+        sizeKb: Math.round(result.buffer.length / 1024),
+        mimeType: result.mimeType,
+        processedImageDataUrl: dataUrl,
+      };
     });
 
     // ── Data + Actions: generated-image stock ───────────────────────

@@ -184,28 +184,33 @@ export function ContentTemplateEditor() {
       }, selectedCompanyId);
       const savedId = (res as { data?: { templateId?: string } }).data?.templateId ?? templateId;
       // Then apply
-      const applyRes = await fetch(`/api/plugins/tools/execute`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tool: "neocompany-tools:templateApply",
-          parameters: {
-            templateId: savedId,
-            sourceImageUrl: sampleImageUrl ?? SAMPLE_IMAGES[1].url,
-            logoUrl,
-          },
-          runContext: {
-            agentId: "00000000-0000-0000-0000-000000000000",
-            runId: `export-${Date.now()}`,
-            companyId: selectedCompanyId,
-            projectId: selectedCompanyId,
-          },
-        }),
-      });
-      const body = await applyRes.json();
-      if (body.result?.error) throw new Error(body.result.error);
-      return body.result.data?.processedImageDataUrl as string;
+      //// Neocompany Modification — board users export via the bridge action
+      //// instead of /api/plugins/tools/execute. The tool endpoint requires a
+      //// validated runContext (real agent + heartbeat run + project, all
+      //// in the same company); a board user driving the editor by hand
+      //// has none of those. The action mirror in the worker (registered
+      //// alongside templateSave) takes only the params and uses
+      //// assertCompanyAccess at the bridge layer for authz.
+      const res2 = await pluginsApi.bridgePerformAction(
+        pluginId,
+        "templateApply",
+        {
+          //// Neocompany Modification — companyId must be in `params` too,
+          //// not just the bridge-level field, because the worker handler
+          //// reads `params.companyId` (mirroring the templateSave handler).
+          companyId: selectedCompanyId,
+          templateId: savedId,
+          sourceImageUrl: sampleImageUrl ?? SAMPLE_IMAGES[1].url,
+          logoUrl,
+        },
+        selectedCompanyId,
+      );
+      const data = (res2 as { data?: { processedImageDataUrl?: string } }).data;
+      const dataUrl = data?.processedImageDataUrl;
+      if (!dataUrl) {
+        throw new Error("templateApply returned no image — check the worker logs for the composite step");
+      }
+      return dataUrl;
     },
     onSuccess: (dataUrl) => {
       if (!dataUrl) return;

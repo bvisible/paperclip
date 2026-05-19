@@ -12,6 +12,15 @@ interface TemplateCanvasProps {
   sampleImageUrl?: string;
   scale?: number;          // default 0.5
   showLabel?: boolean;     // shows dimensions badge
+  /**
+   * When true (default) the canvas shows authoring decorations: dashed
+   * borders around text zones, a green "Logo" placeholder when no logoUrl
+   * is provided, and a dimensions badge. These help the operator place
+   * elements in the editor view. Set to `false` for read-only previews
+   * (template list cards, multi-format preview, exports) so the result
+   * matches what a viewer will actually see.
+   */
+  showGuides?: boolean;
 }
 
 /**
@@ -26,6 +35,7 @@ export function TemplateCanvas({
   sampleImageUrl,
   scale = 0.5,
   showLabel = true,
+  showGuides = true,
 }: TemplateCanvasProps) {
   const canvasWidth = width * scale;
   const canvasHeight = height * scale;
@@ -92,7 +102,11 @@ export function TemplateCanvas({
       {(config.textZones || []).map((zone) => (
         <div
           key={zone.id}
-          className="absolute border border-dashed border-blue-400/70 bg-blue-400/5 flex items-center overflow-hidden"
+          className={
+            showGuides
+              ? "absolute border border-dashed border-blue-400/70 bg-blue-400/5 flex items-center overflow-hidden"
+              : "absolute flex items-center overflow-hidden"
+          }
           style={{
             left: (zone.x / 100) * canvasWidth,
             top: (zone.y / 100) * canvasHeight,
@@ -132,7 +146,10 @@ export function TemplateCanvas({
           <img src={logoUrl} alt="" className="w-full h-full object-contain" />
         </div>
       )}
-      {logoPosition && !logoUrl && (
+      {/* Logo placeholder only shown in editor mode (showGuides). In
+          read-only previews we just omit the logo when there's no asset
+          — the rendered image is what the viewer will see. */}
+      {showGuides && logoPosition && !logoUrl && (
         <div
           className="absolute border-2 border-dashed border-green-500/70 bg-green-500/10 flex items-center justify-center"
           style={{
@@ -146,8 +163,8 @@ export function TemplateCanvas({
         </div>
       )}
 
-      {/* Dimensions label */}
-      {showLabel && (
+      {/* Dimensions label — also opt-in via showGuides so previews are clean. */}
+      {showLabel && showGuides && (
         <div className="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white font-medium tabular-nums">
           {width}×{height}
         </div>

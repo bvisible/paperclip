@@ -36,6 +36,10 @@ export function CanvasPreviewGrid({ config, logoUrl }: Props) {
               sampleImageUrl={sample.url}
               scale={scale}
               showLabel={false}
+              //// Neocompany Modification — multi-format preview is read-only;
+              //// guides belong in the main authoring canvas above, not here.
+              showGuides={false}
+              //// End Neocompany Modification
             />
             <span className="text-xs text-muted-foreground">{fmt.label}</span>
           </div>

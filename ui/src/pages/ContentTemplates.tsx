@@ -219,6 +219,12 @@ function TemplateCard({
             sampleImageUrl="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600"
             scale={cardScale}
             showLabel
+            //// Neocompany Modification — the template list card shows the
+            //// final rendered look (what a viewer will see), not the editor
+            //// authoring chrome. Without showGuides:false the card would
+            //// leak dashed text zone outlines and a green "Logo" placeholder
+            //// box when the company has no logo asset configured.
+            showGuides={false}
           />
         ) : (
           <div className="flex items-center justify-center text-muted-foreground" style={{ width: t.width * cardScale, height: t.height * cardScale }}>
