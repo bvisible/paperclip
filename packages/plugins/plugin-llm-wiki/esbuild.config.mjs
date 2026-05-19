@@ -22,7 +22,6 @@ const uiCtx = await esbuild.context(presets.esbuild.ui);
 const templatesCtx = await esbuild.context({
   ...presets.esbuild.manifest,
   entryPoints: ["src/templates.ts"],
-  outfile: "dist/templates.js",
 });
 //// End Neoffice Modification: wiki-plugin-templates-bundle-fix
 
