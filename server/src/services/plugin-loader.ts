@@ -1932,7 +1932,16 @@ export function pluginLoader(
       // ------------------------------------------------------------------
       const toolDeclarations = manifest.tools ?? [];
       if (toolDeclarations.length > 0) {
-        toolDispatcher.registerPluginTools(pluginKey, manifest);
+        //// Neoffice Modification: plugin-tool-dispatcher-passthrough-dbid
+        //// Why: NORA Sprint J (2026-05-19) — pass plugin DB UUID so each
+        ////      registered tool carries the right pluginDbId. Without it
+        ////      the wrapper fell back to pluginKey, which is not what
+        ////      workerManager indexes by → every tool call returned 502
+        ////      "worker is not running" even on a ready plugin.
+        //// Date: 2026-05-19
+        //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+        toolDispatcher.registerPluginTools(pluginKey, manifest, pluginId);
+        //// End Neoffice Modification: plugin-tool-dispatcher-passthrough-dbid
         registered.tools = toolDeclarations.length;
 
         log.info(

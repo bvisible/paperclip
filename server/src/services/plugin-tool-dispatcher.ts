@@ -152,10 +152,27 @@ export interface PluginToolDispatcher {
    *
    * @param pluginId - The plugin's unique identifier
    * @param manifest - The plugin manifest containing tool declarations
+   * @param pluginDbId - The plugin's database UUID, required for worker routing.
+   *                    If omitted, falls back to pluginId (legacy callers).
    */
   registerPluginTools(
     pluginId: string,
     manifest: PaperclipPluginManifestV1,
+    //// Neoffice Modification: plugin-tool-dispatcher-passthrough-dbid
+    //// Why: NORA Sprint J (2026-05-19) — without the optional pluginDbId
+    ////      parameter, the wrapper (lines ~429-433) registers tools with
+    ////      pluginDbId === pluginKey (the namespaced string). At runtime,
+    ////      PluginToolRegistry.executeTool calls workerManager.isRunning(dbId)
+    ////      where dbId === tool.pluginDbId, but workerManager indexes
+    ////      workers by plugin DB UUID, not by pluginKey. Result: every
+    ////      tool execution returns 502 "worker for plugin is not running"
+    ////      even when the worker is running and responding to API requests.
+    ////      Fix: thread the DB UUID through to the registry so dbId routes
+    ////      correctly.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+    pluginDbId?: string,
+    //// End Neoffice Modification: plugin-tool-dispatcher-passthrough-dbid
   ): void;
 
   /**
@@ -429,8 +446,15 @@ export function createPluginToolDispatcher(
     registerPluginTools(
       pluginId: string,
       manifest: PaperclipPluginManifestV1,
+      //// Neoffice Modification: plugin-tool-dispatcher-passthrough-dbid
+      //// Why: see interface declaration above — required so tools are
+      ////      registered with their DB UUID and worker lookups resolve.
+      //// Date: 2026-05-19
+      //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+      pluginDbId?: string,
+      //// End Neoffice Modification: plugin-tool-dispatcher-passthrough-dbid
     ): void {
-      registry.registerPlugin(pluginId, manifest);
+      registry.registerPlugin(pluginId, manifest, pluginDbId);
     },
 
     unregisterPluginTools(pluginId: string): void {
