@@ -304,6 +304,30 @@ export function secretService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  //// Neocompany Modification — defense-in-depth: company-scoped secret lookup.
+  //// getById() above takes an id alone, which means a malformed or compromised
+  //// caller could fetch a row for any tenant before the post-fetch
+  //// companyId check rejects it. getByIdInCompany filters both id and
+  //// companyId in the same SQL WHERE, so the row is never read from disk
+  //// unless it actually belongs to the caller. Internal helpers that already
+  //// know which company they're operating on (assertSecretInCompany,
+  //// resolveSecretValueInternal) use this variant; the original getById
+  //// stays available for the few admin paths that legitimately need an
+  //// id-only lookup, but those should call assertSecretInCompany straight
+  //// after for the same defense.
+  async function getByIdInCompany(
+    id: string,
+    companyId: string,
+    source: Pick<Db | DbTransaction, "select"> = db,
+  ) {
+    return source
+      .select()
+      .from(companySecrets)
+      .where(and(eq(companySecrets.id, id), eq(companySecrets.companyId, companyId)))
+      .then((rows) => rows[0] ?? null);
+  }
+  //// End Neocompany Modification
+
   async function getByName(companyId: string, name: string) {
     return db
       .select()
@@ -408,10 +432,12 @@ export function secretService(db: Db) {
     secretId: string,
     source: Pick<Db | DbTransaction, "select"> = db,
   ) {
-    const secret = await getById(secretId, source);
+    //// Neocompany Modification — fetch scoped to (id, companyId) so a wrong
+    //// companyId never even materializes the row in memory.
+    const secret = await getByIdInCompany(secretId, companyId, source);
     if (!secret) throw notFound("Secret not found");
     if (secret.status === "deleted") throw notFound("Secret not found");
-    if (secret.companyId !== companyId) throw unprocessable("Secret must belong to same company");
+    //// End Neocompany Modification
     return secret;
   }
 
@@ -537,9 +563,10 @@ export function secretService(db: Db) {
     version: number | "latest",
     context?: SecretConsumerContext,
   ): Promise<RuntimeSecretResolution> {
-    const secret = await getById(secretId);
+    //// Neocompany Modification — defense-in-depth, see getByIdInCompany.
+    const secret = await getByIdInCompany(secretId, companyId);
     if (!secret) throw notFound("Secret not found");
-    if (secret.companyId !== companyId) throw unprocessable("Secret must belong to same company");
+    //// End Neocompany Modification
     const resolvedVersion = version === "latest" ? secret.latestVersion : version;
     const providerId = secret.provider as SecretProvider;
     const configPath = context?.configPath ?? null;

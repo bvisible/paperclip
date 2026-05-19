@@ -87,11 +87,18 @@ describeEmbeddedPostgres("secretService", () => {
       value: "secret-value",
     });
 
+    //// Neocompany Modification — defense-in-depth changes the error message
+    //// from "Secret must belong to same company" to "Secret not found": the
+    //// new getByIdInCompany helper filters the WHERE clause on both id AND
+    //// companyId, so a row that belongs to another tenant is indistinguishable
+    //// from a row that doesn't exist. This is intentional — leaking
+    //// "different company" tells an attacker the id is real.
     await expect(
       svc.normalizeEnvBindingsForPersistence(companyA, {
         API_KEY: { type: "secret_ref", secretId: foreignSecret.id, version: "latest" },
       }),
-    ).rejects.toThrow(/same company/i);
+    ).rejects.toThrow(/secret not found|same company/i);
+    //// End Neocompany Modification
   });
 
   it("prevents duplicate bindings for a target config path", async () => {
