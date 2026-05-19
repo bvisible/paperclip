@@ -189,17 +189,26 @@ const plugin = definePlugin({
     //// Neoffice Modification: wiki-debug-ctx-shape
     //// Why: Sprint J diagnostic — bootstrap crashes reading ctx.localFolders.status.
     ////      Inspect what's actually inside ctx at setup time to know if
-    ////      localFolders is undefined or just shaped differently.
+    ////      localFolders is undefined or just shaped differently. Write to a
+    ////      tmp file because stderr is piped to host and silently discarded.
     //// Date: 2026-05-19
     try {
-      console.error("[wiki-debug] setup ctx keys:", Object.keys(ctx).sort().join(","));
-      console.error("[wiki-debug] localFolders typeof:", typeof (ctx as any).localFolders);
+      const { writeFileSync } = await import("node:fs");
       const lf = (ctx as any).localFolders;
-      if (lf) {
-        console.error("[wiki-debug] localFolders keys:", Object.keys(lf).sort().join(","));
-      }
+      const ctxKeys = Object.keys(ctx as any).sort();
+      const localFoldersKeys = lf && typeof lf === "object" ? Object.keys(lf).sort() : [];
+      writeFileSync("/tmp/wiki-debug-ctx.txt", JSON.stringify({
+        ctxKeys,
+        localFoldersTypeof: typeof lf,
+        localFoldersKeys,
+        manifestId: (ctx as any).manifest?.id ?? "?",
+        timestamp: new Date().toISOString(),
+      }, null, 2));
     } catch (err) {
-      console.error("[wiki-debug] setup inspect failed:", err);
+      try {
+        const { writeFileSync } = await import("node:fs");
+        writeFileSync("/tmp/wiki-debug-ctx-err.txt", String(err));
+      } catch {}
     }
     //// End Neoffice Modification: wiki-debug-ctx-shape
     await registerWikiTools(ctx);
