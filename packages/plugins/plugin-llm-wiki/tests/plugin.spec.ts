@@ -666,22 +666,39 @@ describe("LLM Wiki plugin scaffold", () => {
       "wiki/log.md",
     ]);
     expect(manifest.agents?.[0]?.agentKey).toBe("wiki-maintainer");
-    expect(manifest.agents?.[0]?.adapterType).toBe("claude_local");
+    //// Neoffice Modification: wiki-maintainer-process-adapter
+    //// Why: NORA Sprint I/J (2026-05-19) — the NORA warm V8 pool only
+    ////      routes through `process` adapter (forwards to Olares Qwen3.6
+    ////      on https://olares1.noraai.ch). The upstream defaults
+    ////      `claude_local` + sandbox=true require the Claude Agent SDK
+    ////      and a sandbox provider that is not wired in our stack.
+    ////      Manifest source-of-truth was switched to "process" / sandbox
+    ////      false in manifest.ts; this test mirrors the fork value.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+    expect(manifest.agents?.[0]?.adapterType).toBe("process");
     expect(manifest.agents?.[0]?.adapterConfig).toMatchObject({
       dangerouslySkipPermissions: false,
       dangerouslyBypassApprovalsAndSandbox: false,
-      sandbox: true,
+      sandbox: false,
     });
+    //// End Neoffice Modification: wiki-maintainer-process-adapter
     expect(manifest.agents?.[0]?.instructions?.entryFile).toBe("AGENTS.md");
     expect(manifest.agents?.[0]?.instructions?.content).toContain("You are the maintainer of this personal wiki");
     expect(manifest.agents?.[0]?.instructions?.files?.["AGENTS.md"]).toContain("{{localFolders.wiki-root.path}}");
     expect(manifest.agents?.[0]?.instructions?.assetPath).toBe("agents/wiki-maintainer");
     expect(manifest.projects?.[0]?.projectKey).toBe("llm-wiki");
+    //// Neoffice Modification: wiki-routines-erp-snapshots
+    //// Why: NORA Sprint J added 5 ERP→wiki snapshot routines beyond the
+    ////      upstream trio. The single source of truth for the expected
+    ////      routine list is WIKI_MAINTENANCE_ROUTINE_KEYS itself; this
+    ////      assertion now reflects that rather than a hard-coded subset.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
     expect(manifest.routines?.map((routine) => routine.routineKey)).toEqual([
-      CURSOR_WINDOW_ROUTINE_KEY,
-      NIGHTLY_LINT_ROUTINE_KEY,
-      INDEX_REFRESH_ROUTINE_KEY,
+      ...WIKI_MAINTENANCE_ROUTINE_KEYS,
     ]);
+    //// End Neoffice Modification: wiki-routines-erp-snapshots
     expect(manifest.routines).toEqual(
       WIKI_MAINTENANCE_ROUTINE_KEYS.map((routineKey) => expect.objectContaining({
         routineKey,
@@ -695,13 +712,31 @@ describe("LLM Wiki plugin scaffold", () => {
         }),
       })),
     );
+    //// Neoffice Modification: wiki-routines-erp-snapshots
+    //// Why: NORA Sprint J ERP→wiki routines (nora-erp-snapshot-*) have
+    ////      pragmatic, ERP-focused descriptions that intentionally do NOT
+    ////      include the upstream incantations ("Run procedure:", "Target
+    ////      space: default", "spaceSlug `default`", AGENTS.md, log.md
+    ////      references) because they materialise snapshots from Frappe
+    ////      and only write to wiki/synthesis or wiki/concepts. The
+    ////      upstream contract test still applies to the 3 generic
+    ////      maintenance routines (cursor-window, lint, index-refresh).
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+    const UPSTREAM_GENERIC_ROUTINE_KEYS = new Set<string>([
+      CURSOR_WINDOW_ROUTINE_KEY,
+      NIGHTLY_LINT_ROUTINE_KEY,
+      INDEX_REFRESH_ROUTINE_KEY,
+    ]);
     for (const routine of manifest.routines ?? []) {
+      if (!UPSTREAM_GENERIC_ROUTINE_KEYS.has(routine.routineKey)) continue;
       expect(routine.description).toContain("Run procedure:");
       expect(routine.description).toContain("Target space: default (slug: default)");
       expect(routine.description).toContain("spaceSlug `default`");
       expect(routine.description).toContain("AGENTS.md");
       expect(routine.description).toContain("wiki/log.md");
     }
+    //// End Neoffice Modification: wiki-routines-erp-snapshots
     expect(manifest.tools?.map((tool) => tool.name)).toEqual([
       "wiki_search",
       "wiki_read_page",
