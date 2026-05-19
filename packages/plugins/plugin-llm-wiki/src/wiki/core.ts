@@ -2185,14 +2185,28 @@ export async function bootstrapWikiRoot(ctx: PluginContext, input: BootstrapInpu
       requiredDirectories: [...REQUIRED_WIKI_DIRECTORIES],
       requiredFiles: [...REQUIRED_WIKI_FILES],
     });
+  //// Neoffice Modification: wiki-bootstrap-localfolders-defensive
+  //// Why: Sprint J — on Neoffice the `ctx.localFolders` proxy can be undefined
+  ////      in the worker context received by `bootstrapWikiRoot` (bug we hit
+  ////      consistently in plugin alpha). Guard each access so we fall back to
+  ////      a `{ configured: false, path: null }` stub instead of crashing with
+  ////      "Cannot read properties of undefined (reading 'status')".
+  ////      When localFolders is reachable we behave like upstream.
+  //// Date: 2026-05-19
+  //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+  const safeFolderStatus = async () => {
+    if (!ctx.localFolders) return { configured: false, path: null } as unknown as Awaited<ReturnType<typeof ctx.localFolders.status>>;
+    return ctx.localFolders.status(input.companyId, WIKI_ROOT_FOLDER_KEY);
+  };
   const currentFolder = input.path
     ? null
-    : await ctx.localFolders.status(input.companyId, WIKI_ROOT_FOLDER_KEY);
+    : await safeFolderStatus();
   const folder = input.path
     ? await configureFolder(input.path)
     : currentFolder?.configured && currentFolder.path
       ? await configureFolder(currentFolder.path)
-      : currentFolder ?? await ctx.localFolders.status(input.companyId, WIKI_ROOT_FOLDER_KEY);
+      : currentFolder ?? await safeFolderStatus();
+  //// End Neoffice Modification: wiki-bootstrap-localfolders-defensive
 
   const writtenFiles: string[] = [];
   const preservedFiles: string[] = [];
