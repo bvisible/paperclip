@@ -186,6 +186,22 @@ function withManagedRoutineDefaultDrift(
 const plugin = definePlugin({
   async setup(ctx) {
     activeContext = ctx;
+    //// Neoffice Modification: wiki-debug-ctx-shape
+    //// Why: Sprint J diagnostic — bootstrap crashes reading ctx.localFolders.status.
+    ////      Inspect what's actually inside ctx at setup time to know if
+    ////      localFolders is undefined or just shaped differently.
+    //// Date: 2026-05-19
+    try {
+      console.error("[wiki-debug] setup ctx keys:", Object.keys(ctx).sort().join(","));
+      console.error("[wiki-debug] localFolders typeof:", typeof (ctx as any).localFolders);
+      const lf = (ctx as any).localFolders;
+      if (lf) {
+        console.error("[wiki-debug] localFolders keys:", Object.keys(lf).sort().join(","));
+      }
+    } catch (err) {
+      console.error("[wiki-debug] setup inspect failed:", err);
+    }
+    //// End Neoffice Modification: wiki-debug-ctx-shape
     await registerWikiTools(ctx);
 
     for (const eventName of PAPERCLIP_EVENT_INGESTION_EVENTS) {
