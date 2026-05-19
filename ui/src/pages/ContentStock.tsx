@@ -75,6 +75,23 @@ export function ContentStock() {
   //// "Image details" drawer for a generated image — shows its refs +
   //// prompt + provider + template. Clicked from the card itself.
   const [detailsImage, setDetailsImage] = useState<(GeneratedImage & { source: ImageSource }) | null>(null);
+  //// Catalog product pre-fill — when the user lands on this page with a
+  //// `?productId=wc-123` query param (typically clicked "Générer" on a
+  //// product card in /content/catalog), auto-open the Generate dialog
+  //// with that product selected.
+  const [pendingProductId, setPendingProductId] = useState<string>("");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pid = params.get("productId");
+    if (pid) {
+      setPendingProductId(pid);
+      setShowGenerate(true);
+      // Clean up the URL so a reload doesn't keep reopening the dialog.
+      params.delete("productId");
+      const cleaned = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
+      window.history.replaceState(null, "", cleaned);
+    }
+  }, []);
   //// End Neocompany Modification
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -298,15 +315,20 @@ export function ContentStock() {
           //// Neocompany Modification — pre-fill the picker when the user
           //// arrived via "Utiliser comme référence" on a card.
           initialReferenceIds={pendingRefIds}
+          //// Pre-select a catalog product when arrived via /content/catalog
+          //// "Générer" button (?productId=…).
+          initialProductId={pendingProductId || undefined}
           //// End Neocompany Modification
           libraryUploads={normalized.filter((i) => i.source === "upload" && i.status === "approved")}
           onClose={() => {
             setShowGenerate(false);
             setPendingRefIds([]);
+            setPendingProductId("");
           }}
           onSuccess={() => {
             setShowGenerate(false);
             setPendingRefIds([]);
+            setPendingProductId("");
             qc.invalidateQueries({ queryKey: ["generated-images", selectedCompanyId] });
             setStatusTab("pending");
             setSourceTab("generated");
@@ -568,11 +590,26 @@ interface GenerateDialogProps {
   //// pass it down from the parent (already in state) instead of re-
   //// fetching, so the picker UI is instant.
   libraryUploads: Array<GeneratedImage & { source: ImageSource }>;
+  //// initialProductId: optional catalog product the user arrived with
+  //// (e.g. clicked "Générer" on a product card in /content/catalog).
+  initialProductId?: string;
   //// End Neocompany Modification
 }
 
+//// Neocompany Modification — catalog product picker payload.
+interface CatalogProductSummary {
+  id: string;
+  wcId: number;
+  name: string;
+  price?: string;
+  currency?: string;
+  imageCount: number;
+  status: string;
+}
+//// End Neocompany Modification
+
 function GenerateDialog({
-  companyId, pluginId, onClose, onSuccess, initialReferenceIds, libraryUploads,
+  companyId, pluginId, onClose, onSuccess, initialReferenceIds, libraryUploads, initialProductId,
 }: GenerateDialogProps) {
   const { pushToast } = useToast();
   const [prompt, setPrompt] = useState("");
@@ -585,6 +622,10 @@ function GenerateDialog({
   const [refIds, setRefIds] = useState<string[]>(initialReferenceIds ?? []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const MAX_REFS = 5;
+  //// Catalog product picker — when set, the worker grounds the prompt in
+  //// the product name + short description and auto-attaches its gallery
+  //// images as refs (up to the remaining MAX_REFS budget).
+  const [productId, setProductId] = useState<string>(initialProductId ?? "");
   //// End Neocompany Modification
 
   const templatesQuery = useQuery({
@@ -598,6 +639,25 @@ function GenerateDialog({
     },
     enabled: !!pluginId && !!companyId,
   });
+
+  //// Neocompany Modification — Catalog product list for the picker.
+  //// We pull only the lightweight summary fields (name, price, image
+  //// count) so the dropdown stays cheap even with a few hundred SKUs.
+  const productsQuery = useQuery({
+    queryKey: ["wc-catalog-products-picker", companyId],
+    queryFn: async () => {
+      if (!pluginId || !companyId) return { products: [] as CatalogProductSummary[] };
+      const res = await pluginsApi.bridgeGetData(
+        pluginId, "productsList",
+        { companyId, limit: 500, status: "publish" },
+        companyId,
+      );
+      return (res as { data: { products: CatalogProductSummary[] } }).data ?? { products: [] };
+    },
+    enabled: !!pluginId && !!companyId,
+  });
+  const selectedProduct = (productsQuery.data?.products ?? []).find((p) => p.id === productId);
+  //// End Neocompany Modification
 
   const onGenerate = useCallback(async () => {
     if (!pluginId || !companyId || !prompt.trim()) return;
@@ -617,6 +677,9 @@ function GenerateDialog({
           //// Neocompany Modification — forward selected references so the
           //// codex-cli path attaches them via `-i`.
           referenceImageIds: refIds.length > 0 ? refIds : undefined,
+          //// productId — worker grounds the prompt + auto-attaches the
+          //// product's gallery images as refs.
+          productId: productId || undefined,
           //// End Neocompany Modification
         }, companyId);
       } catch (err) {
@@ -639,7 +702,7 @@ function GenerateDialog({
       pushToast({ title: `Generated ${count} image(s)`, tone: "success" });
     }
     onSuccess();
-  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, pushToast, onSuccess]);
+  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productId, pushToast, onSuccess]);
 
   return (
     <div
@@ -670,6 +733,35 @@ function GenerateDialog({
               className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
             />
           </div>
+
+          {/* //// Neocompany Modification — Catalog product picker.
+             When set, the worker prefixes the prompt with the product
+             name + short description and auto-attaches the product's
+             gallery images as refs. The picker lists the synced catalog
+             from /content/catalog (productsList data handler). */}
+          {(productsQuery.data?.products?.length ?? 0) > 0 && (
+            <div>
+              <Label className="text-xs">Produit du catalogue</Label>
+              <select
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+              >
+                <option value="">Aucun (génération libre)</option>
+                {(productsQuery.data?.products ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.price ? ` · ${p.price} ${p.currency ?? ""}` : ""}
+                  </option>
+                ))}
+              </select>
+              {selectedProduct && (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  📦 {selectedProduct.imageCount} image{selectedProduct.imageCount > 1 ? "s" : ""} du produit seront utilisée{selectedProduct.imageCount > 1 ? "s" : ""} comme références (dans la limite de {MAX_REFS}).
+                </p>
+              )}
+            </div>
+          )}
+          {/* //// End Neocompany Modification */}
 
           {/* //// Neocompany Modification — Reference picker.
              Visual references the generator should base its output on

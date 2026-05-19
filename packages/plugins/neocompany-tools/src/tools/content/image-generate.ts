@@ -43,6 +43,11 @@ interface Params {
   //// refs that aren't in the library. Both arrays can be passed together.
   referenceImageIds?: string[];
   referenceImageUrls?: string[];
+  //// productId: externalId (`wc-<wcId>`) of a catalog product to ground
+  //// the generation. When set, the worker prepends a "[Contexte produit:
+  //// <name> — <shortDescription>]" line to the prompt and auto-attaches
+  //// the product's gallery images as refs (up to a combined max of 5).
+  productId?: string;
   //// End Neocompany Modification
 }
 
@@ -396,11 +401,60 @@ export async function runImageGenerate(
   ctxAccess: ToolContextAccess,
 ): Promise<ToolResult> {
   const ctx = ctxAccess.getPluginContext();
-  const { prompt, templateId, provider = "openai", batchId, logoUrl, referenceImageIds, referenceImageUrls } = params;
+  const { templateId, provider = "openai", batchId, logoUrl, productId } = params;
+  let { prompt } = params;
+  let referenceImageIds = params.referenceImageIds;
+  let referenceImageUrls = params.referenceImageUrls;
   let { width = 1080, height = 1080 } = params;
 
   if (!prompt || prompt.trim().length === 0) {
     return { content: "Prompt is required.", error: "MISSING_PROMPT" };
+  }
+
+  //// Neocompany Modification — productId grounding.
+  //// Resolve the product, prefix the prompt with name + short description,
+  //// and merge its gallery images into the refs list (capped at MAX_REFS).
+  //// Failure to resolve the product is non-fatal: we proceed without the
+  //// product grounding and log a warning.
+  //// End Neocompany Modification
+  const MAX_REFS = 5;
+  if (productId) {
+    try {
+      const { PRODUCT_ENTITY_TYPE } = await import("../../products/types.js");
+      const matches = await ctx.entities.list({
+        entityType: PRODUCT_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: runCtx.companyId,
+        externalId: productId,
+        limit: 1,
+      });
+      const row = matches[0];
+      if (row) {
+        const product = row.data as unknown as {
+          name: string;
+          shortDescription?: string;
+          description?: string;
+          imageUrls?: string[];
+        };
+        const context = product.shortDescription || product.description?.slice(0, 240) || "";
+        prompt = `[Contexte produit: ${product.name}${context ? ` — ${context}` : ""}]\n\n${prompt}`;
+        if (Array.isArray(product.imageUrls) && product.imageUrls.length > 0) {
+          const existingCount = (referenceImageIds?.length ?? 0) + (referenceImageUrls?.length ?? 0);
+          const budget = Math.max(0, MAX_REFS - existingCount);
+          if (budget > 0) {
+            const extra = product.imageUrls.slice(0, budget);
+            referenceImageUrls = [...(referenceImageUrls ?? []), ...extra];
+          }
+        }
+      } else {
+        ctx.logger?.warn?.("imageGenerate: productId not found in catalog", { productId });
+      }
+    } catch (err) {
+      ctx.logger?.warn?.("imageGenerate: failed to load productId context", {
+        productId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // ── Resolve platform API key (only required for the `openai` provider)
@@ -551,6 +605,7 @@ export async function runImageGenerate(
     //// Neocompany Modification — audit trail of what fed the generation.
     ...(refs.resolvedIds.length > 0 ? { referenceImageIds: refs.resolvedIds } : {}),
     ...(refs.resolvedUrls.length > 0 ? { referenceImageUrls: refs.resolvedUrls } : {}),
+    ...(productId ? { productId } : {}),
     //// End Neocompany Modification
   };
 

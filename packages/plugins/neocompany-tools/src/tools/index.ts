@@ -31,6 +31,21 @@ import { runWpUpdatePost, wpUpdatePostDeclaration, type WpUpdatePostParams } fro
 import { runWpListCategories, wpListCategoriesDeclaration, type WpListCategoriesParams } from "./wordpress/list-categories.js";
 import { runWpSiteHealth, wpSiteHealthDeclaration, type WpSiteHealthParams } from "./wordpress/site-health.js";
 import type { WordPressConfig } from "../adapters/wordpress.js";
+import {
+  runProductCatalogSync,
+  wcSyncCatalogDeclaration,
+  type ProductCatalogSyncParams,
+} from "./woocommerce/sync-catalog.js";
+import {
+  runWcListProducts,
+  wcListProductsDeclaration,
+  type WcListProductsParams,
+} from "./woocommerce/list-products.js";
+import {
+  runWcGetProduct,
+  wcGetProductDeclaration,
+  type WcGetProductParams,
+} from "./woocommerce/get-product.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessagesParams } from "./email/inbox-list.js";
 import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
@@ -299,6 +314,31 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
       return runWpSiteHealth(params as WpSiteHealthParams, config, runCtx);
     },
   },
+  //// Neocompany Modification — WooCommerce catalog tools.
+  //// wcSyncCatalog needs WordPress credentials (Basic Auth), while
+  //// wcListProducts and wcGetProduct read from plugin_entities directly
+  //// (locally-synced catalog) so they don't require WP creds at call time.
+  //// End Neocompany Modification
+  {
+    name: "wcSyncCatalog",
+    declaration: wcSyncCatalogDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const config = await ctxAccess.getWordPressConfig(runCtx.companyId);
+      return runProductCatalogSync(params as ProductCatalogSyncParams, config, runCtx, ctxAccess);
+    },
+  },
+  {
+    name: "wcListProducts",
+    declaration: wcListProductsDeclaration,
+    run: async (params, runCtx, ctxAccess) =>
+      runWcListProducts(params as WcListProductsParams, undefined, runCtx, ctxAccess),
+  },
+  {
+    name: "wcGetProduct",
+    declaration: wcGetProductDeclaration,
+    run: async (params, runCtx, ctxAccess) =>
+      runWcGetProduct(params as WcGetProductParams, undefined, runCtx, ctxAccess),
+  },
   // ─── SEO tools that need Google OAuth ────────────────────────────────
   {
     name: "seoGscKeywords",
@@ -476,7 +516,7 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: {
       displayName: "Generate image with AI",
       description:
-        "Generate a new image via an AI provider (OpenAI gpt-image-2 by default). If a templateId is provided, the brand template is composited on top of the raw image before saving. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
+        "Generate a new image via an AI provider (OpenAI gpt-image-2 by default). If a templateId is provided, the brand template is composited on top of the raw image before saving. If a productId is provided, the prompt is grounded in the product's name + description and the product's gallery images are attached as references. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -487,13 +527,27 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
           height: { type: "number", description: "Desired height in pixels (ignored if templateId is set)" },
           batchId: { type: "string", description: "Optional batch id to group several generations together" },
           logoUrl: { type: "string", description: "Optional logo URL when compositing with a template" },
+          referenceImageIds: {
+            type: "array",
+            description: "Optional library image ids to feed as references (codex-cli `-i`).",
+            items: { type: "string" },
+          },
+          referenceImageUrls: {
+            type: "array",
+            description: "Optional raw data: / https URLs to use as references.",
+            items: { type: "string" },
+          },
+          productId: {
+            type: "string",
+            description: "Optional catalog product externalId (e.g. `wc-123`) to ground the generation in a specific product.",
+          },
         },
         required: ["prompt"],
       },
     },
     run: async (params, runCtx, ctxAccess) =>
       runImageGenerate(
-        params as { prompt: string; templateId?: string; provider?: "openai" | "gemini"; width?: number; height?: number; batchId?: string; logoUrl?: string },
+        params as { prompt: string; templateId?: string; provider?: "openai" | "gemini" | "codex-cli"; width?: number; height?: number; batchId?: string; logoUrl?: string; referenceImageIds?: string[]; referenceImageUrls?: string[]; productId?: string },
         {},
         runCtx,
         ctxAccess,

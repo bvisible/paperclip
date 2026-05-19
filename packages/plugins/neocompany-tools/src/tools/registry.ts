@@ -171,6 +171,37 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     connectionTrigger: "wordpress",
     allowedRoles: ["writer", "main"],
   },
+  //// Neocompany Modification — WooCommerce catalog tools share the same
+  //// connectionTrigger ("wordpress") because they reuse the WP App Password
+  //// Basic Auth. They surface under the WORDPRESS category for now; a
+  //// dedicated WOOCOMMERCE category can be split out later if the tool list
+  //// grows (variations, orders, customers…).
+  //// End Neocompany Modification
+  wcSyncCatalog: {
+    name: "wcSyncCatalog",
+    label: "Sync WooCommerce catalog",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: false,
+    internal: false,
+    connectionTrigger: "wordpress",
+    allowedRoles: ["main", "writer", "community"],
+  },
+  wcListProducts: {
+    name: "wcListProducts",
+    label: "List products from catalog",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
+  wcGetProduct: {
+    name: "wcGetProduct",
+    label: "Get product details",
+    category: ToolCategory.WORDPRESS,
+    defaultEnabled: true,
+    internal: false,
+    allowedRoles: ["main", "writer", "community"],
+  },
   // ─── SEO — Google OAuth required ────────────────────────────────────
   seoGscKeywords: {
     name: "seoGscKeywords",

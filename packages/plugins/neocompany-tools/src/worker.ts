@@ -688,6 +688,9 @@ const plugin = definePlugin({
           //// content tool so the codex-cli path can attach them via `-i`.
           referenceImageIds: params.referenceImageIds as string[] | undefined,
           referenceImageUrls: params.referenceImageUrls as string[] | undefined,
+          //// productId — grounds the generation in a catalog product
+          //// (auto-attach its imageUrls as refs + prefix prompt).
+          productId: params.productId as string | undefined,
           //// End Neocompany Modification
         },
         {},
@@ -724,6 +727,93 @@ const plugin = definePlugin({
         { imageId: params.imageId as string },
         {},
         makeImageRunCtx(companyId),
+        ctxAccess,
+      );
+      if (result.error) throw new Error(result.error);
+      return result.data ?? {};
+    });
+
+    //// Neocompany Modification — Product catalog (WooCommerce) ────────────
+    //// Data + action handlers backing the /content/catalog page and the
+    //// "Sync from WooCommerce" button. The bridge route authorizes via
+    //// assertCompanyAccess, so we only need to wire the worker side here.
+    //// End Neocompany Modification
+
+    const makeProductRunCtx = (companyId: string) => ({
+      runId: globalThis.crypto.randomUUID(),
+      companyId,
+      projectId: companyId,
+      agentId: "00000000-0000-0000-0000-000000000000",
+    });
+
+    ctx.data.register("productsList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { products: [], total: 0, limit: 0, offset: 0 };
+      const { runWcListProducts } = await import("./tools/woocommerce/list-products.js");
+      const result = await runWcListProducts(
+        {
+          search: params.search as string | undefined,
+          categoryId: params.categoryId as string | undefined,
+          status: params.status as "publish" | "draft" | "pending" | "private" | "deleted" | "any" | undefined,
+          limit: params.limit as number | undefined,
+          offset: params.offset as number | undefined,
+        },
+        undefined,
+        makeProductRunCtx(companyId),
+        ctxAccess,
+      );
+      return result.data ?? { products: [], total: 0, limit: 0, offset: 0 };
+    });
+
+    ctx.data.register("productCategoriesList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { categories: [] };
+      const { PRODUCT_CATEGORY_ENTITY_TYPE } = await import("./products/types.js");
+      const rows = await ctx.entities.list({
+        entityType: PRODUCT_CATEGORY_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 1000,
+      });
+      const categories = rows
+        .map((r) => {
+          const d = r.data as Record<string, unknown>;
+          return {
+            id: r.externalId ?? r.id,
+            name: (d.name as string) ?? r.title ?? "",
+            slug: (d.slug as string) ?? "",
+            parentId: (d.parentId as string | null) ?? null,
+            count: (d.count as number) ?? 0,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return { categories };
+    });
+
+    ctx.data.register("productGet", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const productId = params.productId as string;
+      if (!companyId || !productId) return null;
+      const { runWcGetProduct } = await import("./tools/woocommerce/get-product.js");
+      const result = await runWcGetProduct(
+        { productId },
+        undefined,
+        makeProductRunCtx(companyId),
+        ctxAccess,
+      );
+      if (result.error) return null;
+      return result.data ?? null;
+    });
+
+    ctx.actions.register("productCatalogSync", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) throw new Error("productCatalogSync requires companyId");
+      const { runProductCatalogSync } = await import("./tools/woocommerce/sync-catalog.js");
+      const config = await ctxAccess.getWordPressConfig(companyId);
+      const result = await runProductCatalogSync(
+        { force: Boolean(params.force) },
+        config,
+        makeProductRunCtx(companyId),
         ctxAccess,
       );
       if (result.error) throw new Error(result.error);
@@ -1300,6 +1390,60 @@ const plugin = definePlugin({
         }
       } catch (err) {
         ctx.logger.error("pixel-autopilot: unexpected error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+
+    //// Neocompany Modification — daily WooCommerce catalog sync.
+    //// Walks every company, checks if it has WP credentials configured,
+    //// and triggers a (idempotent) catalog sync. Failures on one company
+    //// don't stop the others.
+    //// End Neocompany Modification
+    ctx.jobs.register("wc-catalog-sync", async () => {
+      try {
+        const companies = await ctx.companies.list();
+        const { runProductCatalogSync } = await import("./tools/woocommerce/sync-catalog.js");
+        let synced = 0;
+        let skipped = 0;
+        for (const company of companies) {
+          // Try to resolve WordPress config — if any required field is
+          // missing the helper throws, which we treat as "tenant didn't
+          // configure WC, skip silently".
+          let config;
+          try {
+            config = await makeCtxAccess(ctx).getWordPressConfig(company.id);
+          } catch {
+            skipped += 1;
+            continue;
+          }
+          try {
+            await runProductCatalogSync(
+              { force: false },
+              config,
+              {
+                runId: globalThis.crypto.randomUUID(),
+                companyId: company.id,
+                projectId: company.id,
+                agentId: "00000000-0000-0000-0000-000000000000",
+              },
+              makeCtxAccess(ctx),
+            );
+            synced += 1;
+          } catch (err) {
+            ctx.logger.error("wc-catalog-sync: tenant sync failed", {
+              companyId: company.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        if (synced > 0 || skipped > 0) {
+          ctx.logger.info?.(
+            `[wc-catalog-sync] tick: companies=${companies.length} synced=${synced} skipped=${skipped}`,
+          );
+        }
+      } catch (err) {
+        ctx.logger.error("wc-catalog-sync: unexpected error", {
           error: err instanceof Error ? err.message : String(err),
         });
       }

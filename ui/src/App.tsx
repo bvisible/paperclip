@@ -59,6 +59,7 @@ import { ContentDashboard } from "./pages/ContentDashboard";
 import { ContentTemplates } from "./pages/ContentTemplates";
 import { ContentTemplateEditor } from "./pages/ContentTemplateEditor";
 import { ContentStock } from "./pages/ContentStock";
+import { ContentCatalog } from "./pages/ContentCatalog";
 import { ContentChannels } from "./pages/ContentChannels";
 import { ContentStrategy } from "./pages/ContentStrategy";
 import { ContentApprovals } from "./pages/ContentApprovals";
@@ -94,6 +95,7 @@ function boardRoutes() {
       <Route path="content/templates" element={<ContentTemplates />} />
       <Route path="content/templates/:templateId" element={<ContentTemplateEditor />} />
       <Route path="content/stock" element={<ContentStock />} />
+      <Route path="content/catalog" element={<ContentCatalog />} />
       <Route path="content/channels" element={<ContentChannels />} />
       <Route path="content/strategy" element={<ContentStrategy />} />
       <Route path="content/approvals" element={<ContentApprovals />} />

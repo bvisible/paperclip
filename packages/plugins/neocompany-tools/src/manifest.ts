@@ -78,6 +78,18 @@ const manifest: PaperclipPluginManifestV1 = {
         "Keeps each company's draft queue filled according to its editorial strategy. Runs every 15 minutes.",
       schedule: "*/15 * * * *",
     },
+    //// Neocompany Modification — daily WooCommerce catalog re-sync.
+    //// Each tenant with WordPress credentials gets its product catalog
+    //// pulled fresh at 04:00 UTC. Idempotent — only changed products are
+    //// re-upserted. Soft-deletes products that disappeared from the store.
+    //// End Neocompany Modification
+    {
+      jobKey: "wc-catalog-sync",
+      displayName: "WooCommerce catalog sync",
+      description:
+        "Walks every company with WordPress credentials and re-pulls the WooCommerce product catalog. Idempotent. Runs daily at 04:00 UTC.",
+      schedule: "0 4 * * *",
+    },
   ],
 
   // Platform-wide config. These fields are declared here so the

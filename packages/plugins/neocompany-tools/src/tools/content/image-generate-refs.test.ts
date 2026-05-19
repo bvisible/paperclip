@@ -221,4 +221,108 @@ describe("imageGenerate — reference images plumbing", () => {
     const args = spawnMock.mock.calls[0]![1] as string[];
     expect(args).not.toContain("-i");
   });
+
+  //// Neocompany Modification — productId grounding tests.
+  //// Verifies the worker prefixes the prompt with the product context and
+  //// auto-attaches the product's gallery images as references.
+  //// End Neocompany Modification
+  it("with productId, prefixes the prompt and auto-attaches product imageUrls as refs", async () => {
+    setupSpawn();
+    const entities = makeEntitiesStore();
+    const runCtx = makeRunCtx();
+    // Seed a catalog product with one gallery image.
+    const { PRODUCT_ENTITY_TYPE } = await import("../../products/types.js");
+    const productImageUrl = `data:image/png;base64,${TINY_PNG.toString("base64")}`;
+    await entities.upsert({
+      entityType: PRODUCT_ENTITY_TYPE,
+      scopeKind: "company",
+      scopeId: runCtx.companyId,
+      externalId: "wc-42",
+      title: "Robe d'été",
+      status: "publish",
+      data: {
+        source: "woocommerce",
+        wcId: 42,
+        name: "Robe d'été",
+        slug: "robe-ete",
+        description: "Robe d'été en lin léger.",
+        shortDescription: "Lin léger",
+        status: "publish",
+        categoryIds: [],
+        categoryNames: [],
+        tags: [],
+        imageUrls: [productImageUrl],
+        attributes: {},
+        syncedAt: "2026-05-19T00:00:00Z",
+      },
+    });
+    const { ctx } = makePluginContext({ entities });
+    (ctx as unknown as { config: { get: () => Promise<null> } }).config = {
+      get: async () => null,
+    };
+    const ctxAccess = makeCtxAccess({ ctx });
+
+    const result = await runImageGenerate(
+      {
+        prompt: "post pour les soldes",
+        provider: "codex-cli",
+        productId: "wc-42",
+      },
+      {},
+      runCtx,
+      ctxAccess,
+    );
+    expect(result.error).toBeUndefined();
+
+    // The spawned codex args should include `-i <tmp ref path>` (one ref
+    // attached from the product's gallery).
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args).toContain("-i");
+    expect(args).toContain("--");
+    const iIdx = args.findIndex((a) => a === "-i");
+    const refPath = args[iIdx + 1]!;
+    expect(refPath).toMatch(/codex-refs-.+ref_0\.png$/);
+
+    // The prompt fed to codex (last arg after `--`) should be prefixed with
+    // the product context line.
+    const sepIdx = args.findIndex((a) => a === "--");
+    const promptArg = args[sepIdx + 1]!;
+    expect(promptArg).toMatch(/^generate image: \[Contexte produit: Robe d'été — Lin léger\]/);
+    expect(promptArg).toContain("post pour les soldes");
+
+    // The persisted generated_image entity should record the productId for
+    // future traceability.
+    const generatedCall = entities.upsert.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => {
+        const data = arg.data as { source?: string };
+        return arg.entityType === IMAGE_ENTITY_TYPE && data.source !== "upload";
+      })
+      .at(-1);
+    expect(generatedCall).toBeTruthy();
+    expect((generatedCall!.data as Record<string, unknown>).productId).toBe("wc-42");
+  });
+
+  it("unknown productId falls back to a prompt-only generation", async () => {
+    setupSpawn();
+    const entities = makeEntitiesStore();
+    const { ctx } = makePluginContext({ entities });
+    (ctx as unknown as { config: { get: () => Promise<null> } }).config = {
+      get: async () => null,
+    };
+    const ctxAccess = makeCtxAccess({ ctx });
+    const result = await runImageGenerate(
+      { prompt: "no product here", provider: "codex-cli", productId: "wc-doesnt-exist" },
+      {},
+      makeRunCtx(),
+      ctxAccess,
+    );
+    expect(result.error).toBeUndefined();
+    const args = spawnMock.mock.calls[0]![1] as string[];
+    expect(args).not.toContain("-i");
+    const sepIdx = args.findIndex((a) => a === "--");
+    const promptArg = args[sepIdx + 1]!;
+    // The unmodified prompt should reach codex when the product lookup fails.
+    expect(promptArg).toBe("generate image: no product here");
+  });
 });

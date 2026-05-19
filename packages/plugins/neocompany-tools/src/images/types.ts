@@ -55,4 +55,10 @@ export interface GeneratedImageData {
    * user pasted) so the audit trail survives a deletion of the source row.
    */
   referenceImageUrls?: string[];
+  /**
+   * External id (`wc-<wcId>`) of the catalog product this image was generated
+   * for. When set, the worker auto-attaches the product's gallery images as
+   * refs and prefixes the prompt with the product name + short description.
+   */
+  productId?: string;
 }
