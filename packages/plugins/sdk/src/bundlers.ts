@@ -74,6 +74,23 @@ export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {})
   const sourcemap = input.sourcemap ?? true;
   const minify = input.minify ?? false;
 
+  //// Neoffice Modification: bundler-worker-externalize-plugin-sdk
+  //// Why: NORA Sprint J (2026-05-19) — when @paperclipai/plugin-sdk is bundled
+  ////      INTO the worker (default upstream alpha behaviour), esbuild's
+  ////      tree-shaker silently strips host-service properties of the ctx
+  ////      object returned by buildContext() that aren't referenced
+  ////      statically at the immediate call site (setup(ctx), onApiRequest).
+  ////      Real-world impact on plugin-llm-wiki v0.1.0: localFolders, skills,
+  ////      routines, executionWorkspaces vanish from `ctx` at runtime even
+  ////      though they're declared in buildContext(); Object.keys(ctx) returns
+  ////      23 keys instead of 27, and `ctx.localFolders.status(...)` throws
+  ////      "Cannot read properties of undefined (reading 'status')".
+  ////      The manifest preset already externalises the SDK (line ~97 below)
+  ////      so it survives tree-shaking. Mirror the same for the worker.
+  ////      At runtime the worker resolves @paperclipai/plugin-sdk via the
+  ////      plugin's own node_modules (workspace symlink to packages/plugins/sdk).
+  //// Date: 2026-05-19
+  //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
   const esbuildWorker: EsbuildLikeOptions = {
     entryPoints: [workerEntry],
     outdir,
@@ -83,8 +100,9 @@ export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {})
     target: "node20",
     sourcemap,
     minify,
-    external: ["react", "react-dom"],
+    external: ["react", "react-dom", "@paperclipai/plugin-sdk"],
   };
+  //// End Neoffice Modification: bundler-worker-externalize-plugin-sdk
 
   const esbuildManifest: EsbuildLikeOptions = {
     entryPoints: [manifestEntry],
@@ -111,6 +129,10 @@ export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {})
     }
     : undefined;
 
+  //// Neoffice Modification: bundler-worker-externalize-plugin-sdk
+  //// Same fix as the esbuild worker preset above — externalise the SDK so its
+  //// host-service props survive tree-shaking. Applies symmetrically for the
+  //// rollup variant.
   const rollupWorker: RollupLikeConfig = {
     input: workerEntry,
     output: {
@@ -119,8 +141,9 @@ export function createPluginBundlerPresets(input: PluginBundlerPresetInput = {})
       sourcemap,
       entryFileNames: "worker.js",
     },
-    external: ["react", "react-dom"],
+    external: ["react", "react-dom", "@paperclipai/plugin-sdk"],
   };
+  //// End Neoffice Modification: bundler-worker-externalize-plugin-sdk
 
   const rollupManifest: RollupLikeConfig = {
     input: manifestEntry,
