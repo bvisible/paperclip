@@ -35,4 +35,21 @@ describe("company routes", () => {
     expect(applyCompanyPrefix("/search?q=hello%20world", "PAP")).toBe("/PAP/search?q=hello%20world");
     expect(toCompanyRelativePath("/PAP/search?q=foo")).toBe("/search?q=foo");
   });
+
+  //// Neocompany Modification — regression pin for the NeoCompany /content/* surface
+  //// Without "content" in BOARD_ROUTE_ROOTS, clicking the Content sidebar items
+  //// (Overview / Templates / Image library / Channels / Strategy / Approvals /
+  //// Calendar) ends up routing to /CONTENT/... which the company-prefix matcher
+  //// reads as a company called "CONTENT" → "Company not found" 404.
+  it("treats /content/* as a board route that needs a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/content")).toBe(true);
+    expect(isBoardPathWithoutPrefix("/content/templates")).toBe(true);
+    expect(isBoardPathWithoutPrefix("/content/calendar")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/content")).toBeNull();
+    expect(extractCompanyPrefixFromPath("/content/approvals")).toBeNull();
+    expect(applyCompanyPrefix("/content", "NEO")).toBe("/NEO/content");
+    expect(applyCompanyPrefix("/content/templates", "NEO")).toBe("/NEO/content/templates");
+    expect(toCompanyRelativePath("/NEO/content/calendar")).toBe("/content/calendar");
+  });
+  //// End Neocompany Modification
 });

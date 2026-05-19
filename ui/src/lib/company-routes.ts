@@ -19,6 +19,14 @@ const BOARD_ROUTE_ROOTS = new Set([
   "u",
   "design-guide",
   "search",
+  //// Neocompany Modification — content/* routes (NeoCompany editorial pipeline)
+  //// served by App.tsx + neocompany-tools plugin (templates, image stock,
+  //// channels, strategy, approvals, calendar). Without this entry,
+  //// extractCompanyPrefixFromPath("/content") returns "CONTENT" and the
+  //// router throws "Company not found: CONTENT" instead of resolving
+  //// /content under the active company.
+  "content",
+  //// End Neocompany Modification
 ]);
 
 const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "cli-auth", "docs", "instance"]);
