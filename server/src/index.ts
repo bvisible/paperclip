@@ -650,9 +650,28 @@ export async function startServer(): Promise<StartedServer> {
   });
   process.env.PAPERCLIP_LISTEN_HOST = runtimeListenHost;
   process.env.PAPERCLIP_LISTEN_PORT = String(listenPort);
-  process.env.PAPERCLIP_RUNTIME_API_URL = runtimeApiUrl;
+  //// Neoffice Modification: preserve-runtime-api-url-loopback-override
+  //// Why: choosePrimaryRuntimeApiUrl picks config.allowedHostnames[0]
+  ////      (e.g. "demo.neoffice.me") when no authPublicBaseUrl is set, then
+  ////      blindly overwrites PAPERCLIP_RUNTIME_API_URL with that public URL.
+  ////      buildPaperclipEnv in adapter-utils reads RUNTIME_API_URL FIRST,
+  ////      so every child runner ends up fetching http://demo.neoffice.me:3100
+  ////      (the public hostname routed through nginx to a host firewalled at
+  ////      port 3100 — Paperclip only listens on 127.0.0.1). The runner pool,
+  ////      living on the SAME host, only has loopback access. Respect an
+  ////      explicit env override so the systemd drop-in can pin loopback for
+  ////      Neoffice tenants without forking the upstream URL-choice logic.
+  ////      Standalone Paperclip without the override keeps upstream behaviour.
+  //// Date: 2026-05-19
+  //// Refs: NORA — paperclip upstream sync 2026-05-18, Sprint C debug undici
+  if (!process.env.PAPERCLIP_RUNTIME_API_URL) {
+    process.env.PAPERCLIP_RUNTIME_API_URL = runtimeApiUrl;
+  }
+  if (!process.env.PAPERCLIP_API_URL) {
+    process.env.PAPERCLIP_API_URL = configuredApiUrl;
+  }
   process.env.PAPERCLIP_RUNTIME_API_CANDIDATES_JSON = JSON.stringify(runtimeApiCandidates);
-  process.env.PAPERCLIP_API_URL = configuredApiUrl;
+  //// End Neoffice Modification: preserve-runtime-api-url-loopback-override
   
   setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
