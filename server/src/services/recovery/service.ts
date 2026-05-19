@@ -2339,6 +2339,41 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
   }
 
   async function reconcileStrandedAssignedIssues() {
+    //// Neoffice Modification: disable-stranded-recovery-feature
+    //// Why: NORA Sprint H — observed on osiris 2026-05-19: after the
+    ////      delegate-explosion fix (Sprint G), the main agent still
+    ////      re-posted the same answer 14 times on a single "Salut"
+    ////      question. Root cause: when the main agent finishes its run
+    ////      without setting issue.status='done', the issue stays 'todo'
+    ////      with the agent still assigned. This periodic hook then
+    ////      re-dispatches the agent on every heartbeat tick (1-2s on
+    ////      Neoffice) → infinite re-process → 14 duplicate comments.
+    ////      Upstream's hook is designed for sandboxes where agents may
+    ////      get orphaned by host crashes; on NORA the warm V8 pool
+    ////      doesn't drop runs and explicit close happens via the LLM's
+    ////      output handling. Skip the periodic re-dispatch entirely.
+    ////      Issues that genuinely need re-dispatch are surfaced via the
+    ////      inbox attention view; operators can wake them manually.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint H — stranded recovery re-dispatch loop,
+    ////       follow-up to Sprint G delegate anti-loop,
+    ////       [[paperclip_upstream_sync_2026_05_19]]
+    if (process.env.NEOFFICE_DISABLE_STRANDED_RECOVERY === "1") {
+      return {
+        assignmentDispatched: 0,
+        dispatchRequeued: 0,
+        continuationRequeued: 0,
+        productiveContinuationObserved: 0,
+        successfulContinuationObserved: 0,
+        orphanBlockersAssigned: 0,
+        successfulRunHandoffEscalated: 0,
+        escalated: 0,
+        skipped: 0,
+        issueIds: [] as string[],
+      };
+    }
+    //// End Neoffice Modification: disable-stranded-recovery-feature
+
     const candidates = await db
       .select()
       .from(issues)
