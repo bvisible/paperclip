@@ -157,13 +157,13 @@ const manifest: PaperclipPluginManifestV1 = {
       title: "LLM Wiki Maintainer",
       icon: "book-open",
       capabilities: "Ingests source material, maintains local wiki pages, answers cited questions, and runs wiki lint/maintenance through plugin tools.",
-      //// Neoffice Modification: wiki-maintainer-openclaw_gateway-adapter
+      //// Neoffice Modification: wiki-maintainer-process-adapter
       //// Why: NORA Sprint I (2026-05-19) — the upstream Wiki Maintainer
       ////      ships with adapterType="claude_local" + sandbox=true, which
       ////      requires the Claude Agent SDK and a sandbox provider. NORA's
-      ////      stack runs every agent through `openclaw_gateway` (forwarding
+      ////      stack runs every agent through `process` (forwarding
       ////      to Olares Qwen3.6-35B-A3B on https://olares1.noraai.ch). We
-      ////      swap adapterType to openclaw_gateway, prepend it to
+      ////      swap adapterType to process, prepend it to
       ////      adapterPreference, and disable sandbox so the agent runs in
       ////      the same warm V8 pool as the 9 NORA specialists (compta,
       ////      sales, rh, etc.). The upstream Claude/codex/gemini adapters
@@ -172,19 +172,19 @@ const manifest: PaperclipPluginManifestV1 = {
       //// Date: 2026-05-19
       //// Refs: NORA Sprint I POC LLM Wiki, [[swirling-humming-lerdorf]],
       ////       [[paperclip_upstream_sync_2026_05_19]]
-      adapterType: "openclaw_gateway",
-      adapterPreference: ["openclaw_gateway", "claude_local", "codex_local", "gemini_local", "opencode_local", "cursor", "pi_local"],
-      //// End Neoffice Modification: wiki-maintainer-openclaw_gateway-adapter
+      adapterType: "process",
+      adapterPreference: ["process", "claude_local", "codex_local", "gemini_local", "opencode_local", "cursor", "pi_local"],
+      //// End Neoffice Modification: wiki-maintainer-process-adapter
       adapterConfig: {
         dangerouslySkipPermissions: false,
         dangerouslyBypassApprovalsAndSandbox: false,
-        //// Neoffice Modification: wiki-maintainer-openclaw_gateway-adapter
+        //// Neoffice Modification: wiki-maintainer-process-adapter
         //// Why: NORA agents run in the warm V8 nora-runner-pool without a
         ////      sandbox provider. claude_local's sandbox plumbing isn't
         ////      reachable. Disable so the agent can execute on Neoffice.
         //// Date: 2026-05-19
         sandbox: false,
-        //// End Neoffice Modification: wiki-maintainer-openclaw_gateway-adapter
+        //// End Neoffice Modification: wiki-maintainer-process-adapter
         paperclipSkillSync: {
           desiredSkills: WIKI_MANAGED_SKILL_CANONICAL_KEYS
         }
