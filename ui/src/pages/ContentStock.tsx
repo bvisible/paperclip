@@ -924,15 +924,15 @@ function GenerateDialog({
           {/* //// Neocompany Modification — Format / aspect ratio picker.
              Drives the width/height fed to the worker. gpt-image-2
              natively supports 1024×1024 / 1024×1536 / 1536×1024 — we
-             pick the closest mapping server-side. If a brand template is
-             selected, its dimensions take precedence (worker behavior). */}
+             pick the closest mapping server-side. Brand templates are
+             responsive: their zones (logo, text) are stored as %
+             positions and rescale to the chosen format automatically. */}
           <div>
             <Label className="text-xs">Format</Label>
             <select
               value={aspect}
               onChange={(e) => setAspect(e.target.value as AspectKey)}
-              disabled={Boolean(templateId)}
-              className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm disabled:opacity-60"
+              className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
             >
               {ASPECT_FORMATS.map((f) => (
                 <option key={f.key} value={f.key}>
@@ -940,11 +940,6 @@ function GenerateDialog({
                 </option>
               ))}
             </select>
-            {templateId ? (
-              <p className="mt-1 text-[10px] text-muted-foreground">
-                Le brand template impose ses dimensions. Désélectionne le template pour reprendre le contrôle du format.
-              </p>
-            ) : null}
           </div>
           {/* //// End Neocompany Modification */}
 
@@ -958,9 +953,9 @@ function GenerateDialog({
               >
                 <option value="">Aucun (raw image)</option>
                 {(templatesQuery.data?.templates ?? []).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({t.width}×{t.height})
-                  </option>
+                  //// Neocompany Modification — templates are responsive, drop the (WxH) tag.
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                  //// End Neocompany Modification
                 ))}
               </select>
             </div>

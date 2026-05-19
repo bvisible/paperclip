@@ -253,9 +253,14 @@ function TemplateCard({
         {t.description && (
           <p className="text-xs text-muted-foreground mt-1 truncate">{t.description}</p>
         )}
+        {/* //// Neocompany Modification — Templates are responsive: their
+            zones scale to whatever format the Generate dialog requests.
+            Drop the dimensions tag — the {w}×{h} stored on the entity is
+            just the preview canvas, not a hard constraint. */}
         <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-          {t.width} × {t.height} · {new Date(t.createdAt).toLocaleDateString()}
+          {new Date(t.createdAt).toLocaleDateString()}
         </p>
+        {/* //// End Neocompany Modification */}
       </div>
     </button>
   );

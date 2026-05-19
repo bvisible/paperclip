@@ -524,8 +524,10 @@ export async function runImageGenerate(
     const record = matches[0];
     if (record) {
       templateData = record.data as unknown as BrandTemplateData;
-      width = templateData.width;
-      height = templateData.height;
+      //// Neocompany Modification — Templates are responsive now. We keep
+      //// the caller's width/height (driven by the format picker) and let
+      //// the compositor scale the template's zones proportionally.
+      //// End Neocompany Modification
     }
   } else {
     // No explicit templateId — fall back to the company's brand overlay
@@ -542,8 +544,9 @@ export async function runImageGenerate(
     });
     if (def) {
       templateData = def.data as unknown as BrandTemplateData;
-      width = templateData.width;
-      height = templateData.height;
+      //// Neocompany Modification — see comment above: templates are
+      //// responsive, we keep the caller's format dimensions.
+      //// End Neocompany Modification
     }
   }
 
