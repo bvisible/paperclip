@@ -413,9 +413,12 @@ export async function runImageGenerate(
 
   //// Neocompany Modification — productId grounding.
   //// Resolve the product, prefix the prompt with name + short description,
-  //// and merge its gallery images into the refs list (capped at MAX_REFS).
-  //// Failure to resolve the product is non-fatal: we proceed without the
-  //// product grounding and log a warning.
+  //// and merge its gallery images into the refs list (deduped + capped at
+  //// MAX_REFS). The UI typically already passes the product's imageUrls in
+  //// `referenceImageUrls` (so the user sees them in the refs zone), so we
+  //// dedup before appending to avoid double-attaches. Failure to resolve
+  //// the product is non-fatal: we proceed without the product grounding
+  //// and log a warning.
   //// End Neocompany Modification
   const MAX_REFS = 5;
   if (productId) {
@@ -439,10 +442,12 @@ export async function runImageGenerate(
         const context = product.shortDescription || product.description?.slice(0, 240) || "";
         prompt = `[Contexte produit: ${product.name}${context ? ` — ${context}` : ""}]\n\n${prompt}`;
         if (Array.isArray(product.imageUrls) && product.imageUrls.length > 0) {
+          const already = new Set(referenceImageUrls ?? []);
+          const newUrls = product.imageUrls.filter((u) => !already.has(u));
           const existingCount = (referenceImageIds?.length ?? 0) + (referenceImageUrls?.length ?? 0);
           const budget = Math.max(0, MAX_REFS - existingCount);
-          if (budget > 0) {
-            const extra = product.imageUrls.slice(0, budget);
+          if (budget > 0 && newUrls.length > 0) {
+            const extra = newUrls.slice(0, budget);
             referenceImageUrls = [...(referenceImageUrls ?? []), ...extra];
           }
         }

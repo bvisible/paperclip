@@ -623,9 +623,14 @@ function GenerateDialog({
   const [pickerOpen, setPickerOpen] = useState(false);
   const MAX_REFS = 5;
   //// Catalog product picker — when set, the worker grounds the prompt in
-  //// the product name + short description and auto-attaches its gallery
-  //// images as refs (up to the remaining MAX_REFS budget).
+  //// the product name + short description. The gallery imageUrls are also
+  //// surfaced in the "Images de référence" zone (productRefUrls below) so
+  //// the user sees what will feed the generation.
   const [productId, setProductId] = useState<string>(initialProductId ?? "");
+  //// productRefUrls — gallery image URLs of the selected catalog product,
+  //// surfaced as thumbnails in the refs zone. Distinct from refIds (library
+  //// uploads). Cap is shared: refIds.length + productRefUrls.length ≤ MAX_REFS.
+  const [productRefUrls, setProductRefUrls] = useState<string[]>([]);
   //// End Neocompany Modification
 
   const templatesQuery = useQuery({
@@ -657,6 +662,37 @@ function GenerateDialog({
     enabled: !!pluginId && !!companyId,
   });
   const selectedProduct = (productsQuery.data?.products ?? []).find((p) => p.id === productId);
+
+  //// productGet — when a product is selected, fetch its full data so we
+  //// can materialise its gallery imageUrls as thumbnails in the refs zone.
+  //// productsList only returns the first image (thumbnailUrl) + count, not
+  //// the full gallery.
+  useEffect(() => {
+    if (!productId || !pluginId || !companyId) {
+      setProductRefUrls([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await pluginsApi.bridgeGetData(
+          pluginId, "productGet", { companyId, productId }, companyId,
+        );
+        const data = (res as { data?: { imageUrls?: string[] } }).data;
+        const urls = Array.isArray(data?.imageUrls) ? data!.imageUrls! : [];
+        if (!cancelled) {
+          // Cap to MAX_REFS minus the manually-picked refs so the picker stays usable.
+          const budget = Math.max(0, MAX_REFS - refIds.length);
+          setProductRefUrls(urls.slice(0, budget));
+        }
+      } catch {
+        if (!cancelled) setProductRefUrls([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  // refIds intentionally excluded — we only re-fetch on productId change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId, pluginId, companyId]);
   //// End Neocompany Modification
 
   const onGenerate = useCallback(async () => {
@@ -677,8 +713,14 @@ function GenerateDialog({
           //// Neocompany Modification — forward selected references so the
           //// codex-cli path attaches them via `-i`.
           referenceImageIds: refIds.length > 0 ? refIds : undefined,
-          //// productId — worker grounds the prompt + auto-attaches the
-          //// product's gallery images as refs.
+          //// referenceImageUrls — gallery images of the catalog product
+          //// the user explicitly sees in the refs zone. Sent verbatim so
+          //// the worker doesn't need to re-resolve them.
+          referenceImageUrls: productRefUrls.length > 0 ? productRefUrls : undefined,
+          //// productId — worker grounds the prompt (prefix with product
+          //// name + short description). The worker still passes any extra
+          //// gallery images not already provided, but UI typically sends
+          //// them so the user sees what conditions the generation.
           productId: productId || undefined,
           //// End Neocompany Modification
         }, companyId);
@@ -702,7 +744,7 @@ function GenerateDialog({
       pushToast({ title: `Generated ${count} image(s)`, tone: "success" });
     }
     onSuccess();
-  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productId, pushToast, onSuccess]);
+  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productRefUrls, productId, pushToast, onSuccess]);
 
   return (
     <div
@@ -756,7 +798,7 @@ function GenerateDialog({
               </select>
               {selectedProduct && (
                 <p className="mt-1 text-[10px] text-muted-foreground">
-                  📦 {selectedProduct.imageCount} image{selectedProduct.imageCount > 1 ? "s" : ""} du produit seront utilisée{selectedProduct.imageCount > 1 ? "s" : ""} comme références (dans la limite de {MAX_REFS}).
+                  📦 {productRefUrls.length}/{selectedProduct.imageCount} image{selectedProduct.imageCount > 1 ? "s" : ""} du produit affichée{productRefUrls.length > 1 ? "s" : ""} ci-dessous. Le prompt sera prefixé avec le nom et la description du produit.
                 </p>
               )}
             </div>
@@ -770,49 +812,81 @@ function GenerateDialog({
              the codex-cli provider currently consumes them; OpenAI path
              ignores them silently (warns in server logs). */}
           <div>
-            <Label className="text-xs flex items-center justify-between">
-              <span>Images de référence ({refIds.length}/{MAX_REFS})</span>
-              {provider === "openai" && refIds.length > 0 && (
-                <span className="text-[10px] text-amber-600 font-normal">
-                  Ignorées avec OpenAI — passe en Codex CLI
-                </span>
-              )}
-            </Label>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {refIds.map((id) => {
-                const ref = libraryUploads.find((i) => i.id === id);
-                return (
-                  <div key={id} className="relative h-14 w-14 rounded-md overflow-hidden border border-border group/ref">
-                    {ref?.finalImageUrl ? (
-                      <img src={ref.finalImageUrl} alt="ref" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="h-full w-full bg-muted flex items-center justify-center">
-                        <ImageIcon className="h-4 w-4 text-muted-foreground" />
-                      </div>
+            {(() => {
+              const totalRefCount = refIds.length + productRefUrls.length;
+              return (
+                <>
+                  <Label className="text-xs flex items-center justify-between">
+                    <span>Images de référence ({totalRefCount}/{MAX_REFS})</span>
+                    {provider === "openai" && totalRefCount > 0 && (
+                      <span className="text-[10px] text-amber-600 font-normal">
+                        Ignorées avec OpenAI — passe en Codex CLI
+                      </span>
                     )}
-                    <button
-                      onClick={() => setRefIds((prev) => prev.filter((r) => r !== id))}
-                      className="absolute top-0 right-0 rounded-bl-md bg-black/70 px-1 py-0.5 text-white opacity-0 group-hover/ref:opacity-100 transition-opacity"
-                      title="Retirer"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
+                  </Label>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {/* //// Neocompany Modification — Catalog product thumbnails.
+                       Surfaced first with a 📦 corner badge so the user can
+                       see which gallery images will condition the generation.
+                       Removable individually like refIds. */}
+                    {productRefUrls.map((url, idx) => (
+                      <div
+                        key={`prod-${idx}`}
+                        className="relative h-14 w-14 rounded-md overflow-hidden border-2 border-primary/50 group/ref"
+                        title="Image du produit catalogue"
+                      >
+                        <img src={url} alt={`product ref ${idx + 1}`} className="h-full w-full object-cover" />
+                        <span className="absolute bottom-0 left-0 rounded-tr-md bg-primary/80 text-primary-foreground text-[8px] leading-none px-0.5 py-px">📦</span>
+                        <button
+                          onClick={() => setProductRefUrls((prev) => prev.filter((_, i) => i !== idx))}
+                          className="absolute top-0 right-0 rounded-bl-md bg-black/70 px-1 py-0.5 text-white opacity-0 group-hover/ref:opacity-100 transition-opacity"
+                          title="Retirer cette image du produit"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                    {/* //// End Neocompany Modification */}
+                    {refIds.map((id) => {
+                      const ref = libraryUploads.find((i) => i.id === id);
+                      return (
+                        <div key={id} className="relative h-14 w-14 rounded-md overflow-hidden border border-border group/ref">
+                          {ref?.finalImageUrl ? (
+                            <img src={ref.finalImageUrl} alt="ref" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="h-full w-full bg-muted flex items-center justify-center">
+                              <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                          )}
+                          <button
+                            onClick={() => setRefIds((prev) => prev.filter((r) => r !== id))}
+                            className="absolute top-0 right-0 rounded-bl-md bg-black/70 px-1 py-0.5 text-white opacity-0 group-hover/ref:opacity-100 transition-opacity"
+                            title="Retirer"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {totalRefCount < MAX_REFS && (
+                      <button
+                        onClick={() => setPickerOpen(true)}
+                        className="h-14 w-14 rounded-md border-2 border-dashed border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                        title="Ajouter une référence depuis la Matière brute"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
-                );
-              })}
-              {refIds.length < MAX_REFS && (
-                <button
-                  onClick={() => setPickerOpen(true)}
-                  className="h-14 w-14 rounded-md border-2 border-dashed border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-                  title="Ajouter une référence depuis la Matière brute"
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-            <p className="mt-1 text-[10px] text-muted-foreground">
-              Pioche dans <b>Matière brute</b> pour conditionner la génération sur des photos existantes.
-            </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {productRefUrls.length > 0 ? (
+                      <>📦 = image du produit · </>
+                    ) : null}
+                    Pioche dans <b>Matière brute</b> pour conditionner la génération sur des photos existantes.
+                  </p>
+                </>
+              );
+            })()}
           </div>
           {/* //// End Neocompany Modification */}
 
