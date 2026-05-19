@@ -29,6 +29,12 @@ interface GeneratedImage {
   batchId?: string;
   feedback?: string;
   createdAt: string;
+  //// Neocompany Modification — references attached at generation time.
+  //// Surfaced in the "Image details" drawer so the operator can trace
+  //// where a generated image came from.
+  referenceImageIds?: string[];
+  referenceImageUrls?: string[];
+  //// End Neocompany Modification
 }
 
 type StatusFilter = "all" | "pending" | "approved" | "rejected";
@@ -41,11 +47,17 @@ const STATUS_TABS: Array<{ key: StatusFilter; label: string }> = [
   { key: "all", label: "All" },
 ];
 
+//// Neocompany Modification — renamed to French labels matching how the
+//// user talks about the library: "matière brute" (uploads, used as
+//// reference material for AI) vs "générées" (AI outputs awaiting review
+//// or already approved for posting). The internal filter values stay as
+//// English keys so the worker filter contract is unchanged.
 const SOURCE_TABS: Array<{ key: SourceFilter; label: string }> = [
-  { key: "all", label: "All" },
-  { key: "generated", label: "AI generated" },
-  { key: "upload", label: "Uploaded" },
+  { key: "upload", label: "Matière brute" },
+  { key: "generated", label: "Générées" },
+  { key: "all", label: "Tout" },
 ];
+//// End Neocompany Modification
 
 export function ContentStock() {
   const { selectedCompanyId } = useCompany();
@@ -55,6 +67,15 @@ export function ContentStock() {
   const [statusTab, setStatusTab] = useState<StatusFilter>("all");
   const [sourceTab, setSourceTab] = useState<SourceFilter>("all");
   const [showGenerate, setShowGenerate] = useState(false);
+  //// Neocompany Modification — when the user clicks "Utiliser comme
+  //// référence" on a raw upload card, we open the Generate dialog with
+  //// that image's id already in the picker so they only have to write a
+  //// prompt. Multiple refs can be selected from within the dialog.
+  const [pendingRefIds, setPendingRefIds] = useState<string[]>([]);
+  //// "Image details" drawer for a generated image — shows its refs +
+  //// prompt + provider + template. Clicked from the card itself.
+  const [detailsImage, setDetailsImage] = useState<(GeneratedImage & { source: ImageSource }) | null>(null);
+  //// End Neocompany Modification
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -274,9 +295,18 @@ export function ContentStock() {
         <GenerateDialog
           companyId={selectedCompanyId ?? undefined}
           pluginId={pluginId}
-          onClose={() => setShowGenerate(false)}
+          //// Neocompany Modification — pre-fill the picker when the user
+          //// arrived via "Utiliser comme référence" on a card.
+          initialReferenceIds={pendingRefIds}
+          //// End Neocompany Modification
+          libraryUploads={normalized.filter((i) => i.source === "upload" && i.status === "approved")}
+          onClose={() => {
+            setShowGenerate(false);
+            setPendingRefIds([]);
+          }}
           onSuccess={() => {
             setShowGenerate(false);
+            setPendingRefIds([]);
             qc.invalidateQueries({ queryKey: ["generated-images", selectedCompanyId] });
             setStatusTab("pending");
             setSourceTab("generated");
@@ -315,10 +345,42 @@ export function ContentStock() {
                   deleteMut.mutate(img.id);
                 }
               }}
+              //// Neocompany Modification — raw uploads can be used as a
+              //// reference for a new AI generation. Clicking opens the
+              //// Generate dialog with this image's id pre-selected.
+              onUseAsReference={
+                img.source === "upload" && img.status === "approved"
+                  ? () => {
+                      setPendingRefIds([img.id]);
+                      setShowGenerate(true);
+                    }
+                  : undefined
+              }
+              onOpenDetails={
+                img.source === "generated"
+                  ? () => setDetailsImage(img)
+                  : undefined
+              }
+              //// End Neocompany Modification
             />
           ))}
         </div>
       )}
+
+      {/* //// Neocompany Modification — Image details drawer. */}
+      {detailsImage && (
+        <ImageDetailsDrawer
+          image={detailsImage}
+          allImages={normalized}
+          onClose={() => setDetailsImage(null)}
+          onReuseSetup={(image) => {
+            setDetailsImage(null);
+            setPendingRefIds(image.referenceImageIds ?? []);
+            setShowGenerate(true);
+          }}
+        />
+      )}
+      {/* //// End Neocompany Modification */}
     </div>
   );
 }
@@ -355,12 +417,16 @@ function ImageCard({
   onReject,
   onRestore,
   onDelete,
+  onUseAsReference,
+  onOpenDetails,
 }: {
   img: GeneratedImage & { source: ImageSource };
   onApprove: () => void;
   onReject: () => void;
   onRestore: () => void;
   onDelete: () => void;
+  onUseAsReference?: () => void;
+  onOpenDetails?: () => void;
 }) {
   const caption =
     img.source === "upload"
@@ -368,7 +434,11 @@ function ImageCard({
       : img.prompt || "Generated image";
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden group">
-      <div className="relative aspect-square bg-muted">
+      <div
+        className={`relative aspect-square bg-muted ${onOpenDetails ? "cursor-pointer" : ""}`}
+        onClick={onOpenDetails}
+        title={onOpenDetails ? "Voir les détails (références utilisées)" : undefined}
+      >
         {img.finalImageUrl ? (
           <img
             src={img.finalImageUrl}
@@ -386,6 +456,15 @@ function ImageCard({
         <div className="absolute top-2 right-2">
           <StatusPill status={img.status} />
         </div>
+        {/* //// Neocompany Modification — small badge "N refs" when a
+           generated image was conditioned on visual references. */}
+        {(img.referenceImageIds?.length ?? 0) + (img.referenceImageUrls?.length ?? 0) > 0 && (
+          <div className="absolute bottom-2 left-2 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] text-white font-medium">
+            {(img.referenceImageIds?.length ?? 0) + (img.referenceImageUrls?.length ?? 0)} ref
+            {(img.referenceImageIds?.length ?? 0) + (img.referenceImageUrls?.length ?? 0) > 1 ? "s" : ""}
+          </div>
+        )}
+        {/* //// End Neocompany Modification */}
       </div>
 
       <div className="p-3 space-y-2 border-t border-border">
@@ -400,7 +479,17 @@ function ImageCard({
         </p>
 
         <div className="flex gap-1.5">
-          {img.status === "pending" && (
+          {/* //// Neocompany Modification — primary action for raw uploads
+             is "Use as reference", which feeds it back into a new
+             generation. The rest of the approval/delete CTAs stay below
+             but in compact form so the card doesn't get noisy. */}
+          {onUseAsReference && (
+            <Button size="sm" className="flex-1 h-7 text-xs" onClick={onUseAsReference}>
+              <Sparkles className="mr-1 h-3 w-3" /> Utiliser comme référence
+            </Button>
+          )}
+          {/* //// End Neocompany Modification */}
+          {!onUseAsReference && img.status === "pending" && (
             <>
               <Button size="sm" variant="outline" className="flex-1 h-7 text-xs" onClick={onApprove}>
                 <Check className="mr-1 h-3 w-3" /> Approve
@@ -410,12 +499,12 @@ function ImageCard({
               </Button>
             </>
           )}
-          {img.status === "approved" && (
+          {!onUseAsReference && img.status === "approved" && (
             <Button size="sm" variant="outline" className="flex-1 h-7 text-xs" onClick={onRestore}>
               Return to pending
             </Button>
           )}
-          {img.status === "rejected" && (
+          {!onUseAsReference && img.status === "rejected" && (
             <Button size="sm" variant="outline" className="flex-1 h-7 text-xs" onClick={onRestore}>
               Re-review
             </Button>
@@ -471,9 +560,20 @@ interface GenerateDialogProps {
   pluginId: string | undefined;
   onClose: () => void;
   onSuccess: () => void;
+  //// Neocompany Modification — pre-fill the reference picker when the
+  //// user arrived via "Utiliser comme référence" on a card. Empty means
+  //// they opened the dialog from the toolbar Generate button.
+  initialReferenceIds?: string[];
+  //// libraryUploads: pool of approved raw uploads usable as refs. We
+  //// pass it down from the parent (already in state) instead of re-
+  //// fetching, so the picker UI is instant.
+  libraryUploads: Array<GeneratedImage & { source: ImageSource }>;
+  //// End Neocompany Modification
 }
 
-function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDialogProps) {
+function GenerateDialog({
+  companyId, pluginId, onClose, onSuccess, initialReferenceIds, libraryUploads,
+}: GenerateDialogProps) {
   const { pushToast } = useToast();
   const [prompt, setPrompt] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
@@ -481,6 +581,11 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
   const [count, setCount] = useState(1);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  //// Neocompany Modification — reference picker state.
+  const [refIds, setRefIds] = useState<string[]>(initialReferenceIds ?? []);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const MAX_REFS = 5;
+  //// End Neocompany Modification
 
   const templatesQuery = useQuery({
     queryKey: ["content-templates", companyId],
@@ -509,6 +614,10 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
           templateId: templateId || undefined,
           provider,
           batchId,
+          //// Neocompany Modification — forward selected references so the
+          //// codex-cli path attaches them via `-i`.
+          referenceImageIds: refIds.length > 0 ? refIds : undefined,
+          //// End Neocompany Modification
         }, companyId);
       } catch (err) {
         failures++;
@@ -530,7 +639,7 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
       pushToast({ title: `Generated ${count} image(s)`, tone: "success" });
     }
     onSuccess();
-  }, [pluginId, companyId, prompt, templateId, provider, count, pushToast, onSuccess]);
+  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, pushToast, onSuccess]);
 
   return (
     <div
@@ -561,6 +670,59 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
               className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
             />
           </div>
+
+          {/* //// Neocompany Modification — Reference picker.
+             Visual references the generator should base its output on
+             (Codex CLI `-i` flag). Max 5 to avoid the "too many refs =
+             noisy result" trap we saw on the Reed-Blake pipeline. Only
+             the codex-cli provider currently consumes them; OpenAI path
+             ignores them silently (warns in server logs). */}
+          <div>
+            <Label className="text-xs flex items-center justify-between">
+              <span>Images de référence ({refIds.length}/{MAX_REFS})</span>
+              {provider === "openai" && refIds.length > 0 && (
+                <span className="text-[10px] text-amber-600 font-normal">
+                  Ignorées avec OpenAI — passe en Codex CLI
+                </span>
+              )}
+            </Label>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {refIds.map((id) => {
+                const ref = libraryUploads.find((i) => i.id === id);
+                return (
+                  <div key={id} className="relative h-14 w-14 rounded-md overflow-hidden border border-border group/ref">
+                    {ref?.finalImageUrl ? (
+                      <img src={ref.finalImageUrl} alt="ref" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="h-full w-full bg-muted flex items-center justify-center">
+                        <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setRefIds((prev) => prev.filter((r) => r !== id))}
+                      className="absolute top-0 right-0 rounded-bl-md bg-black/70 px-1 py-0.5 text-white opacity-0 group-hover/ref:opacity-100 transition-opacity"
+                      title="Retirer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
+              {refIds.length < MAX_REFS && (
+                <button
+                  onClick={() => setPickerOpen(true)}
+                  className="h-14 w-14 rounded-md border-2 border-dashed border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                  title="Ajouter une référence depuis la Matière brute"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Pioche dans <b>Matière brute</b> pour conditionner la génération sur des photos existantes.
+            </p>
+          </div>
+          {/* //// End Neocompany Modification */}
 
           <div>
             <Label className="text-xs">Provider</Label>
@@ -620,6 +782,201 @@ function GenerateDialog({ companyId, pluginId, onClose, onSuccess }: GenerateDia
           </Button>
         </div>
       </div>
+      {/* //// Neocompany Modification — sub-modal: pick refs from Matière brute. */}
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => { e.stopPropagation(); setPickerOpen(false); }}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border border-border bg-card shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-5 py-3">
+              <h4 className="text-sm font-semibold">Choisir des images de référence</h4>
+              <button onClick={() => setPickerOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4">
+              {libraryUploads.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  Aucune image dans la Matière brute. Upload des photos depuis l'onglet correspondant pour les utiliser ici.
+                </p>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  {libraryUploads.map((img) => {
+                    const selected = refIds.includes(img.id);
+                    return (
+                      <button
+                        key={img.id}
+                        onClick={() => {
+                          if (selected) {
+                            setRefIds((prev) => prev.filter((r) => r !== img.id));
+                          } else if (refIds.length < MAX_REFS) {
+                            setRefIds((prev) => [...prev, img.id]);
+                          }
+                        }}
+                        className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                          selected ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-primary/50"
+                        } ${!selected && refIds.length >= MAX_REFS ? "opacity-40 cursor-not-allowed" : ""}`}
+                        disabled={!selected && refIds.length >= MAX_REFS}
+                      >
+                        {img.finalImageUrl ? (
+                          <img src={img.finalImageUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full bg-muted flex items-center justify-center">
+                            <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                          </div>
+                        )}
+                        {selected && (
+                          <div className="absolute top-1 right-1 rounded-full bg-primary text-primary-foreground p-1">
+                            <Check className="h-3 w-3" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="border-t border-border px-5 py-3 flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">{refIds.length}/{MAX_REFS} sélectionnée(s)</span>
+              <Button size="sm" onClick={() => setPickerOpen(false)}>
+                Terminer
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* //// End Neocompany Modification */}
     </div>
   );
 }
+
+//// Neocompany Modification — Drawer.
+
+// ---------------------------------------------------------------------------
+// Image details drawer (Neocompany)
+// ---------------------------------------------------------------------------
+
+function ImageDetailsDrawer({
+  image,
+  allImages,
+  onClose,
+  onReuseSetup,
+}: {
+  image: GeneratedImage & { source: ImageSource };
+  allImages: Array<GeneratedImage & { source: ImageSource }>;
+  onClose: () => void;
+  onReuseSetup: (image: GeneratedImage & { source: ImageSource }) => void;
+}) {
+  const refIds = image.referenceImageIds ?? [];
+  const refUrls = image.referenceImageUrls ?? [];
+  const refImages = refIds
+    .map((id) => allImages.find((i) => i.id === id))
+    .filter((i): i is GeneratedImage & { source: ImageSource } => Boolean(i));
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md h-full bg-card border-l border-border shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
+          <h3 className="text-sm font-semibold">Détails de l'image</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Main image */}
+          {image.finalImageUrl && (
+            <div className="rounded-lg overflow-hidden border border-border">
+              <img src={image.finalImageUrl} alt="" className="w-full h-auto" />
+            </div>
+          )}
+
+          {/* Refs section */}
+          <section>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">
+              Références utilisées ({refImages.length + refUrls.length})
+            </h4>
+            {refImages.length === 0 && refUrls.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">
+                Aucune — génération à partir du prompt seul.
+              </p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {refImages.map((ref) => (
+                  <div key={ref.id} className="aspect-square rounded-md overflow-hidden border border-border">
+                    <img
+                      src={ref.finalImageUrl ?? ref.rawImageUrl ?? ""}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+                {refUrls.map((url, idx) => (
+                  <div key={`url-${idx}`} className="aspect-square rounded-md overflow-hidden border border-border">
+                    <img src={url} alt="" className="h-full w-full object-cover" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Prompt */}
+          <section>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Prompt</h4>
+            <p className="text-sm whitespace-pre-wrap">{image.prompt || <i>—</i>}</p>
+          </section>
+
+          {/* Metadata */}
+          <section className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div className="text-muted-foreground uppercase font-semibold mb-1">Provider</div>
+              <div>{image.provider ?? "—"}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground uppercase font-semibold mb-1">Dimensions</div>
+              <div className="tabular-nums">{image.width} × {image.height}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground uppercase font-semibold mb-1">Statut</div>
+              <div className="capitalize">{image.status}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground uppercase font-semibold mb-1">Créée le</div>
+              <div>{new Date(image.createdAt).toLocaleString()}</div>
+            </div>
+            {image.templateId && (
+              <div className="col-span-2">
+                <div className="text-muted-foreground uppercase font-semibold mb-1">Template appliqué</div>
+                <div className="font-mono text-[11px]">{image.templateId}</div>
+              </div>
+            )}
+            {image.batchId && (
+              <div className="col-span-2">
+                <div className="text-muted-foreground uppercase font-semibold mb-1">Batch</div>
+                <div className="font-mono text-[11px]">{image.batchId}</div>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <div className="border-t border-border px-5 py-3 flex justify-end">
+          <Button size="sm" onClick={() => onReuseSetup(image)}>
+            <Sparkles className="mr-1 h-4 w-4" />
+            Refaire avec le même setup
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+//// End Neocompany Modification

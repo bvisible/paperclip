@@ -679,11 +679,16 @@ const plugin = definePlugin({
         {
           prompt: params.prompt as string,
           templateId: params.templateId as string | undefined,
-          provider: (params.provider as "openai" | "gemini" | undefined) ?? "openai",
+          provider: (params.provider as "openai" | "gemini" | "codex-cli" | undefined) ?? "openai",
           width: params.width as number | undefined,
           height: params.height as number | undefined,
           batchId: params.batchId as string | undefined,
           logoUrl: params.logoUrl as string | undefined,
+          //// Neocompany Modification — forward visual references to the
+          //// content tool so the codex-cli path can attach them via `-i`.
+          referenceImageIds: params.referenceImageIds as string[] | undefined,
+          referenceImageUrls: params.referenceImageUrls as string[] | undefined,
+          //// End Neocompany Modification
         },
         {},
         makeImageRunCtx(companyId),

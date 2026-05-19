@@ -42,4 +42,17 @@ export interface GeneratedImageData {
   feedback?: string;
   /** ISO-8601 timestamp — when the image was generated or uploaded. */
   createdAt: string;
+  /**
+   * IDs of `generated_image` entities used as visual references for this
+   * generation (Codex CLI `-i` flag, OpenAI image edit input). Stored for
+   * audit + UI traceability ("Generated from N references"). Empty/undefined
+   * when the generation was prompt-only.
+   */
+  referenceImageIds?: string[];
+  /**
+   * Snapshot of the data/https URLs that were attached as refs at generation
+   * time. Useful when refs came from outside the library (e.g. raw URL the
+   * user pasted) so the audit trail survives a deletion of the source row.
+   */
+  referenceImageUrls?: string[];
 }

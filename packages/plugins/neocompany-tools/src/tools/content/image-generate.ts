@@ -21,7 +21,7 @@ import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageProvider } from "
 import { ENTITY_TYPE as TEMPLATE_ENTITY_TYPE, type BrandTemplateData } from "../../templates/types.js";
 import { compositeImage } from "../../templates/compositor.js";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +33,16 @@ interface Params {
   height?: number;
   batchId?: string;
   logoUrl?: string;
+  //// Neocompany Modification — visual references for the generator.
+  //// referenceImageIds: externalIds of `generated_image` entities (uploads
+  //// or earlier generations) that the worker resolves to their stored
+  //// finalImageUrl / rawImageUrl and writes to a tmp file before feeding
+  //// codex `-i` flags. Preferred path — keeps an audit trail.
+  //// referenceImageUrls: raw data: or https:// URLs. Useful for one-off
+  //// refs that aren't in the library. Both arrays can be passed together.
+  referenceImageIds?: string[];
+  referenceImageUrls?: string[];
+  //// End Neocompany Modification
 }
 
 const OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations";
@@ -116,6 +126,7 @@ async function generateWithCodexCli(
   prompt: string,
   width: number,
   height: number,
+  refImagePaths: string[],
   timeoutMs = 12 * 60_000,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const workspace = await mkdtemp(join(tmpdir(), "codex-imagegen-"));
@@ -141,7 +152,7 @@ async function generateWithCodexCli(
       // long after the image was generated. We poll ~/.codex/generated_images/
       // until a new PNG appears, then kill codex.
       const newPng = await spawnCodexAndWaitForPng(
-        bin, instruction, workspace, env, codexImagesDir, beforeSnapshot, timeoutMs,
+        bin, instruction, workspace, env, codexImagesDir, beforeSnapshot, refImagePaths, timeoutMs,
       );
       const buffer = await readFile(newPng);
       await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
@@ -162,6 +173,7 @@ async function spawnCodexAndWaitForPng(
   env: NodeJS.ProcessEnv,
   codexImagesDir: string,
   beforeSnapshot: Map<string, number>,
+  refImagePaths: string[],
   timeoutMs: number,
 ): Promise<string> {
   // Codex 0.122+ ships image_generation as a stable feature (enabled by default)
@@ -175,8 +187,18 @@ async function spawnCodexAndWaitForPng(
     workspace,
     "--color",
     "never",
-    prompt,
   ];
+  //// Neocompany Modification — visual reference images.
+  //// Each `-i <abs-path>` attaches a reference codex feeds to the image
+  //// backend. Pattern lifted from Reed-Blake-communication's
+  //// product_image_gen_mcp/codex_runner.py:125-128. The `--` separator
+  //// after the refs is mandatory: without it codex parses the prompt as
+  //// another file path and errors out.
+  for (const ref of refImagePaths) {
+    args.push("-i", ref);
+  }
+  args.push("--", prompt);
+  //// End Neocompany Modification
 
   // stdin: 'ignore' avoids codex hanging when it probes for TTY/keyboard input.
   // stdout piped so we can keep stream draining (codex writes progress there).
@@ -267,6 +289,86 @@ function pickNewest(after: Map<string, number>, before: Map<string, number>): st
   return best?.path ?? null;
 }
 
+//// Neocompany Modification — resolve reference images to local files.
+//// referenceImageIds → fetch the `generated_image` entity (uploads or
+//// earlier generations) and pull the inlined data URL out of its data
+//// blob. referenceImageUrls → accept data: URLs verbatim or fetch
+//// https:// URLs to a buffer. Both paths end up writing a temp .png file
+//// codex can attach via `-i`. The returned tmp dir must be cleaned up by
+//// the caller (we do it in a `finally`).
+//// End Neocompany Modification
+async function prepareReferenceFiles(
+  ctx: PluginContext,
+  companyId: string,
+  referenceImageIds: string[] | undefined,
+  referenceImageUrls: string[] | undefined,
+): Promise<{ paths: string[]; cleanupDir: string | null; resolvedIds: string[]; resolvedUrls: string[] }> {
+  const ids = (referenceImageIds ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);
+  const urls = (referenceImageUrls ?? []).filter((s): s is string => typeof s === "string" && s.length > 0);
+  if (ids.length === 0 && urls.length === 0) {
+    return { paths: [], cleanupDir: null, resolvedIds: [], resolvedUrls: [] };
+  }
+  const dir = await mkdtemp(join(tmpdir(), "codex-refs-"));
+  const paths: string[] = [];
+  const resolvedIds: string[] = [];
+  const resolvedUrls: string[] = [];
+  let i = 0;
+  for (const externalId of ids) {
+    const matches = await ctx.entities.list({
+      entityType: IMAGE_ENTITY_TYPE,
+      scopeKind: "company",
+      scopeId: companyId,
+      externalId,
+      limit: 1,
+    });
+    const row = matches[0];
+    if (!row) continue;
+    const data = row.data as unknown as GeneratedImageData | undefined;
+    // Prefer the raw upload for "upload" refs (more faithful), the final
+    // composited image for "generated" refs (what the user actually saw).
+    const url =
+      data?.source === "upload"
+        ? data?.rawImageUrl
+        : data?.finalImageUrl ?? data?.rawImageUrl;
+    if (!url) continue;
+    const buf = await dataUrlOrFetchToBuffer(ctx, url);
+    if (!buf) continue;
+    const p = join(dir, `ref_${i++}.png`);
+    await writeFile(p, buf);
+    paths.push(p);
+    resolvedIds.push(externalId);
+  }
+  for (const url of urls) {
+    const buf = await dataUrlOrFetchToBuffer(ctx, url);
+    if (!buf) continue;
+    const p = join(dir, `ref_${i++}.png`);
+    await writeFile(p, buf);
+    paths.push(p);
+    resolvedUrls.push(url);
+  }
+  return { paths, cleanupDir: dir, resolvedIds, resolvedUrls };
+}
+
+async function dataUrlOrFetchToBuffer(ctx: PluginContext, url: string): Promise<Buffer | null> {
+  if (url.startsWith("data:")) {
+    const comma = url.indexOf(",");
+    if (comma === -1) return null;
+    const header = url.slice(5, comma);
+    const payload = url.slice(comma + 1);
+    if (header.includes("base64")) {
+      return Buffer.from(payload, "base64");
+    }
+    return Buffer.from(decodeURIComponent(payload), "utf8");
+  }
+  try {
+    const res = await ctx.http.fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 export async function runImageGenerate(
   params: Params,
   _config: unknown,
@@ -274,7 +376,7 @@ export async function runImageGenerate(
   ctxAccess: ToolContextAccess,
 ): Promise<ToolResult> {
   const ctx = ctxAccess.getPluginContext();
-  const { prompt, templateId, provider = "openai", batchId, logoUrl } = params;
+  const { prompt, templateId, provider = "openai", batchId, logoUrl, referenceImageIds, referenceImageUrls } = params;
   let { width = 1080, height = 1080 } = params;
 
   if (!prompt || prompt.trim().length === 0) {
@@ -328,16 +430,28 @@ export async function runImageGenerate(
     }
   }
 
+  //// Neocompany Modification — resolve reference images once for the run.
+  //// Both providers receive the same path list; today only the codex-cli
+  //// path uses them (OpenAI image edits has a different API shape — left
+  //// as a Phase 2 TODO).
+  const refs = await prepareReferenceFiles(ctx, runCtx.companyId, referenceImageIds, referenceImageUrls);
+
   // ── Generate raw image ───────────────────────────────────────────
   let rawBuffer: Buffer;
   let mimeType: string;
   try {
     if (provider === "openai") {
+      if (refs.paths.length > 0) {
+        ctx.logger?.warn?.(
+          "imageGenerate: OpenAI provider does not yet wire reference images; falling back to prompt-only",
+          { refs: refs.paths.length },
+        );
+      }
       const gen = await generateWithOpenAI(ctx, apiKey!, prompt, width, height);
       rawBuffer = gen.buffer;
       mimeType = gen.mimeType;
     } else if (provider === "codex-cli") {
-      const gen = await generateWithCodexCli(prompt, width, height);
+      const gen = await generateWithCodexCli(prompt, width, height, refs.paths);
       rawBuffer = gen.buffer;
       mimeType = gen.mimeType;
     } else {
@@ -348,8 +462,14 @@ export async function runImageGenerate(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (refs.cleanupDir) await rm(refs.cleanupDir, { recursive: true, force: true }).catch(() => undefined);
     return { content: `Image generation failed: ${msg}`, error: msg };
+  } finally {
+    if (refs.cleanupDir) {
+      await rm(refs.cleanupDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
+  //// End Neocompany Modification
 
   const rawImageUrl = `data:${mimeType};base64,${rawBuffer.toString("base64")}`;
 
@@ -408,6 +528,10 @@ export async function runImageGenerate(
     status: "pending",
     batchId,
     createdAt: now,
+    //// Neocompany Modification — audit trail of what fed the generation.
+    ...(refs.resolvedIds.length > 0 ? { referenceImageIds: refs.resolvedIds } : {}),
+    ...(refs.resolvedUrls.length > 0 ? { referenceImageUrls: refs.resolvedUrls } : {}),
+    //// End Neocompany Modification
   };
 
   await ctx.entities.upsert({
