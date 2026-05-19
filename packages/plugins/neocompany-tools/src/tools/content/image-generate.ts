@@ -21,6 +21,7 @@ import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageProvider } from "
 import { ENTITY_TYPE as TEMPLATE_ENTITY_TYPE, type BrandTemplateData } from "../../templates/types.js";
 import { compositeImage } from "../../templates/compositor.js";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,8 +146,26 @@ async function generateWithCodexCli(
   const codexImagesDir = join(homedir(), ".codex", "generated_images");
   const beforeSnapshot = await listPngsRecursive(codexImagesDir);
 
+  //// Neocompany Modification — pre-filter candidates to those whose file
+  //// actually exists on disk. Otherwise spawn() reports ENOENT and the
+  //// loop falls through to the next, eventually surfacing the *last*
+  //// candidate's error (`/usr/local/bin/codex ENOENT`) — which is
+  //// misleading: the real issue is usually that none of the candidates
+  //// resolve, or the worker env is missing PATH. Bare "codex" stays in
+  //// the list because spawn() will resolve it via PATH at runtime.
+  const resolvedCandidates = CODEX_BINARY_CANDIDATES.filter(
+    (p) => p === "codex" || existsSync(p),
+  );
+  if (resolvedCandidates.length === 0) {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+    throw new Error(
+      `codex binary not found. Tried: ${CODEX_BINARY_CANDIDATES.join(", ")}. ` +
+        `Set CODEX_BIN env var to the absolute path of the codex binary.`,
+    );
+  }
+
   let lastErr: unknown;
-  for (const bin of CODEX_BINARY_CANDIDATES) {
+  for (const bin of resolvedCandidates) {
     try {
       // Spawn codex but don't wait for it to exit — it tends to keep reasoning
       // long after the image was generated. We poll ~/.codex/generated_images/
@@ -164,6 +183,7 @@ async function generateWithCodexCli(
   }
   await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   throw lastErr instanceof Error ? lastErr : new Error(`codex-cli failed: ${String(lastErr)}`);
+  //// End Neocompany Modification
 }
 
 async function spawnCodexAndWaitForPng(
