@@ -365,7 +365,7 @@ const manifest: PaperclipPluginManifestV1 = {
     {
       name: "wiki_read_page",
       displayName: "Read Wiki Page",
-      description: "Read a markdown wiki page from one wiki space. Operation agents should pass the issue's spaceSlug; omitting it uses the default space.",
+      description: "Read a markdown wiki page. `path` MUST start with `wiki/` (e.g. `wiki/concepts/tva.md`, `wiki/sources/X.md`, `wiki/index.md`). For RAW captured sources use wiki_read_source with `raw/<file>` instead. Operation agents should pass the issue's spaceSlug; omitting it uses the default space.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -380,7 +380,7 @@ const manifest: PaperclipPluginManifestV1 = {
     {
       name: "wiki_write_page",
       displayName: "Write Wiki Page",
-      description: "Atomically write a markdown wiki page in one wiki space after plugin path validation and optional hash conflict checks. Operation agents should pass the issue's spaceSlug; omitting it uses the default space. Protected control files such as AGENTS.md and IDEA.md are excluded from agent-tool writes.",
+      description: "Atomically write a markdown wiki page. `path` MUST start with `wiki/` (e.g. `wiki/concepts/tva.md`, `wiki/sources/<name>.md`). Cannot write to AGENTS.md, IDEA.md, or anything in `raw/`. Use atomic write semantics with optional `expectedHash` to detect conflicts. Operation agents should pass the issue's spaceSlug; omitting it uses the default space.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -430,7 +430,7 @@ const manifest: PaperclipPluginManifestV1 = {
     {
       name: "wiki_read_source",
       displayName: "Read Wiki Source",
-      description: "Read a captured raw source from one wiki space. Operation agents should pass the issue's spaceSlug; omitting it uses the default space.",
+      description: "Read a captured RAW source file. `rawPath` MUST start with `raw/` (e.g. `raw/rag_comptabilite_suisse_expert.md`). For curated wiki pages use wiki_read_page with `wiki/<...>` instead. Operation agents should pass the issue's spaceSlug; omitting it uses the default space.",
       parametersSchema: {
         type: "object",
         properties: {
