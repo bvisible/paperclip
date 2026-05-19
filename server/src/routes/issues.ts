@@ -1010,6 +1010,23 @@ export function issueRoutes(
       excludeRoutineExecutions:
         req.query.excludeRoutineExecutions === "true" || req.query.excludeRoutineExecutions === "1",
       includeBlockedBy: req.query.includeBlockedBy === "true" || req.query.includeBlockedBy === "1",
+      //// Neoffice Modification: issues-list-include-plugin-operations
+      //// Why: NORA Sprint J (2026-05-19) — the NORA agent runner lists issues
+      ////      via /api/companies/<cid>/issues?assigneeAgentId=<aid> to find
+      ////      its next active issue. By default the listing excludes any
+      ////      origin_kind matching 'plugin:%:operation' or 'plugin:%:operation:%'
+      ////      (see shouldIncludePluginOperationIssues / nonPluginOperationIssueCondition).
+      ////      That hid the wiki-maintainer's "Ingest" issue (origin_kind
+      ////      plugin:paperclipai.plugin-llm-wiki:operation:ingest) from the
+      ////      runner and made it permanently idle. Exposing the filter as a
+      ////      query param keeps the default UI behaviour (no plugin-operation
+      ////      clutter in user-visible inboxes) while letting trusted callers
+      ////      like the runner opt in.
+      //// Date: 2026-05-19
+      //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+      includePluginOperations:
+        req.query.includePluginOperations === "true" || req.query.includePluginOperations === "1",
+      //// End Neoffice Modification: issues-list-include-plugin-operations
       q: req.query.q as string | undefined,
       limit,
       offset,
