@@ -203,6 +203,17 @@ function TemplateCard({
   const cardScale = 340 / Math.max(t.width, t.height);
   const cfg = (t.config as unknown as TemplateConfig) ?? null;
 
+  //// Neocompany Modification — prefer the template's own inline logo over
+  //// the active company's logo. Each template can carry its own logo
+  //// (saved in config.logo.imageDataUrl by the editor) and the card
+  //// should render that one so the miniature is a true preview of what
+  //// the template will produce — not the brand overlay of whatever
+  //// company happens to be selected in the sidebar. Falls back to the
+  //// caller-provided logoUrl when the template hasn't customized its own.
+  const resolvedLogoUrl =
+    (cfg?.logo as { imageDataUrl?: string } | undefined)?.imageDataUrl ?? logoUrl;
+  //// End Neocompany Modification
+
   return (
     <button
       onClick={onClick}
@@ -215,7 +226,7 @@ function TemplateCard({
             width={t.width}
             height={t.height}
             config={cfg}
-            logoUrl={logoUrl}
+            logoUrl={resolvedLogoUrl}
             sampleImageUrl="https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600"
             scale={cardScale}
             showLabel
