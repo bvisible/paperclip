@@ -702,6 +702,18 @@ export interface PluginEntityQuery {
   entityType?: string;
   /** Optional filter by external system identifier. */
   externalId?: string;
+  //// Neocompany Modification — scope filters for multi-tenant isolation.
+  //// The SDK type (@paperclipai/plugin-sdk) has always declared these,
+  //// but this shared type (used by the server-side registry) omitted them
+  //// — registry.listEntities silently ignored them and returned every row
+  //// of the plugin across every tenant. Adding them here lets the server
+  //// honor the filters callers were already passing. See
+  //// plugin-registry.ts listEntities + plugin-registry-list-entities.test.ts.
+  /** Optional filter by scope kind ('company', 'user', 'agent', 'global'). */
+  scopeKind?: PluginStateScopeKind;
+  /** Optional filter by scope id (companyId, userId, etc.). */
+  scopeId?: string;
+  //// End Neocompany Modification
   /** Maximum number of records to return. Defaults to 100. */
   limit?: number;
   /** Number of records to skip. Defaults to 0. */

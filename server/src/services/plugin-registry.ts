@@ -460,6 +460,19 @@ export function pluginRegistryService(db: Db) {
       const conditions = [eq(pluginEntities.pluginId, pluginId)];
       if (query?.entityType) conditions.push(eq(pluginEntities.entityType, query.entityType));
       if (query?.externalId) conditions.push(eq(pluginEntities.externalId, query.externalId));
+      //// Neocompany Modification — multi-tenant isolation: filter by scope.
+      // Without these clauses, listEntities returned every row of the plugin
+      // across all tenants — Reed Blake users saw Neoservice templates and
+      // vice versa. Bug discovered 2026-05-19 by Daisy on /content/templates
+      // and /content/stock surfaces. The SDK type (PluginEntityQuery) has
+      // always advertised these filters; the server implementation just
+      // never honored them. With this fix, callers that pass
+      // { scopeKind: "company", scopeId: companyId } finally get true
+      // per-tenant scoping. Callers that omit scopeKind keep the prior
+      // behavior (cross-scope listing) — useful for admin sweeps.
+      if (query?.scopeKind) conditions.push(eq(pluginEntities.scopeKind, query.scopeKind));
+      if (query?.scopeId) conditions.push(eq(pluginEntities.scopeId, query.scopeId));
+      //// End Neocompany Modification
 
       return db
         .select()
