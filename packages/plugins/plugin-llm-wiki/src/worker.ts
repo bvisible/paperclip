@@ -940,13 +940,30 @@ const plugin = definePlugin({
 
     if (input.routeKey === "bootstrap") {
       const body = input.body as Record<string, unknown> | null;
-      return {
-        status: 201,
-        body: await bootstrapWikiRoot(ctx, {
-          companyId: input.companyId,
-          path: stringField(body?.path),
-        }),
-      };
+      //// Neoffice Modification: wiki-bootstrap-diagnostic-wrap
+      //// Why: NORA Sprint J — bootstrap still 502 even after Phase 1 status:200 fix.
+      ////      Crash happens inside bootstrapWikiRoot (probably reconcileWikiAgentResource
+      ////      reading .status on undefined when managed agent reconcile returns
+      ////      unexpected shape). Wrap in try/catch and rethrow with stack visible
+      ////      in the JSON-RPC error so we can pinpoint the exact line.
+      //// Date: 2026-05-19
+      //// Refs: NORA Sprint J POC LLM Wiki
+      try {
+        return {
+          status: 201,
+          body: await bootstrapWikiRoot(ctx, {
+            companyId: input.companyId,
+            path: stringField(body?.path),
+          }),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+        return {
+          status: 500,
+          body: { error: "bootstrapWikiRoot failed", details: message.slice(0, 4000) },
+        };
+      }
+      //// End Neoffice Modification: wiki-bootstrap-diagnostic-wrap
     }
 
     //// Neoffice Modification: wiki-worker-handler-status-defaults
