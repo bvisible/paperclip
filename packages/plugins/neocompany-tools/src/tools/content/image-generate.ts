@@ -116,6 +116,26 @@ function pickOpenAISize(width: number, height: number): string {
   return "1024x1024"; // square/close to square
 }
 
+//// Neocompany Modification — natural-language aspect description for codex.
+//// gpt-image-2 (the model behind codex `image_generation`) understands these
+//// shapes via prompt hints. We map common social formats:
+////   1:1   → "square"
+////   4:5   → "vertical portrait, 4:5 ratio" (Instagram feed)
+////   9:16  → "vertical story, 9:16 ratio" (Story / Reel / TikTok)
+////   16:9  → "horizontal landscape, 16:9 ratio"
+////   3:2 / 2:3 → "horizontal" / "vertical" as fallbacks
+//// End Neocompany Modification
+function describeAspectRatio(width: number, height: number): string {
+  const ratio = width / height;
+  if (ratio >= 0.97 && ratio <= 1.03) return "square 1:1";
+  if (ratio >= 1.7 && ratio <= 1.9) return "horizontal landscape, 16:9 ratio";
+  if (ratio >= 0.5 && ratio <= 0.6) return "vertical story, 9:16 ratio";
+  if (ratio >= 0.77 && ratio <= 0.83) return "vertical portrait, 4:5 ratio";
+  if (ratio > 1.2) return "horizontal landscape";
+  if (ratio < 0.85) return "vertical portrait";
+  return "square 1:1";
+}
+
 // ---------------------------------------------------------------------------
 // Codex CLI provider — spawns the `codex` binary, lets $imagegen do its job,
 // and grabs the PNG the CLI writes into our scratch workspace.
@@ -136,9 +156,14 @@ async function generateWithCodexCli(
   timeoutMs = 12 * 60_000,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const workspace = await mkdtemp(join(tmpdir(), "codex-imagegen-"));
-  // Simple prompt form — complex instructions trigger extra reasoning cycles
-  // that add minutes. Keep it terse.
-  const instruction = `generate image: ${prompt}`;
+  //// Neocompany Modification — aspect ratio hint.
+  //// Codex's `image_generation` tool doesn't take width/height flags; it
+  //// reads the requested aspect from the prompt instead. We compute the
+  //// closest natural-language aspect (square / portrait / landscape /
+  //// vertical story) so the chosen format actually reaches Codex.
+  //// End Neocompany Modification
+  const aspectHint = describeAspectRatio(width, height);
+  const instruction = `generate image (${aspectHint}): ${prompt}`;
 
   const env = {
     ...process.env,
@@ -412,13 +437,13 @@ export async function runImageGenerate(
   }
 
   //// Neocompany Modification — productId grounding.
-  //// Resolve the product, prefix the prompt with name + short description,
-  //// and merge its gallery images into the refs list (deduped + capped at
-  //// MAX_REFS). The UI typically already passes the product's imageUrls in
-  //// `referenceImageUrls` (so the user sees them in the refs zone), so we
-  //// dedup before appending to avoid double-attaches. Failure to resolve
-  //// the product is non-fatal: we proceed without the product grounding
-  //// and log a warning.
+  //// Resolve the product, prefix the prompt with a directive that locks
+  //// the reference image's subject as the focal point, then dedup + cap
+  //// the gallery imageUrls into the refs list. The UI typically already
+  //// passes the gallery in `referenceImageUrls` (so the user sees them in
+  //// the refs zone), so we dedup before appending to avoid double-attaches.
+  //// Failure to resolve the product is non-fatal — we proceed without
+  //// grounding and log a warning.
   //// End Neocompany Modification
   const MAX_REFS = 5;
   if (productId) {
@@ -440,7 +465,20 @@ export async function runImageGenerate(
           imageUrls?: string[];
         };
         const context = product.shortDescription || product.description?.slice(0, 240) || "";
-        prompt = `[Contexte produit: ${product.name}${context ? ` — ${context}` : ""}]\n\n${prompt}`;
+        //// Neocompany Modification — focal-point directive.
+        //// gpt-image-2 + codex have a strong tendency to relegate the
+        //// reference subject to a corner / cut by the frame when the
+        //// prompt doesn't insist. We open with an explicit instruction
+        //// that the product MUST be the unambiguous focal point.
+        prompt = [
+          `[Mission] Generate a marketing visual where "${product.name}" is the unmistakable focal point. ` +
+            `The product must be fully visible, in focus, well-lit, and centered or near-centered. ` +
+            `Lifestyle / background elements may complement the product but never compete with it or crop it. ` +
+            `Stay faithful to the product's design, colors, materials, and proportions shown in the reference images.`,
+          `[Product] ${product.name}${context ? ` — ${context}` : ""}`,
+          `[Brief] ${prompt}`,
+        ].join("\n\n");
+        //// End Neocompany Modification
         if (Array.isArray(product.imageUrls) && product.imageUrls.length > 0) {
           const already = new Set(referenceImageUrls ?? []);
           const newUrls = product.imageUrls.filter((u) => !already.has(u));

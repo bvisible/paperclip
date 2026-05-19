@@ -631,6 +631,20 @@ function GenerateDialog({
   //// surfaced as thumbnails in the refs zone. Distinct from refIds (library
   //// uploads). Cap is shared: refIds.length + productRefUrls.length ≤ MAX_REFS.
   const [productRefUrls, setProductRefUrls] = useState<string[]>([]);
+  //// Aspect format — controls width/height fed to the worker. gpt-image-2
+  //// natively supports 1024×1024 / 1024×1536 / 1536×1024; we pick the
+  //// closest mapping in the worker via `pickOpenAISize` / aspect hint for
+  //// codex-cli. When a brand template is selected, its dimensions take
+  //// precedence (worker logic unchanged).
+  const ASPECT_FORMATS = [
+    { key: "1:1",  label: "Carré 1:1 (Instagram feed)",       w: 1080, h: 1080 },
+    { key: "4:5",  label: "Portrait 4:5 (IG feed portrait)",  w: 1080, h: 1350 },
+    { key: "9:16", label: "Story 9:16 (Story / Reel)",         w: 1080, h: 1920 },
+    { key: "16:9", label: "Paysage 16:9 (LinkedIn / Twitter)", w: 1920, h: 1080 },
+  ] as const;
+  type AspectKey = (typeof ASPECT_FORMATS)[number]["key"];
+  const [aspect, setAspect] = useState<AspectKey>("1:1");
+  const aspectDef = ASPECT_FORMATS.find((a) => a.key === aspect) ?? ASPECT_FORMATS[0];
   //// End Neocompany Modification
 
   const templatesQuery = useQuery({
@@ -710,6 +724,11 @@ function GenerateDialog({
           templateId: templateId || undefined,
           provider,
           batchId,
+          //// Neocompany Modification — explicit dimensions from format
+          //// picker. Template (if any) overrides these in the worker.
+          width: aspectDef.w,
+          height: aspectDef.h,
+          //// End Neocompany Modification
           //// Neocompany Modification — forward selected references so the
           //// codex-cli path attaches them via `-i`.
           referenceImageIds: refIds.length > 0 ? refIds : undefined,
@@ -744,7 +763,7 @@ function GenerateDialog({
       pushToast({ title: `Generated ${count} image(s)`, tone: "success" });
     }
     onSuccess();
-  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productRefUrls, productId, pushToast, onSuccess]);
+  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productRefUrls, productId, aspectDef.w, aspectDef.h, pushToast, onSuccess]);
 
   return (
     <div
@@ -902,15 +921,42 @@ function GenerateDialog({
             </select>
           </div>
 
+          {/* //// Neocompany Modification — Format / aspect ratio picker.
+             Drives the width/height fed to the worker. gpt-image-2
+             natively supports 1024×1024 / 1024×1536 / 1536×1024 — we
+             pick the closest mapping server-side. If a brand template is
+             selected, its dimensions take precedence (worker behavior). */}
+          <div>
+            <Label className="text-xs">Format</Label>
+            <select
+              value={aspect}
+              onChange={(e) => setAspect(e.target.value as AspectKey)}
+              disabled={Boolean(templateId)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm disabled:opacity-60"
+            >
+              {ASPECT_FORMATS.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label} · {f.w}×{f.h}
+                </option>
+              ))}
+            </select>
+            {templateId ? (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Le brand template impose ses dimensions. Désélectionne le template pour reprendre le contrôle du format.
+              </p>
+            ) : null}
+          </div>
+          {/* //// End Neocompany Modification */}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-xs">Brand template</Label>
+              <Label className="text-xs">Brand template (optionnel)</Label>
               <select
                 value={templateId}
                 onChange={(e) => setTemplateId(e.target.value)}
                 className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
               >
-                <option value="">No template (raw image)</option>
+                <option value="">Aucun (raw image)</option>
                 {(templatesQuery.data?.templates ?? []).map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name} ({t.width}×{t.height})

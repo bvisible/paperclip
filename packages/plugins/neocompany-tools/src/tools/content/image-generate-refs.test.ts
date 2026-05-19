@@ -283,12 +283,17 @@ describe("imageGenerate — reference images plumbing", () => {
     const refPath = args[iIdx + 1]!;
     expect(refPath).toMatch(/codex-refs-.+ref_0\.png$/);
 
-    // The prompt fed to codex (last arg after `--`) should be prefixed with
-    // the product context line.
+    // The prompt fed to codex (last arg after `--`) should:
+    //  - open with the aspect-ratio hint surfaced from width/height
+    //  - contain a focal-point directive that names the product
+    //  - carry the short description after the [Product] tag
+    //  - keep the user's brief at the end
     const sepIdx = args.findIndex((a) => a === "--");
     const promptArg = args[sepIdx + 1]!;
-    expect(promptArg).toMatch(/^generate image: \[Contexte produit: Robe d'été — Lin léger\]/);
-    expect(promptArg).toContain("post pour les soldes");
+    expect(promptArg).toMatch(/^generate image \([^)]+\):/);
+    expect(promptArg).toContain('"Robe d\'été" is the unmistakable focal point');
+    expect(promptArg).toContain("[Product] Robe d'été — Lin léger");
+    expect(promptArg).toContain("[Brief] post pour les soldes");
 
     // The persisted generated_image entity should record the productId for
     // future traceability.
@@ -322,7 +327,8 @@ describe("imageGenerate — reference images plumbing", () => {
     expect(args).not.toContain("-i");
     const sepIdx = args.findIndex((a) => a === "--");
     const promptArg = args[sepIdx + 1]!;
-    // The unmodified prompt should reach codex when the product lookup fails.
-    expect(promptArg).toBe("generate image: no product here");
+    // The unmodified user prompt should reach codex when the product
+    // lookup fails — only the aspect-ratio hint is prepended.
+    expect(promptArg).toMatch(/^generate image \([^)]+\): no product here$/);
   });
 });
