@@ -291,7 +291,9 @@ describe("imageGenerate — reference images plumbing", () => {
     const sepIdx = args.findIndex((a) => a === "--");
     const promptArg = args[sepIdx + 1]!;
     expect(promptArg).toMatch(/^generate image \([^)]+\):/);
-    expect(promptArg).toContain('"Robe d\'été" is the unmistakable focal point');
+    expect(promptArg).toContain('reference images show "Robe d\'été"');
+    expect(promptArg).toContain("MUST be the focal point");
+    expect(promptArg).toContain("entire");
     expect(promptArg).toContain("[Product] Robe d'été — Lin léger");
     expect(promptArg).toContain("[Brief] post pour les soldes");
 

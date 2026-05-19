@@ -468,13 +468,28 @@ export async function runImageGenerate(
         //// Neocompany Modification — focal-point directive.
         //// gpt-image-2 + codex have a strong tendency to relegate the
         //// reference subject to a corner / cut by the frame when the
-        //// prompt doesn't insist. We open with an explicit instruction
-        //// that the product MUST be the unambiguous focal point.
+        //// prompt doesn't insist. We open with non-negotiable rules:
+        //// the product must occupy a meaningful share of the frame
+        //// (≈30%+), be 100% visible (no crop on ANY side), and stay
+        //// faithful to the reference images shown via `-i`.
         prompt = [
-          `[Mission] Generate a marketing visual where "${product.name}" is the unmistakable focal point. ` +
-            `The product must be fully visible, in focus, well-lit, and centered or near-centered. ` +
-            `Lifestyle / background elements may complement the product but never compete with it or crop it. ` +
-            `Stay faithful to the product's design, colors, materials, and proportions shown in the reference images.`,
+          `[Mission] The reference images show "${product.name}". This product MUST be the focal point of the generated image. ` +
+            `Non-negotiable composition rules:`,
+          `  • The product is shown in its ENTIRETY — every edge of the product is inside the frame, ` +
+            `with a clear visible margin (at least ~8% of the frame) on all four sides.`,
+          `  • The product NEVER touches or crosses the frame edges, NEVER is partially cropped, ` +
+            `cut off, hidden behind people/objects, faded out, or covered by overlays.`,
+          `  • The product occupies a meaningful share of the composition (roughly 30%+ of the visible area) ` +
+            `and is rendered in sharp focus with clean detail. Lifestyle elements stay decorative — they ` +
+            `complement the product but never compete with it for the viewer's eye.`,
+          `  • Stay 100% faithful to the product's exact design, silhouette, colors, materials, branding ` +
+            `and proportions as shown in the reference images. Do not invent variants or alter details.`,
+          `  • For footwear: frame the composition so BOTH shoes are fully visible (low-angle / waist-down / ` +
+            `flat-lay / on-foot close-up are all acceptable). Avoid full-body shots that push the shoes to ` +
+            `the bottom edge — prefer tight crops on the lower body or close-ups that keep the entire shoe ` +
+            `inside the frame with margin underneath.`,
+          `If you cannot satisfy these rules simultaneously, prioritize the product's full visibility over ` +
+            `the lifestyle scene.`,
           `[Product] ${product.name}${context ? ` — ${context}` : ""}`,
           `[Brief] ${prompt}`,
         ].join("\n\n");

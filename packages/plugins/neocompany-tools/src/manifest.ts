@@ -38,6 +38,13 @@ const manifest: PaperclipPluginManifestV1 = {
     "events.emit",
     "agent.sessions.create",
     "agent.sessions.send",
+    //// Neocompany Modification — required by `prepareReferenceFiles` to
+    //// download product gallery images from WooCommerce (https://) before
+    //// piping them to codex `-i`. Without this, fetches fail with
+    //// "missing required capability http.outbound" and codex generates
+    //// from the prompt alone (no visual grounding).
+    "http.outbound",
+    //// End Neocompany Modification
   ],
   entrypoints: {
     worker: "./dist/worker.js",
