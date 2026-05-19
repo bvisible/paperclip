@@ -224,7 +224,13 @@ describeEmbedded("PAP-9522 QA: routine secrets end-to-end", () => {
         },
         {},
       ),
-    ).rejects.toThrow(/same company/i);
+      //// Neocompany Modification — defense-in-depth changed the error from
+      //// "Secret must belong to same company" (oracle confirming the id is
+      //// real) to "Secret not found" (indistinguishable from a missing
+      //// row). The behavior is the same — cross-company secret refs are
+      //// rejected — only the message shape moved. See commit 91929c2e.
+    ).rejects.toThrow(/secret not found|same company/i);
+    //// End Neocompany Modification
   });
 
   it("surfaces a clear, value-free error when a routine secret is missing/deleted at resolution time", async () => {
