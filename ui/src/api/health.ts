@@ -26,7 +26,15 @@ export type HealthStatus = {
   devServer?: DevServerHealthStatus;
 };
 
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: Health endpoint must be prefixed with API_BASE so it hits
+////      /paperclip/health on Neoffice tenants instead of /health (which
+////      404s through nginx routing). See ui/src/lib/deployment.ts for
+////      the IS_NEOFFICE flag rationale.
+//// Date: 2026-05-04
+//// Refs: NORA #26 [[NORA/26-quickchat-mobile-paperclip]], NORA #27 Phase R-V6
 import { API_BASE } from "./client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 
 export const healthApi = {
   get: async (): Promise<HealthStatus> => {

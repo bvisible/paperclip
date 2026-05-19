@@ -14,6 +14,10 @@ import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { budgetService } from "./budgets.js";
 import { issueService } from "./issues.js";
+import {
+  recoveryAssigneeAdapterOverrides,
+  withRecoveryModelProfileHint,
+} from "./recovery/model-profile-hint.js";
 import { RECOVERY_ORIGIN_KINDS } from "./recovery/origins.js";
 
 export const PRODUCTIVITY_REVIEW_ORIGIN_KIND = RECOVERY_ORIGIN_KINDS.issueProductivityReview;
@@ -687,6 +691,7 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
         goalId: evidence.sourceIssue.goalId,
         billingCode: evidence.sourceIssue.billingCode,
         assigneeAgentId: ownerAgentId,
+        assigneeAdapterOverrides: recoveryAssigneeAdapterOverrides(),
         originKind: PRODUCTIVITY_REVIEW_ORIGIN_KIND,
         originId: evidence.sourceIssue.id,
         originFingerprint: productivityReviewFingerprint(evidence.sourceIssue.id),
@@ -732,21 +737,21 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
         source: "assignment",
         triggerDetail: "system",
         reason: "issue_assigned",
-        payload: {
+        payload: withRecoveryModelProfileHint({
           issueId: review.id,
           sourceIssueId: evidence.sourceIssue.id,
           trigger: evidence.trigger,
-        },
+        }),
         requestedByActorType: "system",
         requestedByActorId: "productivity_review",
-        contextSnapshot: {
+        contextSnapshot: withRecoveryModelProfileHint({
           issueId: review.id,
           taskId: review.id,
           wakeReason: "issue_assigned",
           source: PRODUCTIVITY_REVIEW_ORIGIN_KIND,
           sourceIssueId: evidence.sourceIssue.id,
           productivityReviewTrigger: evidence.trigger,
-        },
+        }),
       });
     }
 
@@ -758,6 +763,30 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     companyId?: string;
     thresholds?: Partial<ProductivityReviewThresholds>;
   }) {
+    //// Neoffice Modification: disable-productivity-review-feature
+    //// Why: NORA's delegate_to_specialist pattern issues 10+ sub-runs per
+    ////      parent issue, which trips the upstream productivity-review
+    ////      high-churn threshold (10 runs/hour). The auto-generated
+    ////      "Review productivity for PRI-XXX" issues then delegate too,
+    ////      creating an infinite loop and saturating the runner queue.
+    ////      Smoke E2E timed out 180s on all questions with the feature on.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint D — recovery-action loop, paperclip upstream sync 2026-05-18
+    if (process.env.NEOFFICE_DISABLE_PRODUCTIVITY_REVIEW === "1") {
+      return {
+        scanned: 0,
+        created: 0,
+        updated: 0,
+        existing: 0,
+        snoozed: 0,
+        creationCapped: 0,
+        skipped: 0,
+        failed: 0,
+        reviewIssueIds: [] as string[],
+        failedIssueIds: [] as string[],
+      };
+    }
+    //// End Neoffice Modification: disable-productivity-review-feature
     const now = opts?.now ?? new Date();
     const thresholds = buildThresholds(opts?.thresholds);
     const candidates = await db

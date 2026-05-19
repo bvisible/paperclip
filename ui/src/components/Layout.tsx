@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
-import { CompanyRail } from "./CompanyRail";
+//// Neoffice Modification: neoffice-embed-hide-chrome
+//// Why: CompanyRail.tsx was removed upstream (commit 41039785 "Polish
+////      operator sidebar"). Our Neoffice fork never rendered it anyway
+////      (the !IS_NEOFFICE guards below short-circuit). Keep the local
+////      stub so any NeoCompany consumer that lands on this branch gets
+////      an explicit null-render instead of a runtime missing-module
+////      error. When/if the upstream Sidebar split lands here too, this
+////      stub can be removed alongside the !IS_NEOFFICE guards.
+//// Date: 2026-05-18
+//// Refs: NORA — paperclip upstream sync 2026-05-18 (commit f96896e9)
+const CompanyRail = (): null => null;
+//// End Neoffice Modification: neoffice-embed-hide-chrome
 import { Sidebar } from "./Sidebar";
 import { InstanceSidebar } from "./InstanceSidebar";
 import { CompanySettingsSidebar } from "./CompanySettingsSidebar";

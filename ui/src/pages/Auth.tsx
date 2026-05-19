@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { authApi } from "../api/auth";
+//// Neoffice Modification: vite-base-paperclip-prefix
+//// Why: Auth form actions (sign-in / sign-up) must POST to /paperclip/auth/*
+////      on Neoffice tenants. Without API_BASE the form posts to /auth/*
+////      and 404s through the Neoffice nginx routing.
+//// Date: 2026-05-04
+//// Refs: NORA #26, NORA #27 Phase R-V6
 import { API_BASE } from "../api/client";
+//// End Neoffice Modification: vite-base-paperclip-prefix
 import { queryKeys } from "../lib/queryKeys";
 import { getRememberedInvitePath } from "../lib/invite-memory";
 import { Button } from "@/components/ui/button";
