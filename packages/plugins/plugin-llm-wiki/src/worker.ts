@@ -922,9 +922,21 @@ const plugin = definePlugin({
 
   async onApiRequest(input: PluginApiRequestInput) {
     const ctx = requireContext();
+    //// Neoffice Modification: wiki-worker-handler-status-defaults
+    //// Why: NORA Sprint J (2026-05-19) — the upstream alpha plugin returns
+    ////      `{ body }` (without `status`) from several GET/PATCH handlers.
+    ////      JSON.stringify drops `undefined`, so the server side
+    ////      (server/src/routes/plugins.ts:1519) reads `result.status` on a
+    ////      serialized object with no `status` key → throws
+    ////      "Cannot read properties of undefined (reading 'status')".
+    ////      Add `status: 200` explicitly to every handler that omits it so
+    ////      the worker honours the response contract.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
     if (input.routeKey === "overview") {
-      return { body: await getOverview(ctx, input.companyId) };
+      return { status: 200, body: await getOverview(ctx, input.companyId) };
     }
+    //// End Neoffice Modification: wiki-worker-handler-status-defaults
 
     if (input.routeKey === "bootstrap") {
       const body = input.body as Record<string, unknown> | null;
@@ -937,14 +949,17 @@ const plugin = definePlugin({
       };
     }
 
+    //// Neoffice Modification: wiki-worker-handler-status-defaults
     if (input.routeKey === "spaces") {
       return {
+        status: 200,
         body: await listSpaces(ctx, {
           companyId: input.companyId,
           wikiId: stringField(input.query.wikiId),
         }),
       };
     }
+    //// End Neoffice Modification: wiki-worker-handler-status-defaults
 
     if (input.routeKey === "create-space") {
       const body = input.body as Record<string, unknown> | null;
@@ -962,9 +977,11 @@ const plugin = definePlugin({
       };
     }
 
+    //// Neoffice Modification: wiki-worker-handler-status-defaults
     if (input.routeKey === "update-space") {
       const body = input.body as Record<string, unknown> | null;
       return {
+        status: 200,
         body: await updateSpace(ctx, {
           companyId: input.companyId,
           wikiId: stringField(body?.wikiId),
@@ -975,6 +992,7 @@ const plugin = definePlugin({
         }),
       };
     }
+    //// End Neoffice Modification: wiki-worker-handler-status-defaults
 
     if (input.routeKey === "bootstrap-space") {
       const body = input.body as Record<string, unknown> | null;
@@ -988,9 +1006,11 @@ const plugin = definePlugin({
       };
     }
 
+    //// Neoffice Modification: wiki-worker-handler-status-defaults
     if (input.routeKey === "archive-space") {
       const body = input.body as Record<string, unknown> | null;
       return {
+        status: 200,
         body: await archiveSpace(ctx, {
           companyId: input.companyId,
           wikiId: stringField(body?.wikiId),
@@ -998,6 +1018,7 @@ const plugin = definePlugin({
         }),
       };
     }
+    //// End Neoffice Modification: wiki-worker-handler-status-defaults
 
     if (input.routeKey === "capture-source") {
       const body = input.body as Record<string, unknown> | null;
@@ -1017,8 +1038,10 @@ const plugin = definePlugin({
       };
     }
 
+    //// Neoffice Modification: wiki-worker-handler-status-defaults
     if (input.routeKey === "operations") {
       return {
+        status: 200,
         body: await listOperations(ctx, {
           companyId: input.companyId,
           wikiId: stringField(input.query.wikiId),
@@ -1029,6 +1052,7 @@ const plugin = definePlugin({
         }),
       };
     }
+    //// End Neoffice Modification: wiki-worker-handler-status-defaults
 
     if (input.routeKey === "start-query") {
       const body = input.body as Record<string, unknown> | null;

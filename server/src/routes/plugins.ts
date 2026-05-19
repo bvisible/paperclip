@@ -1516,6 +1516,20 @@ export function pluginRoutes(
         "handleApiRequest",
         input,
       ) as PluginScopedApiResponse;
+      //// Neoffice Modification: plugin-api-result-null-guard
+      //// Why: NORA Sprint J (2026-05-19) — alpha plugins (e.g. LLM Wiki v0.1.0)
+      ////      can return undefined or a malformed object from `handleApiRequest`,
+      ////      causing the downstream `result.status` read to crash with
+      ////      "Cannot read properties of undefined (reading 'status')". Treat
+      ////      a null/undefined response as a 500 instead of letting it bubble
+      ////      up as a 502 generic JSON-RPC error.
+      //// Date: 2026-05-19
+      //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+      if (!result || typeof result !== "object") {
+        res.status(500).json({ error: "Plugin returned an empty or malformed API response" });
+        return;
+      }
+      //// End Neoffice Modification: plugin-api-result-null-guard
       const status = Number.isInteger(result.status) && Number(result.status) >= 200 && Number(result.status) <= 599
         ? Number(result.status)
         : 200;
