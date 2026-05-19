@@ -15,6 +15,27 @@ export const WIKI_PROJECT_KEY = "llm-wiki";
 export const CURSOR_WINDOW_ROUTINE_KEY = "cursor-window-processing";
 export const NIGHTLY_LINT_ROUTINE_KEY = "nightly-wiki-lint";
 export const INDEX_REFRESH_ROUTINE_KEY = "index-refresh";
+//// Neoffice Modification: wiki-routines-erp-snapshots
+//// Why: NORA Sprint J (2026-05-19) — frontier between "tool" and "wiki":
+////      tool = vivant/transactionnel/changeant ; wiki = stable/curé/citable.
+////      Pour les éléments ERP rarement consultés mais centraux (plan
+////      comptable utilisé, top clients, fournisseurs récurrents, employés
+////      actifs, politique fiscale en vigueur), il est plus utile de
+////      matérialiser un *snapshot* dans le wiki que de regénérer une
+////      requête Frappe à chaque question d'agent. Cinq routines mensuelles
+////      ou annuelles balayent l'ERP, génèrent des pages cible dans
+////      wiki/synthesis/ ou wiki/concepts/, et mettent à jour log + index.
+////      Status=paused/enabled=false par défaut — opt-in par l'opérateur
+////      via PATCH /api/plugins/<id>/routines/<key> lorsque l'instance est
+////      prête (ERP peuplé, wiki initial seedé).
+//// Date: 2026-05-19
+//// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+export const NORA_ERP_SNAPSHOT_PLAN_COMPTABLE_ROUTINE_KEY = "nora-erp-snapshot-plan-comptable";
+export const NORA_ERP_SNAPSHOT_CLIENTS_CLES_ROUTINE_KEY = "nora-erp-snapshot-clients-cles";
+export const NORA_ERP_SNAPSHOT_FOURNISSEURS_ROUTINE_KEY = "nora-erp-snapshot-fournisseurs-recurrents";
+export const NORA_ERP_SNAPSHOT_EMPLOYES_ROUTINE_KEY = "nora-erp-snapshot-employes-actifs";
+export const NORA_ERP_SNAPSHOT_POLITIQUE_FISCALE_ROUTINE_KEY = "nora-erp-snapshot-politique-fiscale";
+//// End Neoffice Modification: wiki-routines-erp-snapshots
 export const DEFAULT_MAX_SOURCE_BYTES = 250000;
 export const DEFAULT_MAX_PAPERCLIP_ISSUE_SOURCE_CHARS = 12000;
 export const DEFAULT_MAX_PAPERCLIP_CURSOR_WINDOW_CHARS = 60000;
@@ -24,6 +45,13 @@ export const WIKI_MAINTENANCE_ROUTINE_KEYS = [
   CURSOR_WINDOW_ROUTINE_KEY,
   NIGHTLY_LINT_ROUTINE_KEY,
   INDEX_REFRESH_ROUTINE_KEY,
+  //// Neoffice Modification: wiki-routines-erp-snapshots
+  NORA_ERP_SNAPSHOT_PLAN_COMPTABLE_ROUTINE_KEY,
+  NORA_ERP_SNAPSHOT_CLIENTS_CLES_ROUTINE_KEY,
+  NORA_ERP_SNAPSHOT_FOURNISSEURS_ROUTINE_KEY,
+  NORA_ERP_SNAPSHOT_EMPLOYES_ROUTINE_KEY,
+  NORA_ERP_SNAPSHOT_POLITIQUE_FISCALE_ROUTINE_KEY,
+  //// End Neoffice Modification: wiki-routines-erp-snapshots
 ] as const;
 export const WIKI_MANAGED_SKILL_KEYS = [
   WIKI_MAINTAINER_SKILL_KEY,
@@ -197,7 +225,20 @@ const manifest: PaperclipPluginManifestV1 = {
         }
       },
       permissions: {
-        pluginTools: [PLUGIN_ID]
+        //// Neoffice Modification: wiki-maintainer-grant-frappe-readonly
+        //// Why: NORA Sprint J (2026-05-19) — the wiki-maintainer must be able
+        ////      to scan the Frappe ERP read-only to materialise ERP→wiki
+        ////      snapshot pages (plan comptable tenant, clients clés,
+        ////      fournisseurs récurrents, employés actifs, politique fiscale
+        ////      active). Adding `nora-frappe-tools` to the plugin pulls in
+        ////      its allowlist filtered by AGENT_TOOL_ALLOWLIST env. The
+        ////      specific read tools the wiki-maintainer is allowed to
+        ////      call are listed in EXPECTED_AGENT_ALLOWLISTS['wiki-maintainer']
+        ////      in nora/api/paperclip_seed.py (Frappe read + count + sql).
+        //// Date: 2026-05-19
+        //// Refs: NORA Sprint J Phase 3 routines, [[swirling-humming-lerdorf]]
+        pluginTools: [PLUGIN_ID, "nora-frappe-tools"]
+        //// End Neoffice Modification: wiki-maintainer-grant-frappe-readonly
       },
       status: "paused",
       budgetMonthlyCents: 0,
@@ -343,7 +384,161 @@ const manifest: PaperclipPluginManifestV1 = {
         originId: "routine:index-refresh",
         billingCode: "plugin-llm-wiki:maintenance"
       }
+    },
+    //// Neoffice Modification: wiki-routines-erp-snapshots
+    //// Why: NORA Sprint J — five materialisation routines that scan
+    ////      Frappe ERP read-only and produce wiki snapshot pages so
+    ////      specialists can ground their answers in the tenant's own
+    ////      reality without re-running tools live each time.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint J POC LLM Wiki, [[swirling-humming-lerdorf]]
+    {
+      routineKey: NORA_ERP_SNAPSHOT_PLAN_COMPTABLE_ROUTINE_KEY,
+      title: "Snapshot plan comptable utilisé par le tenant",
+      description:
+        "Scanne le DocType Frappe `Account` (chart of accounts) pour produire `wiki/concepts/plan-comptable-tenant.md` : table hiérarchique 1xxx→5xxx, comptes actifs uniquement, parent_account résolu. " +
+        "Procédure : (1) frappeDocumentList(doctype='Account', filters={is_group:0,disabled:0}, limit=200) pour les leaves ; (2) frappeDocumentList récursif pour parents si nécessaire ; (3) wiki_propose_patch sur `wiki/concepts/plan-comptable-tenant.md` avec table markdown groupée par classe (Actifs courants 10xx, Actifs immobilisés 14xx, Passifs 2xxx, Capitaux 28xx, Charges 4xxx, Revenus 6xxx) ; (4) wiki_write_page après revue ; (5) wiki_append_log de l'opération avec date snapshot.",
+      status: "paused",
+      priority: "low",
+      assigneeRef: { resourceKind: "agent", resourceKey: WIKI_MAINTAINER_AGENT_KEY },
+      projectRef: { resourceKind: "project", resourceKey: WIKI_PROJECT_KEY },
+      concurrencyPolicy: "skip_if_active",
+      catchUpPolicy: "skip_missed",
+      triggers: [
+        {
+          kind: "schedule",
+          label: "Monthly (1st 04:00 UTC)",
+          enabled: false,
+          cronExpression: "0 4 1 * *",
+          timezone: "UTC",
+          signingMode: null,
+          replayWindowSec: null
+        }
+      ],
+      issueTemplate: {
+        surfaceVisibility: "plugin_operation",
+        originId: "routine:nora-erp-snapshot-plan-comptable",
+        billingCode: "plugin-llm-wiki:erp-snapshot"
+      }
+    },
+    {
+      routineKey: NORA_ERP_SNAPSHOT_CLIENTS_CLES_ROUTINE_KEY,
+      title: "Snapshot clients clés (top 20 par CA 12 derniers mois)",
+      description:
+        "Identifie les 20 clients les plus stratégiques du tenant et produit `wiki/synthesis/clients-cles.md`. " +
+        "Procédure : (1) frappeRevenueSummary(period='ltm') ou frappeSqlQuery agrégeant Sales Invoice par customer rolling 12 months ; (2) top 20 par grand_total ; (3) frappeDocumentGet sur chacun pour récupérer customer_group, territory, billing_address, principal contact ; (4) wiki_propose_patch puis wiki_write_page sur `wiki/synthesis/clients-cles.md` avec frontmatter type=synthesis, généré-par=routine, snapshot-date, format table : nom | groupe | territoire | CA 12m | n° factures | dernier paiement. Cite la requête source au pied de page.",
+      status: "paused",
+      priority: "low",
+      assigneeRef: { resourceKind: "agent", resourceKey: WIKI_MAINTAINER_AGENT_KEY },
+      projectRef: { resourceKind: "project", resourceKey: WIKI_PROJECT_KEY },
+      concurrencyPolicy: "skip_if_active",
+      catchUpPolicy: "skip_missed",
+      triggers: [
+        {
+          kind: "schedule",
+          label: "Monthly (1st 05:00 UTC)",
+          enabled: false,
+          cronExpression: "0 5 1 * *",
+          timezone: "UTC",
+          signingMode: null,
+          replayWindowSec: null
+        }
+      ],
+      issueTemplate: {
+        surfaceVisibility: "plugin_operation",
+        originId: "routine:nora-erp-snapshot-clients-cles",
+        billingCode: "plugin-llm-wiki:erp-snapshot"
+      }
+    },
+    {
+      routineKey: NORA_ERP_SNAPSHOT_FOURNISSEURS_ROUTINE_KEY,
+      title: "Snapshot fournisseurs récurrents (top 20 par fréquence d'achat)",
+      description:
+        "Identifie les fournisseurs apparaissant le plus souvent en Purchase Invoice / Purchase Order sur 12 mois glissants et produit `wiki/synthesis/fournisseurs-recurrents.md`. " +
+        "Procédure : (1) frappeSqlQuery sur Purchase Invoice agrégé par supplier (count + sum grand_total) sur les 12 derniers mois ; (2) top 20 ; (3) frappeDocumentGet chaque Supplier pour catégorie, conditions de paiement par défaut, IBAN bancaire, contact ; (4) wiki_propose_patch puis wiki_write_page avec frontmatter + table fournisseur | catégorie | fréquence | volume 12m | conditions paiement | dernière facture.",
+      status: "paused",
+      priority: "low",
+      assigneeRef: { resourceKind: "agent", resourceKey: WIKI_MAINTAINER_AGENT_KEY },
+      projectRef: { resourceKind: "project", resourceKey: WIKI_PROJECT_KEY },
+      concurrencyPolicy: "skip_if_active",
+      catchUpPolicy: "skip_missed",
+      triggers: [
+        {
+          kind: "schedule",
+          label: "Monthly (1st 06:00 UTC)",
+          enabled: false,
+          cronExpression: "0 6 1 * *",
+          timezone: "UTC",
+          signingMode: null,
+          replayWindowSec: null
+        }
+      ],
+      issueTemplate: {
+        surfaceVisibility: "plugin_operation",
+        originId: "routine:nora-erp-snapshot-fournisseurs-recurrents",
+        billingCode: "plugin-llm-wiki:erp-snapshot"
+      }
+    },
+    {
+      routineKey: NORA_ERP_SNAPSHOT_EMPLOYES_ROUTINE_KEY,
+      title: "Snapshot employés actifs et rôles",
+      description:
+        "Produit `wiki/synthesis/employes-actifs.md` avec les employés actifs et leurs rôles métier. " +
+        "Procédure : (1) frappeDocumentList(doctype='Employee', filters={status:'Active'}, fields=['name','employee_name','department','designation','date_of_joining','company_email']) ; (2) groupBy department ; (3) wiki_propose_patch puis wiki_write_page avec frontmatter type=synthesis, généré-par=routine, snapshot-date, format hiérarchique par département → liste rôles. NE PAS inclure de données salariales ou personnelles non publiques (DOB, IBAN, AVS). " +
+        "Le snapshot sert au LLM à savoir qui contacter dans l'entreprise (« qui s'occupe de la compta ? »).",
+      status: "paused",
+      priority: "low",
+      assigneeRef: { resourceKind: "agent", resourceKey: WIKI_MAINTAINER_AGENT_KEY },
+      projectRef: { resourceKind: "project", resourceKey: WIKI_PROJECT_KEY },
+      concurrencyPolicy: "skip_if_active",
+      catchUpPolicy: "skip_missed",
+      triggers: [
+        {
+          kind: "schedule",
+          label: "Monthly (1st 07:00 UTC)",
+          enabled: false,
+          cronExpression: "0 7 1 * *",
+          timezone: "UTC",
+          signingMode: null,
+          replayWindowSec: null
+        }
+      ],
+      issueTemplate: {
+        surfaceVisibility: "plugin_operation",
+        originId: "routine:nora-erp-snapshot-employes-actifs",
+        billingCode: "plugin-llm-wiki:erp-snapshot"
+      }
+    },
+    {
+      routineKey: NORA_ERP_SNAPSHOT_POLITIQUE_FISCALE_ROUTINE_KEY,
+      title: "Snapshot politique fiscale active (taux TVA + comptes tax setting)",
+      description:
+        "Produit `wiki/synthesis/politique-fiscale-active.md` reflétant les Sales/Purchase Taxes and Charges Templates effectivement utilisés par CE tenant, avec leurs taux. Permet au LLM de distinguer le taux générique suisse (8.1 % LTVA) du taux réellement appliqué par le tenant (8.1 % standard mais 0 % si statut spécial). " +
+        "Procédure : (1) frappeDocumentList(doctype='Sales Taxes and Charges Template') puis frappeDocumentGet pour les taux ; (2) idem côté Purchase ; (3) frappeSqlQuery sur le Account Period en cours pour vérifier le fiscal_year_start_date ; (4) wiki_propose_patch puis wiki_write_page avec table template_name | type | taux | account | date_effective. Pour annuel, déclenche-toi mi-janvier.",
+      status: "paused",
+      priority: "low",
+      assigneeRef: { resourceKind: "agent", resourceKey: WIKI_MAINTAINER_AGENT_KEY },
+      projectRef: { resourceKind: "project", resourceKey: WIKI_PROJECT_KEY },
+      concurrencyPolicy: "skip_if_active",
+      catchUpPolicy: "skip_missed",
+      triggers: [
+        {
+          kind: "schedule",
+          label: "Annual (15 Jan 08:00 UTC)",
+          enabled: false,
+          cronExpression: "0 8 15 1 *",
+          timezone: "UTC",
+          signingMode: null,
+          replayWindowSec: null
+        }
+      ],
+      issueTemplate: {
+        surfaceVisibility: "plugin_operation",
+        originId: "routine:nora-erp-snapshot-politique-fiscale",
+        billingCode: "plugin-llm-wiki:erp-snapshot"
+      }
     }
+    //// End Neoffice Modification: wiki-routines-erp-snapshots
   ],
   tools: [
     {
