@@ -4093,7 +4093,9 @@ function resolveCompanyId(input: ToolParams, runCtx: ToolRunContext): string {
   if (runCtx?.companyId && UUID_REGEX.test(runCtx.companyId)) {
     return runCtx.companyId;
   }
-  if (fromParams) return fromParams;
+  // NORA Sprint K Phase 0b — when neither side provides a valid UUID,
+  // refuse explicitly instead of returning a bogus non-UUID string that
+  // would surface as obscure SQL errors deeper in the stack.
   throw new Error("companyId is required (params.companyId or runContext.companyId must be a valid UUID)");
 }
 //// End Neoffice Modification: wiki-tools-companyid-fallback-runcontext
