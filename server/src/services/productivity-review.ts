@@ -763,6 +763,30 @@ export function productivityReviewService(db: Db, deps?: { enqueueWakeup?: Enque
     companyId?: string;
     thresholds?: Partial<ProductivityReviewThresholds>;
   }) {
+    //// Neoffice Modification: disable-productivity-review-feature
+    //// Why: NORA's delegate_to_specialist pattern issues 10+ sub-runs per
+    ////      parent issue, which trips the upstream productivity-review
+    ////      high-churn threshold (10 runs/hour). The auto-generated
+    ////      "Review productivity for PRI-XXX" issues then delegate too,
+    ////      creating an infinite loop and saturating the runner queue.
+    ////      Smoke E2E timed out 180s on all questions with the feature on.
+    //// Date: 2026-05-19
+    //// Refs: NORA Sprint D — recovery-action loop, paperclip upstream sync 2026-05-18
+    if (process.env.NEOFFICE_DISABLE_PRODUCTIVITY_REVIEW === "1") {
+      return {
+        scanned: 0,
+        created: 0,
+        updated: 0,
+        existing: 0,
+        snoozed: 0,
+        creationCapped: 0,
+        skipped: 0,
+        failed: 0,
+        reviewIssueIds: [] as string[],
+        failedIssueIds: [] as string[],
+      };
+    }
+    //// End Neoffice Modification: disable-productivity-review-feature
     const now = opts?.now ?? new Date();
     const thresholds = buildThresholds(opts?.thresholds);
     const candidates = await db
