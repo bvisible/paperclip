@@ -194,14 +194,24 @@ const plugin = definePlugin({
     //// Date: 2026-05-19
     try {
       const { writeFileSync } = await import("node:fs");
-      const lf = (ctx as any).localFolders;
-      const ctxKeys = Object.keys(ctx as any).sort();
-      const localFoldersKeys = lf && typeof lf === "object" ? Object.keys(lf).sort() : [];
+      const anyCtx = ctx as any;
+      const lf = anyCtx.localFolders;
+      const sk = anyCtx.skills;
+      const ro = anyCtx.routines;
+      const ew = anyCtx.executionWorkspaces;
+      const ctxKeys = Object.keys(anyCtx).sort();
+      const ctxOwnKeys = Object.getOwnPropertyNames(anyCtx).sort();
       writeFileSync("/tmp/wiki-debug-ctx.txt", JSON.stringify({
         ctxKeys,
+        ctxOwnKeys,
         localFoldersTypeof: typeof lf,
-        localFoldersKeys,
-        manifestId: (ctx as any).manifest?.id ?? "?",
+        localFoldersDirectAccess: lf ? "present" : "missing",
+        skillsTypeof: typeof sk,
+        routinesTypeof: typeof ro,
+        executionWorkspacesTypeof: typeof ew,
+        manifestId: anyCtx.manifest?.id ?? "?",
+        ctxConstructorName: anyCtx.constructor?.name ?? "Object",
+        ctxIsProxy: typeof Proxy !== "undefined" && anyCtx instanceof Proxy,
         timestamp: new Date().toISOString(),
       }, null, 2));
     } catch (err) {
