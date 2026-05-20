@@ -3,7 +3,14 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
-import { issueExecutionDecisions } from "@paperclipai/db";
+import { issueExecutionDecisions, issues } from "@paperclipai/db";
+//// Neoffice Modification: dedupe-delegation-issue-loop-imports
+//// Why: NORA Sprint P — drizzle operators needed for the duplicate
+////      delegation guard added to the POST /issues handler below.
+//// Date: 2026-05-20
+//// Refs: NORA Sprint P incident osiris
+import { and, eq, inArray } from "drizzle-orm";
+//// End Neoffice Modification: dedupe-delegation-issue-loop-imports
 import {
   addIssueCommentSchema,
   acceptIssueThreadInteractionSchema,
@@ -1865,6 +1872,67 @@ export function issueRoutes(
 
     const actor = getActorInfo(req);
     const executionPolicy = normalizeIssueExecutionPolicy(req.body.executionPolicy);
+
+    //// Neoffice Modification: dedupe-delegation-issue-loop
+    //// Why: NORA Sprint P (2026-05-20) — a runaway orchestration loop made
+    ////      the `main` agent re-delegate the SAME task forever. On osiris,
+    ////      107 strictly-identical issues
+    ////      "[delegate from main] Exécute frappeDocumentList(doctype='Account'...)"
+    ////      were created in ~14h, saturating the 2-vCPU host and triggering
+    ////      an avalanche of timeouts (136 timed_out + 79 failed / 24h).
+    ////
+    ////      Root cause: a `blocked` source issue kept `main` as recovery
+    ////      owner; every heartbeat tick (2s) `main` retried by creating a
+    ////      NEW delegation issue. The per-issue invocation budget never
+    ////      kicks in because each retry is a brand-new issue id.
+    ////
+    ////      Guard: before creating an issue assigned to an agent, if an
+    ////      OPEN issue (todo/in_progress/blocked) with the SAME title +
+    ////      SAME assignee + SAME company already exists, do NOT create a
+    ////      duplicate — return the existing one (HTTP 200). A re-delegation
+    ////      loop therefore can no longer snowball: the 2nd identical
+    ////      attempt resolves to the 1st issue instead of spawning another.
+    ////
+    ////      Scope is intentionally narrow (exact title match + agent
+    ////      assignee + open status) so legitimate distinct work is never
+    ////      blocked — two genuinely different tasks never share an exact
+    ////      title, and an already-open identical task is by definition
+    ////      redundant to re-create.
+    //// Date: 2026-05-20
+    //// Refs: NORA Sprint P incident osiris [[NORA/36-llm-wiki-poc/14-memory-reset-sprint-p]]
+    const dedupeTitle = typeof req.body.title === "string" ? req.body.title.trim() : "";
+    if (req.body.assigneeAgentId && dedupeTitle.length > 0) {
+      const existingOpen = await db
+        .select({ id: issues.id })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            eq(issues.title, req.body.title),
+            eq(issues.assigneeAgentId, req.body.assigneeAgentId),
+            inArray(issues.status, ["todo", "in_progress", "blocked"]),
+          ),
+        )
+        .limit(1);
+      if (existingOpen.length > 0) {
+        const existing = await svc.getById(existingOpen[0].id);
+        if (existing) {
+          logger.warn(
+            {
+              companyId,
+              assigneeAgentId: req.body.assigneeAgentId,
+              title: dedupeTitle.slice(0, 120),
+              existingIssueId: existing.id,
+            },
+            "dedupe-delegation-issue-loop: identical open issue already assigned to this agent — returning existing instead of creating a duplicate",
+          );
+          res.status(200).json(existing);
+          return;
+        }
+      }
+    }
+    //// End Neoffice Modification: dedupe-delegation-issue-loop
+
     const issue = await svc.create(companyId, {
       ...req.body,
       executionPolicy,
