@@ -96,6 +96,31 @@ interface PlatformConfigView {
   resendDefaultFrom: string;
 }
 
+//// Neocompany Modification — types for the Signatures + Agent identity sections.
+interface SignatureRow {
+  id: string;
+  name: string;
+  html: string;
+  isDefault: boolean;
+  order: number;
+  createdAt: string;
+}
+
+interface AgentIdentityRow {
+  id: string;
+  name: string;
+  title: string;
+  role: string;
+  icon: string | null;
+  persona: string;
+  emailIdentity: {
+    address: string;
+    fromName: string;
+    signatureId: string;
+  };
+}
+//// End Neocompany Modification
+
 interface EnabledToolsView {
   enabled: string[] | null;
 }
@@ -401,6 +426,12 @@ export function SettingsPage(_props: PluginPageProps) {
   const configResp = usePluginData<ConfigSummary>("configSummary", {});
   const emailAccountsResp = usePluginData<EmailAccountsResponse>("emailAccounts", { companyId });
   const companyConfigResp = usePluginData<CompanyConfigResponse>("companyConfig", { companyId });
+  //// Neocompany Modification — signatures library + agent identity editor.
+  const signaturesResp = usePluginData<{ signatures: SignatureRow[] }>("signaturesList", { companyId });
+  const agentsListResp = usePluginData<{ agents: AgentIdentityRow[] }>("agentsList", { companyId });
+  const signatureUpsert = usePluginAction("signatureUpsert");
+  const signatureDelete = usePluginAction("signatureDelete");
+  //// End Neocompany Modification
   const setCategoryEnabled = usePluginAction("setCategoryEnabled");
   const emailAccountUpsert = usePluginAction("emailAccountUpsert");
   const emailAccountDelete = usePluginAction("emailAccountDelete");
@@ -986,6 +1017,28 @@ export function SettingsPage(_props: PluginPageProps) {
         )}
       </section>
 
+      {/* //// Neocompany Modification — Signatures library + Agent identity editor */}
+      <SignaturesSection
+        companyId={companyId}
+        signatures={signaturesResp.data?.signatures ?? []}
+        onUpsert={async (data, sigId) => {
+          await signatureUpsert({ companyId, signatureId: sigId, data });
+          signaturesResp.refresh();
+        }}
+        onDelete={async (sigId) => {
+          await signatureDelete({ companyId, signatureId: sigId });
+          signaturesResp.refresh();
+        }}
+      />
+
+      <AgentIdentitySection
+        companyId={companyId}
+        agents={agentsListResp.data?.agents ?? []}
+        signatures={signaturesResp.data?.signatures ?? []}
+        onRefresh={() => agentsListResp.refresh()}
+      />
+      {/* //// End Neocompany Modification */}
+
       {configDrawer && (
         <ToolConfigDrawer
           tool={configDrawer}
@@ -1389,6 +1442,374 @@ function CompanySection({
     </Card>
   );
 }
+
+// ---------------------------------------------------------------------------
+//// Neocompany Modification — SignaturesSection
+//// CRUD over the company's email_signature library. Live preview of pasted
+//// HTML in a sandboxed iframe (XSS-safe). A second preview interpolates
+//// `{{agentName}}` / etc. with sample values so the operator sees what an
+//// actual outbound email will look like.
+// ---------------------------------------------------------------------------
+
+const SAMPLE_TOKENS = {
+  agentName: "Jean Dupont",
+  agentTitle: "Support",
+  agentEmail: "jean@example.com",
+  agentRole: "support",
+  companyName: "Reed Blake 1835",
+};
+
+function interpolateForPreview(html: string, tokens: Record<string, string>): string {
+  return html.replace(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g, (m, k: string) => tokens[k] ?? m);
+}
+
+function SignaturesSection({
+  companyId,
+  signatures,
+  onUpsert,
+  onDelete,
+}: {
+  companyId: string;
+  signatures: SignatureRow[];
+  onUpsert: (data: Partial<SignatureRow>, signatureId?: string) => Promise<void>;
+  onDelete: (signatureId: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<SignatureRow | null>(null);
+  const [showNew, setShowNew] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const startNew = () => {
+    setEditing({
+      id: "",
+      name: "",
+      html: "",
+      isDefault: signatures.length === 0,
+      order: signatures.length * 10 + 10,
+      createdAt: new Date().toISOString(),
+    });
+    setShowNew(true);
+  };
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Signatures email</h2>
+        <button
+          type="button"
+          onClick={startNew}
+          disabled={!companyId}
+          style={{
+            background: tokens.primary,
+            color: "white",
+            border: "none",
+            padding: "6px 12px",
+            borderRadius: 6,
+            fontSize: 13,
+            cursor: "pointer",
+          }}
+        >
+          + Nouvelle signature
+        </button>
+      </div>
+      <p style={{ margin: "0 0 12px", color: tokens.mutedText, fontSize: 12 }}>
+        Bibliothèque de signatures de l'entreprise. Colle du HTML (généré dans Gmail/Outlook), visualise le rendu, et les agents l'utilisent à l'envoi — tokens <code>{`{{agentName}}`}</code>, <code>{`{{agentTitle}}`}</code>, <code>{`{{agentEmail}}`}</code>, <code>{`{{agentRole}}`}</code>, <code>{`{{companyName}}`}</code> remplacés automatiquement.
+      </p>
+
+      {signatures.length === 0 && !editing ? (
+        <Card>
+          <p style={{ margin: 0, color: tokens.mutedText, fontSize: 13 }}>
+            Aucune signature. Crée-en une pour que tes agents puissent l'utiliser à l'envoi.
+          </p>
+        </Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {signatures.map((sig) => (
+            <Card key={sig.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <strong style={{ flex: 1 }}>{sig.name || <em>(sans nom)</em>}</strong>
+                {sig.isDefault && <Pill tone="ok">default</Pill>}
+                <button
+                  type="button"
+                  onClick={() => { setEditing(sig); setShowNew(false); }}
+                  style={{ background: "transparent", border: tokens.cardBorder, padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
+                >
+                  Éditer
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm(`Supprimer la signature "${sig.name}" ?`)) void onDelete(sig.id);
+                  }}
+                  style={{ background: "transparent", border: `1px solid ${tokens.danger}`, color: tokens.danger, padding: "4px 10px", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
+                >
+                  Supprimer
+                </button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <Card style={{ marginTop: 12, background: "var(--background, #f9fafb)" }}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>
+            {showNew ? "Nouvelle signature" : `Éditer "${editing.name || "(sans nom)"}"`}
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <label style={{ display: "block", fontSize: 12 }}>
+              Nom (interne, pour le picker)
+              <input
+                type="text"
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                placeholder="ex. Brand par défaut FR"
+                style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13 }}
+              />
+            </label>
+            <label style={{ display: "block", fontSize: 12 }}>
+              HTML de la signature
+              <textarea
+                value={editing.html}
+                onChange={(e) => setEditing({ ...editing, html: e.target.value })}
+                rows={10}
+                placeholder={`<table><tr><td>...</td></tr></table>\n\nUtilise {{agentName}}, {{agentTitle}}, {{agentEmail}}, {{companyName}}…`}
+                style={{ display: "block", width: "100%", marginTop: 4, padding: "8px 10px", border: tokens.cardBorder, borderRadius: 6, fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 12 }}
+              />
+            </label>
+            <Toggle
+              checked={editing.isDefault}
+              onChange={(v) => setEditing({ ...editing, isDefault: v })}
+              label="Définir comme signature par défaut de l'entreprise"
+            />
+            <div>
+              <div style={{ fontSize: 11, color: tokens.mutedText, marginBottom: 4 }}>
+                Aperçu (avec valeurs d'exemple {SAMPLE_TOKENS.agentName} / {SAMPLE_TOKENS.companyName})
+              </div>
+              <div style={{ background: "white", border: tokens.cardBorder, borderRadius: 6, padding: 4 }}>
+                <iframe
+                  title="signature-preview"
+                  sandbox=""
+                  srcDoc={interpolateForPreview(editing.html, SAMPLE_TOKENS)}
+                  style={{ width: "100%", height: 180, border: "none" }}
+                />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => { setEditing(null); setShowNew(false); }}
+                style={{ background: "transparent", border: tokens.cardBorder, padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 13 }}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={saving || !editing.name.trim() || !editing.html.trim()}
+                onClick={async () => {
+                  setSaving(true);
+                  try {
+                    await onUpsert(
+                      { name: editing.name.trim(), html: editing.html, isDefault: editing.isDefault, order: editing.order },
+                      editing.id || undefined,
+                    );
+                    setEditing(null);
+                    setShowNew(false);
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                style={{ background: tokens.primary, color: "white", border: "none", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 13, opacity: saving ? 0.6 : 1 }}
+              >
+                {saving ? "Sauvegarde…" : (showNew ? "Créer" : "Enregistrer")}
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//// Neocompany Modification — AgentIdentitySection
+//// Per-company override of agent identity (humain name + persona +
+//// email address + signature) in a single table. Save per row hits the
+//// server bridge PUT /api/plugins/neocompany-tools/bridge/agent-identity
+//// (the worker SDK can't mutate agents directly).
+// ---------------------------------------------------------------------------
+
+function AgentIdentitySection({
+  companyId,
+  agents,
+  signatures,
+  onRefresh,
+}: {
+  companyId: string;
+  agents: AgentIdentityRow[];
+  signatures: SignatureRow[];
+  onRefresh: () => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, AgentIdentityRow>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const draftFor = (a: AgentIdentityRow): AgentIdentityRow => drafts[a.id] ?? a;
+  const isDirty = (a: AgentIdentityRow): boolean => {
+    const d = drafts[a.id];
+    if (!d) return false;
+    return (
+      d.name !== a.name ||
+      d.title !== a.title ||
+      d.persona !== a.persona ||
+      d.emailIdentity.address !== a.emailIdentity.address ||
+      d.emailIdentity.signatureId !== a.emailIdentity.signatureId
+    );
+  };
+
+  const onSave = async (a: AgentIdentityRow) => {
+    const d = drafts[a.id];
+    if (!d) return;
+    setSaving(a.id);
+    try {
+      const res = await fetch("/api/plugins/neocompany-tools/bridge/agent-identity", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          agentId: a.id,
+          name: d.name,
+          title: d.title,
+          persona: d.persona,
+          emailIdentity: {
+            address: d.emailIdentity.address,
+            signatureId: d.emailIdentity.signatureId,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        alert(`Échec de la sauvegarde : ${res.status} ${body.slice(0, 200)}`);
+        return;
+      }
+      // Drop the draft so the row reads from the fresh server value.
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[a.id];
+        return next;
+      });
+      onRefresh();
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (!companyId) return null;
+
+  return (
+    <section style={{ marginTop: 24 }}>
+      <div style={{ marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Identités des agents</h2>
+        <p style={{ margin: "4px 0 0", color: tokens.mutedText, fontSize: 12 }}>
+          Renomme les agents avec des prénoms réalistes (le nom est utilisé dans le chat ET comme "From" des emails). Persona = description du caractère injectée dans le system prompt pour que l'agent incarne son personnage. Signature appliquée par défaut à ses envois.
+        </p>
+      </div>
+
+      {agents.length === 0 ? (
+        <Card>
+          <p style={{ margin: 0, color: tokens.mutedText, fontSize: 13 }}>Aucun agent dans cette company.</p>
+        </Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {agents.map((a) => {
+            const d = draftFor(a);
+            const dirty = isDirty(a);
+            return (
+              <Card key={a.id}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <label style={{ fontSize: 11, color: tokens.mutedText }}>
+                    Nom (humain)
+                    <input
+                      type="text"
+                      value={d.name}
+                      onChange={(e) => setDrafts({ ...drafts, [a.id]: { ...d, name: e.target.value } })}
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13, color: "var(--foreground, #0f172a)" }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, color: tokens.mutedText }}>
+                    Titre / rôle affiché
+                    <input
+                      type="text"
+                      value={d.title}
+                      onChange={(e) => setDrafts({ ...drafts, [a.id]: { ...d, title: e.target.value } })}
+                      placeholder={a.role || ""}
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13 }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, color: tokens.mutedText }}>
+                    Adresse email
+                    <input
+                      type="email"
+                      value={d.emailIdentity.address}
+                      onChange={(e) => setDrafts({ ...drafts, [a.id]: { ...d, emailIdentity: { ...d.emailIdentity, address: e.target.value } } })}
+                      placeholder="prenom@entreprise.ch"
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13 }}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, color: tokens.mutedText }}>
+                    Signature
+                    <select
+                      value={d.emailIdentity.signatureId}
+                      onChange={(e) => setDrafts({ ...drafts, [a.id]: { ...d, emailIdentity: { ...d.emailIdentity, signatureId: e.target.value } } })}
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13, background: "white" }}
+                    >
+                      <option value="">— (défaut de l'entreprise)</option>
+                      {signatures.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}{s.isDefault ? " (default)" : ""}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ fontSize: 11, color: tokens.mutedText, gridColumn: "1 / -1" }}>
+                    Persona (ton, style, caractère — injecté dans le system prompt)
+                    <textarea
+                      value={d.persona}
+                      onChange={(e) => setDrafts({ ...drafts, [a.id]: { ...d, persona: e.target.value } })}
+                      rows={2}
+                      placeholder="ex. Chaleureux, tutoie, réponses concises, passionné de café. Genevois pure souche."
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, fontSize: 13, fontFamily: "inherit" }}
+                    />
+                  </label>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+                  <span style={{ fontSize: 11, color: tokens.mutedText }}>
+                    Rôle interne : <code>{a.role || "—"}</code> · ID : <code style={{ fontSize: 10 }}>{a.id.slice(0, 8)}…</code>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void onSave(a)}
+                    disabled={!dirty || saving === a.id}
+                    style={{
+                      background: dirty ? tokens.primary : "transparent",
+                      color: dirty ? "white" : tokens.mutedText,
+                      border: dirty ? "none" : tokens.cardBorder,
+                      padding: "6px 14px",
+                      borderRadius: 6,
+                      cursor: dirty ? "pointer" : "default",
+                      fontSize: 13,
+                      opacity: saving === a.id ? 0.6 : 1,
+                    }}
+                  >
+                    {saving === a.id ? "Sauvegarde…" : dirty ? "Enregistrer" : "Aucun changement"}
+                  </button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+//// End Neocompany Modification
 
 function ToolConfigDrawer({
   tool,

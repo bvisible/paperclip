@@ -8,6 +8,11 @@
  */
 
 import type { ToolResult, ToolRunContext } from "@paperclipai/plugin-sdk";
+import {
+  bodyAlreadyHasSignature,
+  stripHtmlToText,
+  wrapSignatureHtml,
+} from "../../email/signature.js";
 
 export interface EmailSendParams {
   to: string | string[];
@@ -17,17 +22,41 @@ export interface EmailSendParams {
   bcc?: string | string[];
   replyTo?: string;
   html?: boolean;
+  //// Neocompany Modification — signature controls.
+  //// When the worker resolves `EmailSendConfig.signatureHtml` (from the
+  //// agent's emailIdentity / company default), it's appended to outbound
+  //// HTML bodies inside a sentinel wrapper. The agent can:
+  ////   - override with `signatureId` to pick a specific company signature
+  ////   - opt out with `appendSignature: false` for a reply inside a thread
+  ////     that already carries one.
+  //// End Neocompany Modification
+  signatureId?: string;
+  appendSignature?: boolean;
 }
 
 export interface EmailSendConfig {
   provider: "resend";
   apiKey: string;
   defaultFrom: string;
+  //// Neocompany Modification — pre-resolved + interpolated signature HTML
+  //// from the worker's `getEmailSendConfig`. Undefined when the agent has
+  //// no signature attached AND the company has no default signature.
+  signatureHtml?: string;
+  //// End Neocompany Modification
 }
 
 function asArray(v: string | string[] | undefined): string[] | undefined {
   if (v === undefined) return undefined;
   return Array.isArray(v) ? v : [v];
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export async function runEmailSendMessage(
@@ -51,8 +80,34 @@ export async function runEmailSendMessage(
   if (params.cc) payload.cc = asArray(params.cc);
   if (params.bcc) payload.bcc = asArray(params.bcc);
   if (params.replyTo) payload.reply_to = params.replyTo;
+
+  //// Neocompany Modification — signature append (HTML + text fallback).
+  //// Skip when the agent explicitly opted out, or when the body already
+  //// carries a sentinel-wrapped signature (thread anti-duplication).
+  //// End Neocompany Modification
+  const sig = config.signatureHtml;
+  const wantsSignature = params.appendSignature !== false && Boolean(sig);
+  const skipForDuplicate = sig && params.html && bodyAlreadyHasSignature(params.body);
+  const applySignature = wantsSignature && !skipForDuplicate && sig;
+
   if (params.html) {
-    payload.html = params.body;
+    payload.html = applySignature
+      ? `${params.body}<br><br>${wrapSignatureHtml(applySignature)}`
+      : params.body;
+    if (applySignature) {
+      // Multipart text alternative: strip the signature HTML for clients
+      // that won't render HTML. The text body itself stays raw HTML when
+      // params.html is true (Resend accepts both alongside).
+      payload.text = `${stripHtmlToText(params.body)}\n\n${stripHtmlToText(applySignature)}`;
+    }
+  } else if (applySignature) {
+    // Plain-text body but we still want the (HTML) signature visible:
+    // promote to multipart — `text` keeps the plain body + stripped sig,
+    // `html` wraps the plain body in <pre> and appends the signature.
+    payload.text = `${params.body}\n\n${stripHtmlToText(applySignature)}`;
+    payload.html =
+      `<pre style="font-family:inherit;white-space:pre-wrap;margin:0">${escapeHtml(params.body)}</pre>` +
+      `<br><br>${wrapSignatureHtml(applySignature)}`;
   } else {
     payload.text = params.body;
   }
@@ -107,6 +162,15 @@ export const emailSendMessageDeclaration = {
       },
       replyTo: { type: "string", description: "Reply-To address override." },
       html: { type: "boolean", description: "If true, body is sent as HTML.", default: false },
+      signatureId: {
+        type: "string",
+        description: "Optional company signature externalId (see emailListSignatures). Overrides the agent's default signature for this send only.",
+      },
+      appendSignature: {
+        type: "boolean",
+        description: "Set false to skip appending the agent's signature (e.g. when replying inside a thread that already carries one). Default true.",
+        default: true,
+      },
     },
     required: ["to", "subject", "body"],
   } as const,

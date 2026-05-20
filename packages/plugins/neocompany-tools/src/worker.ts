@@ -275,8 +275,13 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
         const metadata = (agent?.metadata ?? {}) as Record<string, unknown>;
         const identity = metadata.emailIdentity as { address?: string; fromName?: string } | undefined;
         if (identity?.address) {
-          defaultFrom = identity.fromName
-            ? `${identity.fromName} <${identity.address}>`
+          //// Neocompany Modification — fallback fromName on agent.name so
+          //// renaming the agent (Atlas → Melvin) propagates to the From
+          //// header without re-editing emailIdentity.
+          //// End Neocompany Modification
+          const fromName = identity.fromName ?? agent?.name;
+          defaultFrom = fromName
+            ? `${fromName} <${identity.address}>`
             : identity.address;
         }
       } catch {
@@ -285,6 +290,83 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
 
       if (!defaultFrom) throw new Error("No email identity configured for this agent");
       return { provider: "resend", apiKey, defaultFrom };
+    },
+
+    //// Neocompany Modification — Resolve + interpolate the signature HTML.
+    //// Priority chain :
+    ////   1. `signatureIdOverride` from the send call (e.g. agent picked a
+    ////      specific company signature via the `signatureId` param).
+    ////   2. `metadata.emailIdentity.signatureHtmlOverride` — agent has an
+    ////      inline custom signature (rare, escape hatch).
+    ////   3. `metadata.emailIdentity.signatureId` — agent's default pick.
+    ////   4. The company's `isDefault` signature.
+    ////   5. Nothing → returns undefined, send.ts skips the append.
+    //// Interpolated tokens : agentName / agentTitle / agentEmail /
+    //// agentRole / companyName.
+    //// End Neocompany Modification
+    async resolveEmailSignature(companyId, agentId, signatureIdOverride) {
+      const { EMAIL_SIGNATURE_ENTITY_TYPE } = await import("./email/types.js");
+      const { interpolateSignature } = await import("./email/signature.js");
+
+      let agentName = "";
+      let agentTitle: string | undefined;
+      let agentRole: string | undefined;
+      let agentEmail: string | undefined;
+      let signatureId: string | undefined = signatureIdOverride;
+      let inlineHtml: string | undefined;
+      try {
+        const agent = await ctx.agents.get(agentId, companyId);
+        agentName = agent?.name ?? "";
+        agentTitle = agent?.title ?? undefined;
+        agentRole = agent?.role ?? undefined;
+        const metadata = (agent?.metadata ?? {}) as Record<string, unknown>;
+        const identity = metadata.emailIdentity as { address?: string; signatureId?: string; signatureHtmlOverride?: string } | undefined;
+        if (identity?.address) agentEmail = identity.address;
+        if (!signatureId) signatureId = identity?.signatureId;
+        if (!signatureId && identity?.signatureHtmlOverride) inlineHtml = identity.signatureHtmlOverride;
+      } catch { /* fallback to defaults */ }
+
+      let companyName = "";
+      try {
+        const company = await ctx.companies.get(companyId);
+        companyName = company?.name ?? "";
+      } catch { /* not granted — leave empty */ }
+
+      let rawHtml: string | undefined = inlineHtml;
+      if (!rawHtml && signatureId) {
+        const rows = await ctx.entities.list({
+          entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          externalId: signatureId,
+          limit: 1,
+        });
+        const row = rows[0];
+        if (row) rawHtml = (row.data as { html?: string } | undefined)?.html;
+      }
+      if (!rawHtml) {
+        // Fallback to the company's isDefault signature.
+        const all = await ctx.entities.list({
+          entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          limit: 100,
+        });
+        const def = all.find((r) => {
+          const d = (r.data ?? {}) as { isDefault?: boolean };
+          return d.isDefault === true;
+        });
+        if (def) rawHtml = (def.data as { html?: string } | undefined)?.html;
+      }
+      if (!rawHtml) return undefined;
+
+      return interpolateSignature(rawHtml, {
+        agentName,
+        agentTitle,
+        agentEmail,
+        agentRole,
+        companyName,
+      });
     },
   };
 }
@@ -1532,6 +1614,157 @@ const plugin = definePlugin({
         metadata: { inserted, skipped, overwrite },
       });
       return { ok: true, inserted, skipped };
+    });
+
+    //// Neocompany Modification — Email signatures CRUD (per-tenant library).
+    //// Backs the SettingsPage section "Signatures email": list / get /
+    //// upsert (with single-default invariant) / delete. The signatures are
+    //// pulled at send time by `getEmailSendConfig` and interpolated by
+    //// `src/email/signature.ts:interpolateSignature` before being appended
+    //// to the outbound HTML body.
+    //// End Neocompany Modification
+    ctx.data.register("signaturesList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { signatures: [] };
+      const { EMAIL_SIGNATURE_ENTITY_TYPE } = await import("./email/types.js");
+      const records = await ctx.entities.list({
+        entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 100,
+      });
+      const signatures = (records.map((r) => ({
+        id: r.externalId ?? r.id,
+        ...(r.data as Record<string, unknown>),
+      })) as Array<Record<string, unknown> & { id: string }>)
+        .sort((a, b) => ((a.order as number) ?? 0) - ((b.order as number) ?? 0));
+      return { signatures };
+    });
+
+    ctx.data.register("signatureGet", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const signatureId = params.signatureId as string;
+      if (!companyId || !signatureId) return null;
+      const { EMAIL_SIGNATURE_ENTITY_TYPE } = await import("./email/types.js");
+      const rows = await ctx.entities.list({
+        entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: signatureId,
+        limit: 1,
+      });
+      const row = rows[0];
+      if (!row) return null;
+      return { id: row.externalId ?? row.id, ...(row.data as Record<string, unknown>) };
+    });
+
+    ctx.actions.register("signatureUpsert", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const data = (params.data ?? {}) as Record<string, unknown>;
+      if (!companyId || !data) throw new Error("signatureUpsert requires companyId and data");
+      const { EMAIL_SIGNATURE_ENTITY_TYPE } = await import("./email/types.js");
+      const signatureId = (params.signatureId as string | undefined) ?? globalThis.crypto.randomUUID();
+      const name = ((data.name as string) ?? "Untitled signature").slice(0, 200);
+      const wantsDefault = Boolean(data.isDefault);
+
+      // Invariant: at most one isDefault per company. Demote the others
+      // whenever this row is being promoted (or kept) as default.
+      if (wantsDefault) {
+        const others = await ctx.entities.list({
+          entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          limit: 100,
+        });
+        for (const other of others) {
+          if ((other.externalId ?? other.id) === signatureId) continue;
+          const od = (other.data ?? {}) as Record<string, unknown>;
+          if (!od.isDefault) continue;
+          await ctx.entities.upsert({
+            entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+            scopeKind: "company",
+            scopeId: companyId,
+            externalId: other.externalId ?? other.id,
+            title: other.title ?? undefined,
+            status: other.status ?? undefined,
+            data: { ...od, isDefault: false },
+          });
+        }
+      }
+
+      const finalData = {
+        name,
+        html: (data.html as string) ?? "",
+        isDefault: wantsDefault,
+        order: (data.order as number) ?? Date.now(),
+        createdAt: (data.createdAt as string) ?? new Date().toISOString(),
+      };
+      await ctx.entities.upsert({
+        entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: signatureId,
+        title: name,
+        status: "active",
+        data: finalData,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: `Email signature "${name}" saved${wantsDefault ? " (default)" : ""}`,
+        entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+        entityId: signatureId,
+      });
+      return { ok: true, signatureId };
+    });
+
+    //// Neocompany Modification — agentsList: feeds the UI "Identités agents"
+    //// table with the minimal shape the editor needs (id/name/title/role/
+    //// emailIdentity/persona). The actual mutations go through the server
+    //// bridge (PUT /bridge/agent-identity), since the SDK doesn't expose
+    //// agents.update from a worker.
+    //// End Neocompany Modification
+    ctx.data.register("agentsList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { agents: [] };
+      const agents = await ctx.agents.list({ companyId });
+      const rows = agents.map((a) => {
+        const meta = (a.metadata ?? {}) as Record<string, unknown>;
+        const emailIdentity = (meta.emailIdentity ?? {}) as Record<string, unknown>;
+        return {
+          id: a.id,
+          name: a.name,
+          title: a.title ?? "",
+          role: a.role ?? "",
+          icon: a.icon ?? null,
+          persona: typeof meta.persona === "string" ? meta.persona : "",
+          emailIdentity: {
+            address: typeof emailIdentity.address === "string" ? emailIdentity.address : "",
+            fromName: typeof emailIdentity.fromName === "string" ? emailIdentity.fromName : "",
+            signatureId: typeof emailIdentity.signatureId === "string" ? emailIdentity.signatureId : "",
+          },
+        };
+      });
+      // Sort by role then name for a stable, scannable list in the editor.
+      rows.sort((a, b) => (a.role || "").localeCompare(b.role || "") || a.name.localeCompare(b.name));
+      return { agents: rows };
+    });
+
+    ctx.actions.register("signatureDelete", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const signatureId = params.signatureId as string;
+      if (!companyId || !signatureId) throw new Error("signatureDelete requires companyId and signatureId");
+      const { EMAIL_SIGNATURE_ENTITY_TYPE } = await import("./email/types.js");
+      const rows = await ctx.entities.list({
+        entityType: EMAIL_SIGNATURE_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: signatureId,
+        limit: 1,
+      });
+      const match = rows[0];
+      if (!match) return { ok: false, error: "SIGNATURE_NOT_FOUND" };
+      await ctx.entities.delete({ id: match.id });
+      return { ok: true, signatureId };
     });
 
     // ── Job: IMAP poll (declared in manifest as "imap-poll") ─────────

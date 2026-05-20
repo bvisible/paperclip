@@ -49,6 +49,7 @@ import {
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
 import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessagesParams } from "./email/inbox-list.js";
 import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
+import { runEmailListSignatures, emailListSignaturesDeclaration, type EmailListSignaturesParams } from "./email/list-signatures.js";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { runTemplateCreate } from "./content/template-create.js";
 import { runTemplateList } from "./content/template-list.js";
@@ -117,6 +118,15 @@ export interface ToolContextAccess {
   getGscConfig(companyId: string): Promise<GscConfig>;
   getGa4Config(companyId: string): Promise<Ga4Config>;
   getEmailSendConfig(companyId: string, agentId: string): Promise<EmailSendConfig>;
+  //// Neocompany Modification — resolve the company signature for an agent
+  //// (with optional override). Returns the already-interpolated HTML or
+  //// undefined when no signature applies. See worker.ts:resolveEmailSignature.
+  //// End Neocompany Modification
+  resolveEmailSignature(
+    companyId: string,
+    agentId: string,
+    signatureIdOverride?: string,
+  ): Promise<string | undefined>;
   getPageSpeedConfig(companyId: string): Promise<PageSpeedConfig>;
   getOpenPageRankConfig(companyId: string): Promise<OpenPageRankConfig>;
   getWordPressConfig(companyId: string): Promise<WordPressConfig>;
@@ -430,8 +440,17 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     name: "emailSendMessage",
     declaration: emailSendMessageDeclaration,
     run: async (params, runCtx, ctxAccess) => {
+      const baseParams = params as EmailSendParams;
       const config = await ctxAccess.getEmailSendConfig(runCtx.companyId, runCtx.agentId);
-      return runEmailSendMessage(params as EmailSendParams, config, runCtx);
+      //// Neocompany Modification — resolve the signature (interpolated)
+      //// honoring an optional `signatureId` override from the call.
+      //// End Neocompany Modification
+      const signatureHtml = await ctxAccess.resolveEmailSignature(
+        runCtx.companyId,
+        runCtx.agentId,
+        baseParams.signatureId,
+      );
+      return runEmailSendMessage(baseParams, { ...config, signatureHtml }, runCtx);
     },
   },
   {
@@ -448,6 +467,18 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) => {
       const ctx = ctxAccess.getPluginContext();
       return runEmailReadMessage(ctx, params as EmailReadMessageParams, runCtx);
+    },
+  },
+  //// Neocompany Modification — exposes the company signature library so
+  //// agents can pick a signature explicitly via emailSendMessage's
+  //// `signatureId` param.
+  //// End Neocompany Modification
+  {
+    name: "emailListSignatures",
+    declaration: emailListSignaturesDeclaration,
+    run: async (params, runCtx, ctxAccess) => {
+      const ctx = ctxAccess.getPluginContext();
+      return runEmailListSignatures(ctx, params as EmailListSignaturesParams, runCtx);
     },
   },
   // ─── Template tools (brand template CRUD + compositor) ──────────────

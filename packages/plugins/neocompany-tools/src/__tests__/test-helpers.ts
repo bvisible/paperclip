@@ -171,6 +171,10 @@ export function makeCtxAccess(overrides: {
     getGscConfig: vi.fn(async () => overrides.gsc ?? { siteUrl: "https://example.com", accessToken: "stub" }) as never,
     getGa4Config: vi.fn(async () => overrides.ga4 ?? { propertyId: "0", accessToken: "stub" }) as never,
     getEmailSendConfig: vi.fn(async () => overrides.emailSend ?? { provider: "smtp" }) as never,
+    //// Neocompany Modification — stub for the signature resolver used by
+    //// the emailSendMessage wrapper. Defaults to "no signature".
+    resolveEmailSignature: vi.fn(async () => undefined) as never,
+    //// End Neocompany Modification
     getPageSpeedConfig: vi.fn(async () => overrides.pageSpeed ?? { apiKey: "stub" }) as never,
     getOpenPageRankConfig: vi.fn(async () => overrides.openPageRank ?? { apiKey: "stub" }) as never,
     getWordPressConfig: vi.fn(async () => overrides.wordpress ?? {

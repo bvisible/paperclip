@@ -58,3 +58,29 @@ export interface IncomingEmailData {
   /** Optional Paperclip session id once the agent picks it up. */
   threadId?: string;
 }
+
+//// Neocompany Modification — Email signatures library, scope=company.
+////
+//// One row per signature template. The HTML is whatever the user pasted
+//// (Gmail-style — generated elsewhere, copied in). Token placeholders use
+//// `{{name}}` style and are interpolated at SEND time so the same company
+//// signature serves N agents with their own name/title/email automatically
+//// substituted in.
+//// End Neocompany Modification
+
+export const EMAIL_SIGNATURE_ENTITY_TYPE = "email_signature";
+
+export interface EmailSignatureData {
+  /** Operator-facing label shown in the picker (e.g. "Brand — bilingual"). */
+  name: string;
+  /** Raw HTML body. May contain {{agentName}} / {{agentEmail}} / etc. */
+  html: string;
+  /** Marked as the company default — applied when an agent has no explicit
+   *  signatureId. At most one signature per company has isDefault=true; the
+   *  worker enforces this on upsert. */
+  isDefault: boolean;
+  /** Sort key in the editor list. */
+  order: number;
+  /** ISO 8601 creation timestamp. */
+  createdAt: string;
+}

@@ -282,6 +282,16 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: true,
     allowedRoles: ["support", "commercial", "main"],
   },
+  //// Neocompany Modification — agents enumerate company signatures.
+  emailListSignatures: {
+    name: "emailListSignatures",
+    label: "List email signatures",
+    category: ToolCategory.EMAIL,
+    defaultEnabled: false,
+    internal: true,
+    allowedRoles: ["support", "commercial", "writer", "main"],
+  },
+  //// End Neocompany Modification
   // ─── Templates ────────────────────────────────────────────────────
   templateCreate: {
     name: "templateCreate",

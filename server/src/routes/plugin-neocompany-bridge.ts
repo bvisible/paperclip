@@ -34,7 +34,7 @@ import {
 } from "../services/index.js";
 import { seedDefaultAgentsForCompany } from "../services/seed-agents.js";
 import { loadInstructionsBundleForNewAgent } from "../services/default-agent-instructions.js";
-import { assertInstanceAdmin, assertBoard } from "./authz.js";
+import { assertInstanceAdmin, assertBoard, assertCompanyAccess } from "./authz.js";
 import { notFound } from "../errors.js";
 
 const PLUGIN_KEY = "neocompany-tools";
@@ -285,6 +285,74 @@ function createPlatformConfigRoutes(db: Db): Router {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: message });
+    }
+  });
+
+  //// Neocompany Modification — PUT /bridge/agent-identity
+  ////
+  //// Patches an agent's identity (name, title, metadata.persona,
+  //// metadata.emailIdentity) from the plugin SettingsPage. Worker plugins
+  //// cannot mutate agents (the SDK only exposes `agents.list/get/...`),
+  //// so this route is the bridge they go through. Multi-tenant guard:
+  //// caller must have company access AND the agent must belong to that
+  //// company (cross-tenant rename blocked).
+  //// End Neocompany Modification
+  router.put("/plugins/neocompany-tools/bridge/agent-identity", async (req, res) => {
+    interface AgentIdentityPatchBody {
+      companyId?: string;
+      agentId?: string;
+      name?: string;
+      title?: string;
+      persona?: string;
+      emailIdentity?: {
+        address?: string;
+        fromName?: string;
+        signatureId?: string;
+        signatureHtmlOverride?: string;
+      };
+    }
+    const body = (req.body ?? {}) as AgentIdentityPatchBody;
+    if (!body.companyId || !body.agentId) {
+      res.status(400).json({ error: "companyId and agentId are required" });
+      return;
+    }
+    try {
+      assertCompanyAccess(req, body.companyId);
+      const existing = await agentsSvc.getById(body.agentId);
+      if (!existing) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      if (existing.companyId !== body.companyId) {
+        // Block cross-tenant access — caller could otherwise pass any
+        // agentId after having access to ANY company.
+        res.status(403).json({ error: "Agent does not belong to this company" });
+        return;
+      }
+      // Merge metadata patch — only the fields the caller sent are touched.
+      const currentMetadata = (existing.metadata ?? {}) as Record<string, unknown>;
+      const nextMetadata: Record<string, unknown> = { ...currentMetadata };
+      if (body.persona !== undefined) {
+        nextMetadata.persona = body.persona;
+      }
+      if (body.emailIdentity !== undefined) {
+        const currentIdentity = (currentMetadata.emailIdentity ?? {}) as Record<string, unknown>;
+        nextMetadata.emailIdentity = { ...currentIdentity, ...body.emailIdentity };
+      }
+      const patch: Partial<{ name: string; title: string; metadata: Record<string, unknown> }> = {};
+      if (typeof body.name === "string" && body.name.trim().length > 0) patch.name = body.name.trim();
+      if (body.title !== undefined) patch.title = body.title;
+      if (body.persona !== undefined || body.emailIdentity !== undefined) patch.metadata = nextMetadata;
+      if (Object.keys(patch).length === 0) {
+        res.json({ ok: true, updated: false });
+        return;
+      }
+      const updated = await agentsSvc.update(body.agentId, patch as never);
+      res.json({ ok: true, updated: Boolean(updated), agent: updated ? { id: updated.id, name: updated.name, title: updated.title, metadata: updated.metadata } : null });
+    } catch (err) {
+      const status = (err as { statusCode?: number })?.statusCode ?? 500;
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(status).json({ error: message });
     }
   });
 

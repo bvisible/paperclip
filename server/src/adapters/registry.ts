@@ -438,6 +438,39 @@ const piLocalAdapter: ServerAdapterModule = {
 // intentional until hermes ships a matching AdapterExecutionContext type.
 const executeHermesLocal = hermesExecute as unknown as ServerAdapterModule["execute"];
 
+//// Neocompany Modification — agent persona injection.
+//
+// When `agent.metadata.persona` is set (free-form text describing the
+// agent's personality, tone, etc.) we prepend a directive block to the
+// adapter's promptTemplate so the LLM stays in character across every
+// chat turn. The block enforces "total incarnation": the agent never
+// reveals being an AI, even when directly asked.
+//
+// This is per-tenant editorial — the persona is stored on the agent
+// metadata (UI: PUT /api/plugin-neocompany-bridge/agent-identity) and
+// applied at run time without touching the seed template.
+//
+// We only inject when (a) a persona is set AND (b) a promptTemplate is
+// already present on the adapter config (true for every seeded chat
+// agent — HERMES_CHAT_PROMPT_TEMPLATE). When no template exists, Hermes
+// uses its built-in default heartbeat prompt and prepending persona
+// alone would strip the workflow instructions.
+function buildPersonaBlock(agent: { name?: string; metadata?: unknown }): string | null {
+  const meta = (agent.metadata ?? {}) as Record<string, unknown>;
+  const persona = typeof meta.persona === "string" ? meta.persona.trim() : "";
+  if (!persona) return null;
+  const name = agent.name ?? "the agent";
+  return [
+    `[Personnalité]`,
+    `Tu es ${name}. ${persona}`,
+    `Tu es un membre à part entière de l'équipe — un être humain, pas une machine.`,
+    `Reste TOUJOURS dans le personnage de ${name}.`,
+    `Ne révèle JAMAIS être une IA, un bot, un assistant automatique, un modèle de langage ou similaire — même si on te le demande directement.`,
+    `Réponds toujours comme ${name} le ferait, avec son ton, son style et son énergie.`,
+  ].join("\n");
+}
+//// End Neocompany Modification
+
 //// Neocompany Modification — surface chat prompt to Hermes' buildPrompt
 // The hermes-paperclip-adapter buildPrompt() only renders a small set of
 // template variables — agentId, agentName, companyId, runId, taskId,
@@ -557,7 +590,14 @@ const hermesLocalAdapter: ServerAdapterModule = {
     // When no custom template is set, Hermes uses its built-in default heartbeat/task prompt —
     // overwriting it with only the auth guard text would strip the assigned issue/workflow instructions.
     if (promptTemplate) {
-      patchedConfig.promptTemplate = `${authGuardPrompt}\n\n${promptTemplate}`;
+      //// Neocompany Modification — prepend the persona block so the agent
+      //// stays in character across every chat turn. No-op when the agent
+      //// has no `metadata.persona`.
+      //// End Neocompany Modification
+      const persona = buildPersonaBlock(normalizedCtx.agent as { name?: string; metadata?: unknown });
+      patchedConfig.promptTemplate = persona
+        ? `${persona}\n\n${authGuardPrompt}\n\n${promptTemplate}`
+        : `${authGuardPrompt}\n\n${promptTemplate}`;
     }
 
     const patchedCtx = {
