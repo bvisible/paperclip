@@ -14,23 +14,49 @@ import type { PluginContext, ToolRunContext, ToolResult } from "@paperclipai/plu
 import { DB_NAMESPACE, EMBEDDING_DIM } from "./manifest.js";
 
 // --- External endpoints (Olares) -------------------------------------------
-// Embeddings + LLM both sit behind the same Olares gateway and share one
-// bearer key, supplied via the NORA_MEMORY_API_KEY env var (set on the
-// paperclip.service systemd unit). Endpoint URLs are overridable too.
-const EMBEDDINGS_URL =
-  process.env.NORA_MEMORY_EMBEDDINGS_URL ||
-  "https://embeddings.noraai.ch/small/v1/embeddings";
-const EMBEDDINGS_MODEL =
-  process.env.NORA_MEMORY_EMBEDDINGS_MODEL || "Qwen3-Embedding-0.6B-Q8_0.gguf";
-const LLM_URL =
-  process.env.NORA_MEMORY_LLM_URL || "https://olares1.noraai.ch/v1/chat/completions";
-const LLM_MODEL =
-  process.env.NORA_MEMORY_LLM_MODEL || "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf";
-const API_KEY = process.env.NORA_MEMORY_API_KEY || "";
+// Embeddings + LLM sit behind the Olares gateway and share one bearer key.
+// All values come from the plugin's operator config (instanceConfigSchema),
+// read via ctx.config.get(). Defaults below match the NORA fleet.
+interface MemoryConfig {
+  embeddingsUrl: string;
+  embeddingsModel: string;
+  llmUrl: string;
+  llmModel: string;
+  apiKey: string;
+}
+
+const DEFAULT_CONFIG: MemoryConfig = {
+  embeddingsUrl: "https://embeddings.noraai.ch/small/v1/embeddings",
+  embeddingsModel: "Qwen3-Embedding-0.6B-Q8_0.gguf",
+  llmUrl: "https://olares1.noraai.ch/v1/chat/completions",
+  llmModel: "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf",
+  apiKey: "",
+};
+
+/** Resolve the plugin config (operator values over defaults). */
+async function resolveConfig(ctx: PluginContext): Promise<MemoryConfig> {
+  let operator: Record<string, unknown> = {};
+  try {
+    operator = await ctx.config.get();
+  } catch {
+    operator = {};
+  }
+  const pick = (k: keyof MemoryConfig): string => {
+    const v = operator[k];
+    return typeof v === "string" && v.trim() ? v.trim() : DEFAULT_CONFIG[k];
+  };
+  return {
+    embeddingsUrl: pick("embeddingsUrl"),
+    embeddingsModel: pick("embeddingsModel"),
+    llmUrl: pick("llmUrl"),
+    llmModel: pick("llmModel"),
+    apiKey: typeof operator.apiKey === "string" ? operator.apiKey : "",
+  };
+}
 
 /** Authorization header for the Olares gateway, when a key is configured. */
-function authHeaders(): Record<string, string> {
-  return API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
+function authHeaders(apiKey: string): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 }
 
 // --- Tuning ----------------------------------------------------------------
@@ -102,10 +128,11 @@ async function fetchWithTimeout(
 /** Embed one or more texts via the Olares embeddings endpoint (OpenAI shape). */
 export async function embed(ctx: PluginContext, texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const resp = await fetchWithTimeout(ctx, EMBEDDINGS_URL, {
+  const cfg = await resolveConfig(ctx);
+  const resp = await fetchWithTimeout(ctx, cfg.embeddingsUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ model: EMBEDDINGS_MODEL, input: texts }),
+    headers: { "Content-Type": "application/json", ...authHeaders(cfg.apiKey) },
+    body: JSON.stringify({ model: cfg.embeddingsModel, input: texts }),
   });
   if (!resp.ok) {
     throw new Error(`embeddings endpoint returned HTTP ${resp.status}`);
@@ -125,11 +152,12 @@ export async function embed(ctx: PluginContext, texts: string[]): Promise<number
 
 /** One-shot LLM completion via the Olares chat endpoint (OpenAI shape). */
 async function llmComplete(ctx: PluginContext, system: string, user: string): Promise<string> {
-  const resp = await fetchWithTimeout(ctx, LLM_URL, {
+  const cfg = await resolveConfig(ctx);
+  const resp = await fetchWithTimeout(ctx, cfg.llmUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json", ...authHeaders(cfg.apiKey) },
     body: JSON.stringify({
-      model: LLM_MODEL,
+      model: cfg.llmModel,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },

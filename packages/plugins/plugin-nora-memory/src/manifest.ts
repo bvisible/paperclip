@@ -35,6 +35,37 @@ const manifest: PaperclipPluginManifestV1 = {
   entrypoints: {
     worker: "./dist/worker.js",
   },
+  instanceConfigSchema: {
+    type: "object",
+    properties: {
+      apiKey: {
+        type: "string",
+        title: "Olares API key",
+        description:
+          "Bearer key for the embeddings + LLM gateway (embeddings.noraai.ch / olares1.noraai.ch).",
+      },
+      embeddingsUrl: {
+        type: "string",
+        title: "Embeddings endpoint",
+        default: "https://embeddings.noraai.ch/small/v1/embeddings",
+      },
+      embeddingsModel: {
+        type: "string",
+        title: "Embeddings model",
+        default: "Qwen3-Embedding-0.6B-Q8_0.gguf",
+      },
+      llmUrl: {
+        type: "string",
+        title: "LLM endpoint (Dream consolidation)",
+        default: "https://olares1.noraai.ch/v1/chat/completions",
+      },
+      llmModel: {
+        type: "string",
+        title: "LLM model (Dream consolidation)",
+        default: "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf",
+      },
+    },
+  },
   database: {
     namespaceSlug: "nora_memory",
     migrationsDir: "migrations",
