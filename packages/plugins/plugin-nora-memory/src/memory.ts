@@ -14,11 +14,24 @@ import type { PluginContext, ToolRunContext, ToolResult } from "@paperclipai/plu
 import { DB_NAMESPACE, EMBEDDING_DIM } from "./manifest.js";
 
 // --- External endpoints (Olares) -------------------------------------------
-// Mirrors the former Hindsight env config. Public Olares endpoints; no key.
-const EMBEDDINGS_URL = "https://embeddings.noraai.ch/small/v1/embeddings";
-const EMBEDDINGS_MODEL = "Qwen3-Embedding-0.6B-Q8_0.gguf";
-const LLM_URL = "https://olares1.noraai.ch/v1/chat/completions";
-const LLM_MODEL = "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf";
+// Embeddings + LLM both sit behind the same Olares gateway and share one
+// bearer key, supplied via the NORA_MEMORY_API_KEY env var (set on the
+// paperclip.service systemd unit). Endpoint URLs are overridable too.
+const EMBEDDINGS_URL =
+  process.env.NORA_MEMORY_EMBEDDINGS_URL ||
+  "https://embeddings.noraai.ch/small/v1/embeddings";
+const EMBEDDINGS_MODEL =
+  process.env.NORA_MEMORY_EMBEDDINGS_MODEL || "Qwen3-Embedding-0.6B-Q8_0.gguf";
+const LLM_URL =
+  process.env.NORA_MEMORY_LLM_URL || "https://olares1.noraai.ch/v1/chat/completions";
+const LLM_MODEL =
+  process.env.NORA_MEMORY_LLM_MODEL || "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf";
+const API_KEY = process.env.NORA_MEMORY_API_KEY || "";
+
+/** Authorization header for the Olares gateway, when a key is configured. */
+function authHeaders(): Record<string, string> {
+  return API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
+}
 
 // --- Tuning ----------------------------------------------------------------
 const CHUNK_WORDS = 320; // target words per chunk before embedding
@@ -91,7 +104,7 @@ export async function embed(ctx: PluginContext, texts: string[]): Promise<number
   if (texts.length === 0) return [];
   const resp = await fetchWithTimeout(ctx, EMBEDDINGS_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ model: EMBEDDINGS_MODEL, input: texts }),
   });
   if (!resp.ok) {
@@ -114,7 +127,7 @@ export async function embed(ctx: PluginContext, texts: string[]): Promise<number
 async function llmComplete(ctx: PluginContext, system: string, user: string): Promise<string> {
   const resp = await fetchWithTimeout(ctx, LLM_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({
       model: LLM_MODEL,
       messages: [
