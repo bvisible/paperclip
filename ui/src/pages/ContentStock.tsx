@@ -1131,7 +1131,13 @@ function GenerateDialog({
           <Button variant="outline" size="sm" onClick={onClose} disabled={isGenerating}>
             Cancel
           </Button>
-          <Button size="sm" onClick={onGenerate} disabled={!prompt.trim() || isGenerating}>
+          <Button
+            size="sm"
+            onClick={onGenerate}
+            // Allow empty brief when a scene is selected — the scene body
+            // becomes the prompt and the user textarea is optional.
+            disabled={isGenerating || (sceneStyle === "custom" && !prompt.trim())}
+          >
             {isGenerating ? "Generating…" : `Generate ${count > 1 ? count : ""}`}
           </Button>
         </div>
