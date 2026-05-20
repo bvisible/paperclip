@@ -675,7 +675,12 @@ function GenerateDialog({
   };
   const [sceneStyle, setSceneStyle] = useState<SceneStyleKey | "custom">("custom");
   const [sceneVariantIndex, setSceneVariantIndex] = useState(0);
-  const [filterRefsWhiteBg, setFilterRefsWhiteBg] = useState(false);
+  //// White-bg filter ON by default — a product gallery routinely mixes
+  //// studio shots with lifestyle / prior-AI images, and feeding the
+  //// latter to codex wrecks product fidelity. The worker also forces the
+  //// filter whenever a productId is set, so this checkbox really governs
+  //// manually-picked refs.
+  const [filterRefsWhiteBg, setFilterRefsWhiteBg] = useState(true);
   //// End Neocompany Modification
 
   const templatesQuery = useQuery({
@@ -751,7 +756,11 @@ function GenerateDialog({
           pluginId, "productGet", { companyId, productId }, companyId,
         );
         const data = (res as { data?: { imageUrls?: string[] } }).data;
-        const urls = Array.isArray(data?.imageUrls) ? data!.imageUrls! : [];
+        const rawUrls = Array.isArray(data?.imageUrls) ? data!.imageUrls! : [];
+        //// Drop prior-AI renders by path so the thumbnails the user sees
+        //// match what actually feeds codex (the worker drops these too).
+        //// Pixel-level white-bg filtering still runs server-side.
+        const urls = rawUrls.filter((u) => !/\/(ai-pending|ai-generated|ai-images)\//i.test(u));
         if (!cancelled) {
           // Cap to MAX_REFS minus the manually-picked refs so the picker stays usable.
           const budget = Math.max(0, MAX_REFS - refIds.length);
@@ -1044,11 +1053,17 @@ function GenerateDialog({
                   <label className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <input
                       type="checkbox"
-                      checked={filterRefsWhiteBg}
+                      checked={filterRefsWhiteBg || Boolean(productId)}
+                      disabled={Boolean(productId)}
                       onChange={(e) => setFilterRefsWhiteBg(e.target.checked)}
                     />
-                    🔍 Filtrer les références (garder uniquement les photos fond blanc)
+                    🔍 Filtrer les références (garder uniquement les photos studio fond blanc)
                   </label>
+                  {productId ? (
+                    <p className="mt-0.5 text-[10px] text-amber-600">
+                      Auto pour un produit catalogue : les images lifestyle / IA de la galerie sont écartées, seules les photos studio conditionnent la génération (fidélité produit).
+                    </p>
+                  ) : null}
                   {/* //// End Neocompany Modification */}
                 </>
               );

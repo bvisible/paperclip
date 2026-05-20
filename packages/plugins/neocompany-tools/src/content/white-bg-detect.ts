@@ -54,7 +54,15 @@ export async function detectWhiteBg(
   const borderFrac = Math.min(0.5, Math.max(0, options.border ?? DEFAULTS.border));
   const ratioThreshold = options.ratio ?? DEFAULTS.ratio;
 
+  //// Neocompany Modification — normalise to a guaranteed 3-channel sRGB
+  //// raw buffer. `removeAlpha()` alone does NOT convert grayscale (1ch) or
+  //// CMYK (4ch) JPEGs — those throw "expected 3 channels" downstream.
+  //// `flatten` composites any transparency onto white, `toColourspace`
+  //// forces sRGB so the raw output is always RGB.
+  //// End Neocompany Modification
   const { data, info } = await sharp(imageBuffer)
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .toColourspace("srgb")
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });

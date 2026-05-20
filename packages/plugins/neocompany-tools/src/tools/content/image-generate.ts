@@ -613,17 +613,50 @@ export async function runImageGenerate(
     ].join("\n\n");
   }
 
-  //// Neocompany Modification — White-bg ref filter (opt-in).
-  //// When `filterRefsWhiteBg` is true, fetch each ref URL, run the
-  //// detectWhiteBg heuristic, keep only studio shots, sort by ratio
-  //// descending, cap at MAX_REFS. Failures (fetch errors, non-image
-  //// content) are dropped silently.
+  //// Neocompany Modification — White-bg ref filter.
+  ////
+  //// codex `-i` conditions the generation on the reference images. If a ref
+  //// is itself a lifestyle shot (a model wearing the product, a coloured
+  //// background, or worse — a PREVIOUS AI generation that got uploaded to
+  //// the product gallery), codex copies that composition instead of the
+  //// product, and the output stops resembling the actual product.
+  ////
+  //// Two trigger paths:
+  ////   - AUTO when `productId` is set — product galleries routinely mix
+  ////     studio shots with lifestyle/AI images (observed on Reed-Blake's
+  ////     Bradley: 3 studio + 2 ai-pending PNGs). Studio-only is the only
+  ////     way codex stays faithful. This mirrors Reed-Blake's pipeline
+  ////     which ALWAYS filters via `find_white_bg_refs`.
+  ////   - OPT-IN via `filterRefsWhiteBg` for manually-picked refs.
+  ////
+  //// Path filter: any URL under `/ai-pending/` or `/ai-generated/` is a
+  //// prior AI render — dropped outright before the pixel heuristic even
+  //// runs (cheap + reliable).
+  ////
+  //// Fallback: if filtering removes EVERY ref, we keep the originals — a
+  //// lifestyle ref still beats no ref at all, and we log a warning so the
+  //// tenant knows the product needs proper studio shots.
   //// End Neocompany Modification
-  if (filterRefsWhiteBg && referenceImageUrls && referenceImageUrls.length > 0) {
+  const shouldFilterRefs = (filterRefsWhiteBg || Boolean(productId)) &&
+    Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0;
+  if (shouldFilterRefs && referenceImageUrls) {
+    const before = referenceImageUrls.length;
+    // Heuristic 1 — drop known AI-render paths outright. This is the
+    // GUARANTEED layer: prior AI renders that got uploaded to the product
+    // gallery are the worst kind of ref (codex copies their composition).
+    // A regex on the path is cheap and never throws.
+    const AI_PATH_RE = /\/(ai-pending|ai-generated|ai-images)\//i;
+    const pathFiltered = referenceImageUrls.filter((u) => !AI_PATH_RE.test(u));
+
+    // Heuristic 2 — white-bg pixel check, BEST-EFFORT. Refines the path
+    // result by keeping only studio shots, sorted by white-bg ratio. If
+    // it yields nothing (fetch errors, exotic colour profiles, etc.) we
+    // fall back to `pathFiltered` — never to the AI-polluted originals.
+    let pixelKept: string[] = [];
     try {
       const { detectWhiteBg } = await import("../../content/white-bg-detect.js");
       const scored: Array<{ url: string; ratio: number }> = [];
-      for (const url of referenceImageUrls) {
+      for (const url of pathFiltered) {
         try {
           let buf: Buffer | null = null;
           if (url.startsWith("data:")) {
@@ -637,24 +670,47 @@ export async function runImageGenerate(
             }
           } else {
             const res = await ctx.http.fetch(url);
-            if (!res.ok) continue;
+            if (!res.ok) {
+              ctx.logger?.warn?.("imageGenerate: white-bg ref fetch non-ok", { url, status: res.status });
+              continue;
+            }
             buf = Buffer.from(await res.arrayBuffer());
           }
-          if (!buf) continue;
+          if (!buf || buf.length === 0) continue;
           const verdict = await detectWhiteBg(buf);
           if (verdict.isWhiteBg) scored.push({ url, ratio: verdict.ratio });
-        } catch { /* drop */ }
+        } catch (perUrlErr) {
+          ctx.logger?.warn?.("imageGenerate: white-bg check failed for ref", {
+            url,
+            error: perUrlErr instanceof Error ? perUrlErr.message : String(perUrlErr),
+          });
+        }
       }
       scored.sort((a, b) => b.ratio - a.ratio);
-      const kept = scored.slice(0, MAX_REFS).map((s) => s.url);
-      ctx.logger?.info?.("imageGenerate: white-bg filter kept N/M refs", {
-        kept: kept.length,
-        total: referenceImageUrls.length,
-      });
-      referenceImageUrls = kept;
+      pixelKept = scored.slice(0, MAX_REFS).map((s) => s.url);
     } catch (err) {
-      ctx.logger?.warn?.("imageGenerate: white-bg filter failed, keeping all refs", {
+      ctx.logger?.warn?.("imageGenerate: white-bg detector unavailable", {
         error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    if (pixelKept.length > 0) {
+      referenceImageUrls = pixelKept;
+      ctx.logger?.info?.("imageGenerate: ref filter — pixel white-bg", {
+        kept: pixelKept.length, dropped: before - pixelKept.length,
+        trigger: productId ? "auto-product" : "manual-toggle",
+      });
+    } else if (pathFiltered.length > 0) {
+      // Pixel check yielded nothing — fall back to the path-filtered set
+      // (AI renders still excluded). Studio fidelity may be imperfect but
+      // we never feed codex a prior AI lifestyle render.
+      referenceImageUrls = pathFiltered.slice(0, MAX_REFS);
+      ctx.logger?.warn?.("imageGenerate: ref filter — pixel check empty, using path-filtered set", {
+        kept: referenceImageUrls.length, droppedAiPaths: before - pathFiltered.length,
+      });
+    } else {
+      ctx.logger?.warn?.("imageGenerate: ref filter removed everything — keeping originals", {
+        total: before,
       });
     }
   }
