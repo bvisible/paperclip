@@ -691,6 +691,12 @@ const plugin = definePlugin({
           //// productId — grounds the generation in a catalog product
           //// (auto-attach its imageUrls as refs + prefix prompt).
           productId: params.productId as string | undefined,
+          //// Scene + ref filtering passthroughs.
+          sceneStyle: params.sceneStyle as string | undefined,
+          sceneVariantId: params.sceneVariantId as string | undefined,
+          sceneVariantIndex: params.sceneVariantIndex as number | undefined,
+          autoCycleVariant: params.autoCycleVariant as boolean | undefined,
+          filterRefsWhiteBg: params.filterRefsWhiteBg as boolean | undefined,
           //// End Neocompany Modification
         },
         {},
@@ -1348,6 +1354,184 @@ const plugin = definePlugin({
       });
 
       return { ok: true, templateId };
+    });
+
+    //// Neocompany Modification — Scene variants CRUD (per-tenant scenes editor).
+    //// Backs the /content/scenes UI: list/get/upsert/delete/reorder +
+    //// `scenesSeedDefaults` which dumps the Reed-Blake-derived starter pack
+    //// into the tenant's scope on first use.
+    //// End Neocompany Modification
+    ctx.data.register("scenesList", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      if (!companyId) return { scenes: [] };
+      const styleFilter = params.style as string | undefined;
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("./scenes/types.js");
+      const records = await ctx.entities.list({
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 500,
+      });
+      let scenes = records.map((r) => ({
+        id: r.externalId ?? r.id,
+        ...(r.data as Record<string, unknown>),
+      })) as Array<Record<string, unknown> & { id: string }>;
+      if (styleFilter) scenes = scenes.filter((s) => s.style === styleFilter);
+      scenes.sort((a, b) => ((a.order as number) ?? 0) - ((b.order as number) ?? 0));
+      return { scenes };
+    });
+
+    ctx.data.register("scenesGet", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const sceneId = params.sceneId as string;
+      if (!companyId || !sceneId) return null;
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("./scenes/types.js");
+      const records = await ctx.entities.list({
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: sceneId,
+        limit: 1,
+      });
+      const row = records[0];
+      if (!row) return null;
+      return { id: row.externalId ?? row.id, ...(row.data as Record<string, unknown>) };
+    });
+
+    ctx.actions.register("sceneUpsert", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const data = params.data as Record<string, unknown>;
+      if (!companyId || !data) throw new Error("sceneUpsert requires companyId and data");
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("./scenes/types.js");
+      const sceneId = (params.sceneId as string | undefined) ?? globalThis.crypto.randomUUID();
+      const displayName = (data.displayName as string) ?? "Untitled scene";
+      await ctx.entities.upsert({
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: sceneId,
+        title: displayName.slice(0, 200),
+        status: "active",
+        data,
+      });
+      await ctx.activity.log({
+        companyId,
+        message: `Scene "${displayName}" saved`,
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        entityId: sceneId,
+      });
+      return { ok: true, sceneId };
+    });
+
+    ctx.actions.register("sceneDelete", async (params: Record<string, unknown>) => {
+      const companyId = params.companyId as string;
+      const sceneId = params.sceneId as string;
+      if (!companyId || !sceneId) throw new Error("sceneDelete requires companyId and sceneId");
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("./scenes/types.js");
+      const records = await ctx.entities.list({
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        externalId: sceneId,
+        limit: 1,
+      });
+      const match = records[0];
+      if (!match) return { ok: false, error: "SCENE_NOT_FOUND" };
+      await ctx.entities.delete({ id: match.id });
+      return { ok: true, sceneId };
+    });
+
+    ctx.actions.register("scenesReorder", async (params: Record<string, unknown>) => {
+      // Re-write each variant's `order` so the visual position matches the
+      // order in which sceneIds were passed (style-scoped: caller should
+      // submit the IDs for one style at a time).
+      const companyId = params.companyId as string;
+      const sceneIds = params.sceneIds as string[] | undefined;
+      if (!companyId || !Array.isArray(sceneIds)) {
+        throw new Error("scenesReorder requires companyId and sceneIds[]");
+      }
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("./scenes/types.js");
+      let updated = 0;
+      for (let i = 0; i < sceneIds.length; i++) {
+        const id = sceneIds[i];
+        const records = await ctx.entities.list({
+          entityType: SCENE_VARIANT_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          externalId: id,
+          limit: 1,
+        });
+        const match = records[0];
+        if (!match) continue;
+        const data = match.data as Record<string, unknown>;
+        const nextOrder = (i + 1) * 10; // sparse spacing so manual inserts don't collide
+        if (data.order === nextOrder) continue;
+        await ctx.entities.upsert({
+          entityType: SCENE_VARIANT_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          externalId: id,
+          title: match.title ?? undefined,
+          status: match.status ?? undefined,
+          data: { ...data, order: nextOrder },
+        });
+        updated += 1;
+      }
+      return { ok: true, updated };
+    });
+
+    ctx.actions.register("scenesSeedDefaults", async (params: Record<string, unknown>) => {
+      // Pushes the Reed-Blake-derived starter pack into the tenant. Idempotent
+      // under `overwrite: false` (default): variants already present (matched
+      // by `style + displayName`) are skipped.
+      const companyId = params.companyId as string;
+      const overwrite = Boolean(params.overwrite);
+      if (!companyId) throw new Error("scenesSeedDefaults requires companyId");
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("./scenes/types.js");
+      const { getStarterScenes } = await import("./scenes/seed.js");
+      const seeds = getStarterScenes();
+
+      const existing = await ctx.entities.list({
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 1000,
+      });
+      const existingKeys = new Set(
+        existing.map((r) => {
+          const d = r.data as Record<string, unknown>;
+          return `${d.style ?? ""}::${d.displayName ?? ""}`;
+        }),
+      );
+
+      let inserted = 0;
+      let skipped = 0;
+      for (const seed of seeds) {
+        const key = `${seed.style}::${seed.displayName}`;
+        if (!overwrite && existingKeys.has(key)) {
+          skipped += 1;
+          continue;
+        }
+        const externalId = globalThis.crypto.randomUUID();
+        await ctx.entities.upsert({
+          entityType: SCENE_VARIANT_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          externalId,
+          title: seed.displayName.slice(0, 200),
+          status: "active",
+          data: seed as unknown as Record<string, unknown>,
+        });
+        inserted += 1;
+      }
+      await ctx.activity.log({
+        companyId,
+        message: `Scenes seeded — ${inserted} inserted, ${skipped} skipped`,
+        entityType: SCENE_VARIANT_ENTITY_TYPE,
+        entityId: companyId,
+        metadata: { inserted, skipped, overwrite },
+      });
+      return { ok: true, inserted, skipped };
     });
 
     // ── Job: IMAP poll (declared in manifest as "imap-poll") ─────────

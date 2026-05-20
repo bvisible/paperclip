@@ -634,8 +634,7 @@ function GenerateDialog({
   //// Aspect format — controls width/height fed to the worker. gpt-image-2
   //// natively supports 1024×1024 / 1024×1536 / 1536×1024; we pick the
   //// closest mapping in the worker via `pickOpenAISize` / aspect hint for
-  //// codex-cli. When a brand template is selected, its dimensions take
-  //// precedence (worker logic unchanged).
+  //// codex-cli. Templates are responsive — they adapt to the chosen format.
   const ASPECT_FORMATS = [
     { key: "1:1",  label: "Carré 1:1 (Instagram feed)",       w: 1080, h: 1080 },
     { key: "4:5",  label: "Portrait 4:5 (IG feed portrait)",  w: 1080, h: 1350 },
@@ -645,6 +644,38 @@ function GenerateDialog({
   type AspectKey = (typeof ASPECT_FORMATS)[number]["key"];
   const [aspect, setAspect] = useState<AspectKey>("1:1");
   const aspectDef = ASPECT_FORMATS.find((a) => a.key === aspect) ?? ASPECT_FORMATS[0];
+
+  //// Scene picker — pool comes from /content/scenes editor (per-tenant).
+  //// Style options are filtered by the chosen aspect format; variants are
+  //// further filtered by audience derived from the product category.
+  type SceneStyleKey = "lifestyle" | "studio_creative" | "seasonal" | "slide_hero" | "summer_pole" | "story_vertical";
+  const STYLES_FOR_FORMAT: Record<AspectKey, SceneStyleKey[]> = {
+    "1:1":  ["lifestyle", "studio_creative", "seasonal", "summer_pole"],
+    "4:5":  ["lifestyle", "studio_creative", "seasonal", "summer_pole"],
+    "9:16": ["story_vertical"],
+    "16:9": ["slide_hero"],
+  };
+  const STYLE_FR: Record<SceneStyleKey, string> = {
+    lifestyle: "Lifestyle",
+    studio_creative: "Studio créatif",
+    seasonal: "Saisonnier",
+    slide_hero: "Slide hero (16:9)",
+    summer_pole: "Summer pole",
+    story_vertical: "Story vertical (9:16)",
+  };
+  const CASUAL_HINTS = ["baskets", "sneaker", "mocassin", "loafer"];
+  const FORMAL_HINTS = ["richelieu", "brogue"];
+  const audienceForCategories = (cats: string[]): Array<"casual" | "formal"> => {
+    const joined = cats.join(" ").toLowerCase();
+    const c = CASUAL_HINTS.some((h) => joined.includes(h));
+    const f = FORMAL_HINTS.some((h) => joined.includes(h));
+    if (c && !f) return ["casual"];
+    if (f && !c) return ["formal"];
+    return [];
+  };
+  const [sceneStyle, setSceneStyle] = useState<SceneStyleKey | "custom">("custom");
+  const [sceneVariantIndex, setSceneVariantIndex] = useState(0);
+  const [filterRefsWhiteBg, setFilterRefsWhiteBg] = useState(false);
   //// End Neocompany Modification
 
   const templatesQuery = useQuery({
@@ -676,6 +707,33 @@ function GenerateDialog({
     enabled: !!pluginId && !!companyId,
   });
   const selectedProduct = (productsQuery.data?.products ?? []).find((p) => p.id === productId);
+
+  //// Neocompany Modification — Scenes pool (read-only here; editor at /content/scenes).
+  const scenesQuery = useQuery({
+    queryKey: ["scenes", companyId],
+    queryFn: async () => {
+      if (!pluginId || !companyId) return { scenes: [] as Array<{ id: string; style: SceneStyleKey; displayName: string; body: string; audience: Array<"casual" | "formal">; order: number }> };
+      const res = await pluginsApi.bridgeGetData(pluginId, "scenesList", { companyId }, companyId);
+      return (res as { data: { scenes: Array<{ id: string; style: SceneStyleKey; displayName: string; body: string; audience: Array<"casual" | "formal">; order: number }> } }).data ?? { scenes: [] };
+    },
+    enabled: !!pluginId && !!companyId,
+  });
+  const productCats = (selectedProduct as unknown as { categoryNames?: string[] } | undefined)?.categoryNames ?? [];
+  const productAudience = audienceForCategories(productCats);
+  const availableStyles = STYLES_FOR_FORMAT[aspect];
+  const filteredScenes = (scenesQuery.data?.scenes ?? [])
+    .filter((s) => sceneStyle !== "custom" && s.style === sceneStyle)
+    .filter((s) => {
+      if (productAudience.length === 0) return true;
+      if (s.audience.length === 0) return true; // neutral always passes
+      return s.audience.some((a) => productAudience.includes(a));
+    })
+    .sort((a, b) => a.order - b.order);
+  const wrappedIdx = filteredScenes.length > 0
+    ? ((sceneVariantIndex % filteredScenes.length) + filteredScenes.length) % filteredScenes.length
+    : 0;
+  const currentSceneVariant = filteredScenes[wrappedIdx];
+  //// End Neocompany Modification
 
   //// productGet — when a product is selected, fetch its full data so we
   //// can materialise its gallery imageUrls as thumbnails in the refs zone.
@@ -710,7 +768,10 @@ function GenerateDialog({
   //// End Neocompany Modification
 
   const onGenerate = useCallback(async () => {
-    if (!pluginId || !companyId || !prompt.trim()) return;
+    if (!pluginId || !companyId) return;
+    // A user prompt is required UNLESS a scene is selected (the scene body
+    // becomes the prompt and the user textarea is an optional brief).
+    if (sceneStyle === "custom" && !prompt.trim()) return;
     setIsGenerating(true);
     setProgress({ done: 0, total: count });
     const batchId = count > 1 ? globalThis.crypto.randomUUID() : undefined;
@@ -741,6 +802,12 @@ function GenerateDialog({
           //// gallery images not already provided, but UI typically sends
           //// them so the user sees what conditions the generation.
           productId: productId || undefined,
+          //// Scene + ref filter passthroughs.
+          sceneStyle: sceneStyle !== "custom" ? sceneStyle : undefined,
+          sceneVariantId: sceneStyle !== "custom" ? currentSceneVariant?.id : undefined,
+          sceneVariantIndex: sceneStyle !== "custom" ? sceneVariantIndex + i : undefined,
+          autoCycleVariant: count > 1,
+          filterRefsWhiteBg: filterRefsWhiteBg || undefined,
           //// End Neocompany Modification
         }, companyId);
       } catch (err) {
@@ -763,7 +830,7 @@ function GenerateDialog({
       pushToast({ title: `Generated ${count} image(s)`, tone: "success" });
     }
     onSuccess();
-  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productRefUrls, productId, aspectDef.w, aspectDef.h, pushToast, onSuccess]);
+  }, [pluginId, companyId, prompt, templateId, provider, count, refIds, productRefUrls, productId, aspectDef.w, aspectDef.h, sceneStyle, sceneVariantIndex, currentSceneVariant?.id, filterRefsWhiteBg, pushToast, onSuccess]);
 
   return (
     <div
@@ -784,13 +851,19 @@ function GenerateDialog({
 
         <div className="mt-4 space-y-3">
           <div>
-            <Label className="text-xs">Prompt</Label>
+            <Label className="text-xs">
+              {sceneStyle !== "custom" ? "Brief additionnel (optionnel)" : "Prompt"}
+            </Label>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               rows={3}
               autoFocus
-              placeholder="e.g. modern tech startup office, warm natural light, clean minimalist aesthetic"
+              placeholder={
+                sceneStyle !== "custom"
+                  ? "La scène fournit déjà la structure. Optionnel : ajoute des nuances (saison, mood, époque…)"
+                  : "e.g. modern tech startup office, warm natural light, clean minimalist aesthetic"
+              }
               className="mt-1 w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
             />
           </div>
@@ -822,6 +895,70 @@ function GenerateDialog({
               )}
             </div>
           )}
+          {/* //// End Neocompany Modification */}
+
+          {/* //// Neocompany Modification — Style/Scène picker.
+             Pool filtered by format × audience. `custom` = pas de scène,
+             le prompt utilisateur garde la directive [Mission] focal-point
+             standard. Avec un style choisi, le prompt utilisateur devient
+             un brief additionnel facultatif (la scène fournit la structure). */}
+          <div>
+            <Label className="text-xs">Style / Scène</Label>
+            <div className="mt-1 flex items-center gap-2">
+              <select
+                value={sceneStyle}
+                onChange={(e) => {
+                  setSceneStyle(e.target.value as typeof sceneStyle);
+                  setSceneVariantIndex(0);
+                }}
+                className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+              >
+                <option value="custom">Custom (prompt libre)</option>
+                {availableStyles.map((s) => {
+                  const count = (scenesQuery.data?.scenes ?? []).filter((sc) => sc.style === s).length;
+                  return (
+                    <option key={s} value={s} disabled={count === 0}>
+                      {STYLE_FR[s]} {count === 0 ? "(vide — seed sur /content/scenes)" : `(${count})`}
+                    </option>
+                  );
+                })}
+              </select>
+              {sceneStyle !== "custom" && filteredScenes.length > 1 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSceneVariantIndex((i) => i + 1)}
+                  title="Autre variant"
+                >
+                  🎲 {wrappedIdx + 1}/{filteredScenes.length}
+                </Button>
+              )}
+            </div>
+            {sceneStyle !== "custom" && currentSceneVariant && (
+              <div className="mt-2 rounded-md bg-muted/40 p-2 text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-foreground">{currentSceneVariant.displayName}</span>
+                  {currentSceneVariant.audience.length > 0 && (
+                    <span className="rounded bg-secondary px-1 py-0.5 text-[9px] text-secondary-foreground">
+                      {currentSceneVariant.audience.join(" + ")}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 line-clamp-3">{currentSceneVariant.body}</p>
+                {count > 1 && (
+                  <p className="mt-1 text-[10px] text-primary">
+                    🎲 {count} variants seront cyclés automatiquement (à partir de #{wrappedIdx + 1}).
+                  </p>
+                )}
+              </div>
+            )}
+            {sceneStyle !== "custom" && filteredScenes.length === 0 && (
+              <p className="mt-1 text-[10px] text-amber-600">
+                Aucune scène disponible pour ce format / audience. Édite depuis /content/scenes.
+              </p>
+            )}
+          </div>
           {/* //// End Neocompany Modification */}
 
           {/* //// Neocompany Modification — Reference picker.
@@ -903,6 +1040,16 @@ function GenerateDialog({
                     ) : null}
                     Pioche dans <b>Matière brute</b> pour conditionner la génération sur des photos existantes.
                   </p>
+                  {/* //// Neocompany Modification — White-bg ref filter toggle. */}
+                  <label className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={filterRefsWhiteBg}
+                      onChange={(e) => setFilterRefsWhiteBg(e.target.checked)}
+                    />
+                    🔍 Filtrer les références (garder uniquement les photos fond blanc)
+                  </label>
+                  {/* //// End Neocompany Modification */}
                 </>
               );
             })()}

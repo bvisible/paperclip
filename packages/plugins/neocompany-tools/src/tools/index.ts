@@ -541,13 +541,34 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
             type: "string",
             description: "Optional catalog product externalId (e.g. `wc-123`) to ground the generation in a specific product.",
           },
+          sceneStyle: {
+            type: "string",
+            enum: ["lifestyle", "studio_creative", "seasonal", "slide_hero", "summer_pole", "story_vertical"],
+            description: "Optional scene style key. Picks a body from the tenant's scene_variant pool (filtered by product audience). Skips the default focal-point directive.",
+          },
+          sceneVariantId: {
+            type: "string",
+            description: "Optional scene_variant externalId. Overrides sceneStyle rotation when set.",
+          },
+          sceneVariantIndex: {
+            type: "number",
+            description: "Index into the (style+audience-filtered) pool. Wraps modulo. Used when only sceneStyle is set.",
+          },
+          autoCycleVariant: {
+            type: "boolean",
+            description: "When generating a batch, cycle to a different variant index per image (default true when count > 1).",
+          },
+          filterRefsWhiteBg: {
+            type: "boolean",
+            description: "Opt-in: only keep references whose background is white (studio shots). Lifestyle refs are dropped.",
+          },
         },
         required: ["prompt"],
       },
     },
     run: async (params, runCtx, ctxAccess) =>
       runImageGenerate(
-        params as { prompt: string; templateId?: string; provider?: "openai" | "gemini" | "codex-cli"; width?: number; height?: number; batchId?: string; logoUrl?: string; referenceImageIds?: string[]; referenceImageUrls?: string[]; productId?: string },
+        params as { prompt: string; templateId?: string; provider?: "openai" | "gemini" | "codex-cli"; width?: number; height?: number; batchId?: string; logoUrl?: string; referenceImageIds?: string[]; referenceImageUrls?: string[]; productId?: string; sceneStyle?: string; sceneVariantId?: string; sceneVariantIndex?: number; autoCycleVariant?: boolean; filterRefsWhiteBg?: boolean },
         {},
         runCtx,
         ctxAccess,

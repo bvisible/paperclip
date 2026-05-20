@@ -184,10 +184,11 @@ describe("ContentTemplates", () => {
     await render();
 
     expect(container.textContent).toContain("Instagram Promo");
-    expect(container.textContent).toContain("1080 × 1080");
     expect(container.textContent).toContain("Story Vertical");
-    expect(container.textContent).toContain("1080 × 1920");
     expect(container.textContent).toContain("default"); // badge on tpl-1
+    // Dimensions tag intentionally removed — templates are responsive and
+    // adapt to the Format chosen in the Generate dialog.
+    expect(container.textContent).not.toContain("1080 × 1080");
   });
 
   it("opens the create card when the header 'New template' button is clicked", async () => {
@@ -234,9 +235,11 @@ describe("ContentTemplates", () => {
 
     await render();
 
-    const card = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("Test") && b.textContent?.includes("1080"),
-    );
+    // Card is the rounded button wrapper around the name "Test". With the
+    // dimensions tag removed we identify it by name + the card class.
+    const card = Array.from(container.querySelectorAll("button.rounded-xl")).find(
+      (b) => b.textContent?.includes("Test"),
+    ) as HTMLButtonElement | undefined;
     expect(card, "template card button must be present").toBeTruthy();
 
     await act(async () => {

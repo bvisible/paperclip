@@ -19,6 +19,7 @@ import type { ToolRunContext, ToolResult, PluginContext } from "@paperclipai/plu
 import type { ToolContextAccess } from "../index.js";
 import { IMAGE_ENTITY_TYPE, type GeneratedImageData, type ImageProvider } from "../../images/types.js";
 import { ENTITY_TYPE as TEMPLATE_ENTITY_TYPE, type BrandTemplateData } from "../../templates/types.js";
+import type { SceneStyle, SceneVariantData } from "../../scenes/types.js";
 import { compositeImage } from "../../templates/compositor.js";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -48,6 +49,21 @@ interface Params {
   //// <name> — <shortDescription>]" line to the prompt and auto-attaches
   //// the product's gallery images as refs (up to a combined max of 5).
   productId?: string;
+  //// sceneStyle / sceneVariantId: when set, skip the [Mission] directive
+  //// and build the prompt from a scene_variant body instead. Variants are
+  //// stored per-company via the /content/scenes editor. `autoCycleVariant`
+  //// (default true when count>1) bumps the variant index between successive
+  //// generations in a batch so a count of 5 produces 5 different scenes
+  //// rather than 5 copies.
+  sceneStyle?: string;
+  sceneVariantId?: string;
+  sceneVariantIndex?: number;
+  autoCycleVariant?: boolean;
+  //// filterRefsWhiteBg: opt-in flag. When true, every ref URL is fetched,
+  //// analysed via detectWhiteBg, and only studio (white-bg) refs reach
+  //// codex — sorted by white-bg ratio descending. Off by default because
+  //// it adds latency (~200ms per ref) and not every brand has studio shots.
+  filterRefsWhiteBg?: boolean;
   //// End Neocompany Modification
 }
 
@@ -426,26 +442,46 @@ export async function runImageGenerate(
   ctxAccess: ToolContextAccess,
 ): Promise<ToolResult> {
   const ctx = ctxAccess.getPluginContext();
-  const { templateId, provider = "openai", batchId, logoUrl, productId } = params;
+  const { templateId, provider = "openai", batchId, logoUrl, productId, sceneStyle, sceneVariantId, filterRefsWhiteBg } = params;
+  const sceneVariantIndex = params.sceneVariantIndex ?? 0;
   let { prompt } = params;
   let referenceImageIds = params.referenceImageIds;
   let referenceImageUrls = params.referenceImageUrls;
   let { width = 1080, height = 1080 } = params;
+  let resolvedSceneVariantId: string | undefined;
+  let resolvedSceneVariantName: string | undefined;
 
-  if (!prompt || prompt.trim().length === 0) {
-    return { content: "Prompt is required.", error: "MISSING_PROMPT" };
+  if (!prompt && !sceneStyle && !sceneVariantId) {
+    return { content: "Prompt is required (or a scene must be selected).", error: "MISSING_PROMPT" };
   }
+  if (!prompt) prompt = "";
 
-  //// Neocompany Modification — productId grounding.
-  //// Resolve the product, prefix the prompt with a directive that locks
-  //// the reference image's subject as the focal point, then dedup + cap
-  //// the gallery imageUrls into the refs list. The UI typically already
-  //// passes the gallery in `referenceImageUrls` (so the user sees them in
-  //// the refs zone), so we dedup before appending to avoid double-attaches.
-  //// Failure to resolve the product is non-fatal — we proceed without
-  //// grounding and log a warning.
+  //// Neocompany Modification — Scene + product grounding.
+  ////
+  //// Two paths share the product lookup:
+  ////   (a) scene path — sceneStyle and/or sceneVariantId provided. Body
+  ////       comes from a `scene_variant` entity, interpolated with the
+  ////       product's descriptor. The user `prompt` becomes an optional
+  ////       "Brief additionnel" appended at the end.
+  ////   (b) productId-only path — keeps the existing [Mission]+[Product]
+  ////       +[Brief] focal-point directive used when no scene is selected.
+  ////
+  //// Both paths dedup + cap (MAX_REFS=5) the gallery imageUrls into the
+  //// refs list. Product-lookup failures are non-fatal — the worker logs
+  //// a warning and continues with the user prompt.
   //// End Neocompany Modification
   const MAX_REFS = 5;
+
+  // Resolve product first (shared by both paths).
+  interface ProductRow {
+    name: string;
+    shortDescription?: string;
+    description?: string;
+    imageUrls?: string[];
+    attributes?: Record<string, string>;
+    categoryNames?: string[];
+  }
+  let productRow: ProductRow | null = null;
   if (productId) {
     try {
       const { PRODUCT_ENTITY_TYPE } = await import("../../products/types.js");
@@ -458,50 +494,15 @@ export async function runImageGenerate(
       });
       const row = matches[0];
       if (row) {
-        const product = row.data as unknown as {
-          name: string;
-          shortDescription?: string;
-          description?: string;
-          imageUrls?: string[];
-        };
-        const context = product.shortDescription || product.description?.slice(0, 240) || "";
-        //// Neocompany Modification — focal-point directive.
-        //// gpt-image-2 + codex have a strong tendency to relegate the
-        //// reference subject to a corner / cut by the frame when the
-        //// prompt doesn't insist. We open with non-negotiable rules:
-        //// the product must occupy a meaningful share of the frame
-        //// (≈30%+), be 100% visible (no crop on ANY side), and stay
-        //// faithful to the reference images shown via `-i`.
-        prompt = [
-          `[Mission] The reference images show "${product.name}". This product MUST be the focal point of the generated image. ` +
-            `Non-negotiable composition rules:`,
-          `  • The product is shown in its ENTIRETY — every edge of the product is inside the frame, ` +
-            `with a clear visible margin (at least ~8% of the frame) on all four sides.`,
-          `  • The product NEVER touches or crosses the frame edges, NEVER is partially cropped, ` +
-            `cut off, hidden behind people/objects, faded out, or covered by overlays.`,
-          `  • The product occupies a meaningful share of the composition (roughly 30%+ of the visible area) ` +
-            `and is rendered in sharp focus with clean detail. Lifestyle elements stay decorative — they ` +
-            `complement the product but never compete with it for the viewer's eye.`,
-          `  • Stay 100% faithful to the product's exact design, silhouette, colors, materials, branding ` +
-            `and proportions as shown in the reference images. Do not invent variants or alter details.`,
-          `  • For footwear: frame the composition so BOTH shoes are fully visible (low-angle / waist-down / ` +
-            `flat-lay / on-foot close-up are all acceptable). Avoid full-body shots that push the shoes to ` +
-            `the bottom edge — prefer tight crops on the lower body or close-ups that keep the entire shoe ` +
-            `inside the frame with margin underneath.`,
-          `If you cannot satisfy these rules simultaneously, prioritize the product's full visibility over ` +
-            `the lifestyle scene.`,
-          `[Product] ${product.name}${context ? ` — ${context}` : ""}`,
-          `[Brief] ${prompt}`,
-        ].join("\n\n");
-        //// End Neocompany Modification
-        if (Array.isArray(product.imageUrls) && product.imageUrls.length > 0) {
+        productRow = row.data as unknown as ProductRow;
+        const urls = productRow.imageUrls;
+        if (Array.isArray(urls) && urls.length > 0) {
           const already = new Set(referenceImageUrls ?? []);
-          const newUrls = product.imageUrls.filter((u) => !already.has(u));
+          const newUrls = urls.filter((u: string) => !already.has(u));
           const existingCount = (referenceImageIds?.length ?? 0) + (referenceImageUrls?.length ?? 0);
           const budget = Math.max(0, MAX_REFS - existingCount);
           if (budget > 0 && newUrls.length > 0) {
-            const extra = newUrls.slice(0, budget);
-            referenceImageUrls = [...(referenceImageUrls ?? []), ...extra];
+            referenceImageUrls = [...(referenceImageUrls ?? []), ...newUrls.slice(0, budget)];
           }
         }
       } else {
@@ -510,6 +511,149 @@ export async function runImageGenerate(
     } catch (err) {
       ctx.logger?.warn?.("imageGenerate: failed to load productId context", {
         productId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Path (a): scene-based prompt.
+  if (sceneStyle || sceneVariantId) {
+    try {
+      const { SCENE_VARIANT_ENTITY_TYPE } = await import("../../scenes/types.js");
+      const { audienceForProduct, selectVariantPool, pickVariantByIndex, formatProductDescriptor, interpolateBody } = await import("../../scenes/picker.js");
+      type SceneVariantT = SceneVariantData & { id: string };
+
+      let chosen: SceneVariantT | null = null;
+      if (sceneVariantId) {
+        const rows = await ctx.entities.list({
+          entityType: SCENE_VARIANT_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: runCtx.companyId,
+          externalId: sceneVariantId,
+          limit: 1,
+        });
+        const row = rows[0];
+        if (row) {
+          const data = row.data as unknown as SceneVariantData;
+          chosen = { id: row.externalId ?? row.id, ...data };
+        }
+      }
+      if (!chosen && sceneStyle) {
+        const all = await ctx.entities.list({
+          entityType: SCENE_VARIANT_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: runCtx.companyId,
+          limit: 500,
+        });
+        const variants = all.map((r) => {
+          const data = r.data as unknown as SceneVariantData;
+          return { id: r.externalId ?? r.id, ...data } as SceneVariantT;
+        });
+        const audience = productRow?.categoryNames ? audienceForProduct(productRow.categoryNames) : [];
+        const pool = selectVariantPool({
+          variants,
+          style: sceneStyle as SceneStyle,
+          productAudience: audience,
+        });
+        chosen = pickVariantByIndex(pool, sceneVariantIndex) as SceneVariantT | null;
+      }
+
+      if (chosen) {
+        resolvedSceneVariantId = chosen.id;
+        resolvedSceneVariantName = chosen.displayName;
+        const descriptor = productRow
+          ? formatProductDescriptor({ name: productRow.name, attributes: productRow.attributes ?? {} })
+          : "the product shown in the reference images";
+        let brand = "the brand";
+        try {
+          const company = await ctx.companies.get(runCtx.companyId);
+          brand = company?.name ?? brand;
+        } catch { /* not granted — keep default */ }
+        const interpolated = interpolateBody(chosen.body, {
+          descriptor,
+          title: productRow?.name ?? "the product",
+          brand,
+          description: productRow?.shortDescription || productRow?.description?.slice(0, 240) || "",
+        });
+        const userBrief = prompt.trim();
+        prompt = userBrief
+          ? `${interpolated}\n\n[Brief additionnel] ${userBrief}`
+          : interpolated;
+      } else {
+        ctx.logger?.warn?.("imageGenerate: no scene variant resolved, falling back to prompt", { sceneStyle, sceneVariantId });
+      }
+    } catch (err) {
+      ctx.logger?.warn?.("imageGenerate: scene resolution failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  } else if (productRow) {
+    // Path (b): legacy focal-point directive when no scene is selected.
+    const context = productRow.shortDescription || productRow.description?.slice(0, 240) || "";
+    prompt = [
+      `[Mission] The reference images show "${productRow.name}". This product MUST be the focal point of the generated image. ` +
+        `Non-negotiable composition rules:`,
+      `  • The product is shown in its ENTIRETY — every edge of the product is inside the frame, ` +
+        `with a clear visible margin (at least ~8% of the frame) on all four sides.`,
+      `  • The product NEVER touches or crosses the frame edges, NEVER is partially cropped, ` +
+        `cut off, hidden behind people/objects, faded out, or covered by overlays.`,
+      `  • The product occupies a meaningful share of the composition (roughly 30%+ of the visible area) ` +
+        `and is rendered in sharp focus with clean detail. Lifestyle elements stay decorative — they ` +
+        `complement the product but never compete with it for the viewer's eye.`,
+      `  • Stay 100% faithful to the product's exact design, silhouette, colors, materials, branding ` +
+        `and proportions as shown in the reference images. Do not invent variants or alter details.`,
+      `  • For footwear: frame the composition so BOTH shoes are fully visible (low-angle / waist-down / ` +
+        `flat-lay / on-foot close-up are all acceptable). Avoid full-body shots that push the shoes to ` +
+        `the bottom edge — prefer tight crops on the lower body or close-ups that keep the entire shoe ` +
+        `inside the frame with margin underneath.`,
+      `If you cannot satisfy these rules simultaneously, prioritize the product's full visibility over ` +
+        `the lifestyle scene.`,
+      `[Product] ${productRow.name}${context ? ` — ${context}` : ""}`,
+      `[Brief] ${prompt}`,
+    ].join("\n\n");
+  }
+
+  //// Neocompany Modification — White-bg ref filter (opt-in).
+  //// When `filterRefsWhiteBg` is true, fetch each ref URL, run the
+  //// detectWhiteBg heuristic, keep only studio shots, sort by ratio
+  //// descending, cap at MAX_REFS. Failures (fetch errors, non-image
+  //// content) are dropped silently.
+  //// End Neocompany Modification
+  if (filterRefsWhiteBg && referenceImageUrls && referenceImageUrls.length > 0) {
+    try {
+      const { detectWhiteBg } = await import("../../content/white-bg-detect.js");
+      const scored: Array<{ url: string; ratio: number }> = [];
+      for (const url of referenceImageUrls) {
+        try {
+          let buf: Buffer | null = null;
+          if (url.startsWith("data:")) {
+            const comma = url.indexOf(",");
+            if (comma >= 0) {
+              const header = url.slice(5, comma);
+              const payload = url.slice(comma + 1);
+              buf = header.includes("base64")
+                ? Buffer.from(payload, "base64")
+                : Buffer.from(decodeURIComponent(payload), "utf8");
+            }
+          } else {
+            const res = await ctx.http.fetch(url);
+            if (!res.ok) continue;
+            buf = Buffer.from(await res.arrayBuffer());
+          }
+          if (!buf) continue;
+          const verdict = await detectWhiteBg(buf);
+          if (verdict.isWhiteBg) scored.push({ url, ratio: verdict.ratio });
+        } catch { /* drop */ }
+      }
+      scored.sort((a, b) => b.ratio - a.ratio);
+      const kept = scored.slice(0, MAX_REFS).map((s) => s.url);
+      ctx.logger?.info?.("imageGenerate: white-bg filter kept N/M refs", {
+        kept: kept.length,
+        total: referenceImageUrls.length,
+      });
+      referenceImageUrls = kept;
+    } catch (err) {
+      ctx.logger?.warn?.("imageGenerate: white-bg filter failed, keeping all refs", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -606,7 +750,31 @@ export async function runImageGenerate(
   }
   //// End Neocompany Modification
 
-  const rawImageUrl = `data:${mimeType};base64,${rawBuffer.toString("base64")}`;
+  //// Neocompany Modification — Aspect re-crop fallback (silent, default ON).
+  //// codex / gpt-image-2 occasionally ignores the aspect-ratio hint in the
+  //// prompt and returns a square PNG when 16:9 / 9:16 was requested. The
+  //// subject is composed near the centre of the frame, so a centred crop
+  //// to the target ratio keeps it intact. No-op when the input already
+  //// matches the target within ±2%.
+  //// End Neocompany Modification
+  let aspectAdjustedBuffer = rawBuffer;
+  try {
+    const { centerCropToAspect } = await import("../../content/aspect-recrop.js");
+    const recrop = await centerCropToAspect(rawBuffer, width, height);
+    if (recrop.cropped) {
+      ctx.logger?.info?.("imageGenerate: aspect re-cropped", {
+        to: `${recrop.width}x${recrop.height}`,
+        targetRatio: `${width}:${height}`,
+      });
+      aspectAdjustedBuffer = recrop.buffer;
+    }
+  } catch (err) {
+    ctx.logger?.warn?.("imageGenerate: aspect re-crop failed, keeping raw", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const rawImageUrl = `data:${mimeType};base64,${aspectAdjustedBuffer.toString("base64")}`;
 
   // ── Optional composite with template ─────────────────────────────
   let finalImageUrl = rawImageUrl;
@@ -632,12 +800,16 @@ export async function runImageGenerate(
       resolvedLogoUrl = undefined;
     }
     try {
-      // The compositor fetches the source image; we feed it our data URL
+      //// Neocompany Modification — pass the CALLER's width/height to the
+      //// compositor, not templateData.{width,height}. Templates are now
+      //// responsive (zones stored as percentages) — letting them dictate
+      //// the canvas would defeat the Format picker.
+      //// End Neocompany Modification
       const result = await compositeImage(
         rawImageUrl,
         templateData.config,
-        templateData.width,
-        templateData.height,
+        width,
+        height,
         resolvedLogoUrl,
       );
       finalImageUrl = `data:${result.mimeType};base64,${result.buffer.toString("base64")}`;
@@ -667,6 +839,9 @@ export async function runImageGenerate(
     ...(refs.resolvedIds.length > 0 ? { referenceImageIds: refs.resolvedIds } : {}),
     ...(refs.resolvedUrls.length > 0 ? { referenceImageUrls: refs.resolvedUrls } : {}),
     ...(productId ? { productId } : {}),
+    ...(sceneStyle ? { sceneStyle } : {}),
+    ...(resolvedSceneVariantId ? { sceneVariantId: resolvedSceneVariantId } : {}),
+    ...(resolvedSceneVariantName ? { sceneVariantName: resolvedSceneVariantName } : {}),
     //// End Neocompany Modification
   };
 

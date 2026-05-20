@@ -61,4 +61,12 @@ export interface GeneratedImageData {
    * refs and prefixes the prompt with the product name + short description.
    */
   productId?: string;
+  /**
+   * Scene style + variant used for this generation (set when the dialog
+   * selected a scene from the editor). The triplet style + id + name lets
+   * the Image Details drawer surface the scene without re-querying.
+   */
+  sceneStyle?: string;
+  sceneVariantId?: string;
+  sceneVariantName?: string;
 }
