@@ -111,6 +111,21 @@ export function toVectorLiteral(vec: number[]): string {
   return `[${vec.join(",")}]`;
 }
 
+/**
+ * Postgres array literal: {"a","b"}. The plugin DB driver does not bind
+ * JS arrays — pass the literal as a text param and cast it (::text[] /
+ * ::uuid[]) in the SQL.
+ */
+export function toPgArray(items: string[]): string {
+  return (
+    "{" +
+    items
+      .map((s) => `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+      .join(",") +
+    "}"
+  );
+}
+
 async function fetchWithTimeout(
   ctx: PluginContext,
   url: string,
@@ -237,14 +252,14 @@ export function registerMemoryTools(ctx: PluginContext): void {
         await ctx.db.execute(
           `INSERT INTO ${table("memory_units")}
              (company_id, bank_id, content, embedding, fact_type, tags, metadata, document_id)
-           VALUES ($1, $2, $3, $4::vector, $5, $6, $7::jsonb, $8)`,
+           VALUES ($1, $2, $3, $4::vector, $5, $6::text[], $7::jsonb, $8)`,
           [
             companyId,
             bankId,
             chunks[i],
             toVectorLiteral(vectors[i]!),
             factType,
-            tags,
+            toPgArray(tags),
             JSON.stringify(metadata),
             documentId,
           ],
@@ -324,7 +339,7 @@ export function registerMemoryTools(ctx: PluginContext): void {
           `UPDATE ${table("memory_units")}
               SET access_count = access_count + 1, accessed_at = now()
             WHERE id = ANY($1::uuid[])`,
-          [rows.map((r) => r.id)],
+          [toPgArray(rows.map((r) => r.id))],
         );
       }
 
@@ -558,7 +573,7 @@ export async function runDream(
         `UPDATE ${table("memory_units")}
             SET superseded_by = $1
           WHERE id = ANY($2::uuid[])`,
-        [synthId, rawRows.map((r) => r.id)],
+        [synthId, toPgArray(rawRows.map((r) => r.id))],
       );
       result.consolidated++;
     }
