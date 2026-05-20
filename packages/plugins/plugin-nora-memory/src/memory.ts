@@ -488,6 +488,9 @@ export async function runDream(
   // --- Phase 1: Light Sleep — dedup ----------------------------------------
   // For each live memory, find a near-identical older sibling in the same
   // bank (cosine distance < 1 - threshold) and fold it in.
+  // The Phase 1 query self-joins `memory_units` against itself, so an
+  // unqualified `bank_id` would be ambiguous. Use an aliased clause here.
+  const bankClauseAliased = bankFilter ? "AND a.bank_id = $2" : "";
   const dupPairs = await ctx.db.query<{ keep_id: string; drop_id: string }>(
     `SELECT a.id AS keep_id, b.id AS drop_id
        FROM ${table("memory_units")} a
@@ -498,7 +501,7 @@ export async function runDream(
         AND a.superseded_by IS NULL
         AND b.superseded_by IS NULL
         AND (a.embedding <=> b.embedding) < ${1 - DEDUP_COSINE_THRESHOLD}
-      WHERE a.company_id = $1 ${bankClause}`,
+      WHERE a.company_id = $1 ${bankClauseAliased}`,
     [companyId, ...bankArg],
   );
   if (!dryRun && dupPairs.length > 0) {
