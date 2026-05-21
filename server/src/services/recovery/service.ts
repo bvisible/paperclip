@@ -527,6 +527,48 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     return queued;
   }
 
+  //// Neoffice Modification: cap-auto-recovery-retries
+  //// Why: incident PRI-2386 (osiris, 2026-05-21) — le scan de recovery
+  ////      re-queue indéfiniment une issue dont chaque run échoue/timeout.
+  ////      24+ retries en 6h, l'agent main hallucinant à chaque tour (il
+  ////      inventait des chiffres business plutôt que d'admettre l'échec).
+  ////      Le scan n'avait AUCUN plafond par-issue : enqueueStrandedIssueRecovery
+  ////      re-queue sans jamais compter. On compte ici les runs terminaux
+  ////      échoués (failed / timed_out) de l'issue sur une fenêtre de 24h ;
+  ////      au-delà du plafond on escalade définitivement en `blocked` au
+  ////      lieu de re-queue, ce qui casse la boucle.
+  //// Date: 2026-05-21
+  //// Refs: NORA Sprint Q.13 — NORA/38-anti-hallucination-briefing-refonte/01-incident-pri-2386
+  const NEOFFICE_MAX_AUTO_RECOVERY_FAILED_RUNS = 3;
+  const NEOFFICE_AUTO_RECOVERY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+  async function isAutoRecoveryAttemptCapReached(
+    issue: typeof issues.$inferSelect,
+  ): Promise<boolean> {
+    const since = new Date(Date.now() - NEOFFICE_AUTO_RECOVERY_CAP_WINDOW_MS);
+    const rows = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(heartbeatRuns)
+      .where(
+        and(
+          eq(heartbeatRuns.companyId, issue.companyId),
+          sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+          inArray(heartbeatRuns.status, ["failed", "timed_out"]),
+          gte(heartbeatRuns.createdAt, since),
+        ),
+      );
+    return (rows[0]?.n ?? 0) >= NEOFFICE_MAX_AUTO_RECOVERY_FAILED_RUNS;
+  }
+
+  const NEOFFICE_RECOVERY_CAP_COMMENT =
+    "Paperclip a atteint le plafond de tentatives de recovery automatiques " +
+    `(${NEOFFICE_MAX_AUTO_RECOVERY_FAILED_RUNS} runs échoués en 24h) pour cette ` +
+    "issue. Arrêt des relances automatiques pour casser la boucle — passage en " +
+    "`blocked` pour intervention manuelle. Réactiver l'issue ne sert à rien tant " +
+    "que la cause racine (specialist indisponible, outil en échec, etc.) n'est " +
+    "pas résolue.";
+  //// End Neoffice Modification: cap-auto-recovery-retries
+
   async function enqueueInitialAssignedTodoDispatch(issue: typeof issues.$inferSelect, agentId: string) {
     return deps.enqueueWakeup(agentId, {
       source: "assignment",
@@ -2489,6 +2531,24 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           continue;
         }
 
+        //// Neoffice Modification: cap-auto-recovery-retries
+        if (await isAutoRecoveryAttemptCapReached(issue)) {
+          const updated = await escalateStrandedAssignedIssue({
+            issue,
+            previousStatus: "todo",
+            latestRun,
+            comment: NEOFFICE_RECOVERY_CAP_COMMENT,
+          });
+          if (updated) {
+            result.escalated += 1;
+            result.issueIds.push(issue.id);
+          } else {
+            result.skipped += 1;
+          }
+          continue;
+        }
+        //// End Neoffice Modification: cap-auto-recovery-retries
+
         const queued = await enqueueStrandedIssueRecovery({
           issueId: issue.id,
           agentId,
@@ -2564,6 +2624,24 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
           continue;
         }
 
+        //// Neoffice Modification: cap-auto-recovery-retries
+        if (await isAutoRecoveryAttemptCapReached(issue)) {
+          const updated = await escalateStrandedAssignedIssue({
+            issue,
+            previousStatus: "in_progress",
+            latestRun: successfulRun,
+            comment: NEOFFICE_RECOVERY_CAP_COMMENT,
+          });
+          if (updated) {
+            result.escalated += 1;
+            result.issueIds.push(issue.id);
+          } else {
+            result.skipped += 1;
+          }
+          continue;
+        }
+        //// End Neoffice Modification: cap-auto-recovery-retries
+
         const queued = await enqueueStrandedIssueRecovery({
           issueId: issue.id,
           agentId,
@@ -2604,6 +2682,24 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         result.skipped += 1;
         continue;
       }
+
+      //// Neoffice Modification: cap-auto-recovery-retries
+      if (await isAutoRecoveryAttemptCapReached(issue)) {
+        const updated = await escalateStrandedAssignedIssue({
+          issue,
+          previousStatus: "in_progress",
+          latestRun,
+          comment: NEOFFICE_RECOVERY_CAP_COMMENT,
+        });
+        if (updated) {
+          result.escalated += 1;
+          result.issueIds.push(issue.id);
+        } else {
+          result.skipped += 1;
+        }
+        continue;
+      }
+      //// End Neoffice Modification: cap-auto-recovery-retries
 
       const queued = await enqueueStrandedIssueRecovery({
         issueId: issue.id,
