@@ -674,12 +674,15 @@ export async function runDream(
       origin_count: rawRows.length,
       origin_fact_type: majorityFactType,
     };
-    const insertedRows = await ctx.db.query<{ id: string }>(
+    // `ctx.db.query` is restricted to SELECT, so we mint the id JS-side
+    // and INSERT via execute(); then point the superseded rows at it.
+    const synthId = crypto.randomUUID();
+    await ctx.db.execute(
       `INSERT INTO ${table("memory_units")}
-         (company_id, bank_id, content, embedding, fact_type, consolidated, metadata)
-       VALUES ($1, $2, $3, $4::vector, $5, true, $6::jsonb)
-       RETURNING id`,
+         (id, company_id, bank_id, content, embedding, fact_type, consolidated, metadata)
+       VALUES ($1, $2, $3, $4, $5::vector, $6, true, $7::jsonb)`,
       [
+        synthId,
         companyId,
         bank.bank_id,
         consolidated.synthesis,
@@ -688,16 +691,13 @@ export async function runDream(
         JSON.stringify(synthMetadata),
       ],
     );
-    const synthId = insertedRows[0]?.id;
-    if (synthId) {
-      await ctx.db.execute(
-        `UPDATE ${table("memory_units")}
-            SET superseded_by = $1
-          WHERE id = ANY($2::uuid[])`,
-        [synthId, toPgArray(rawRows.map((r) => r.id))],
-      );
-      result.consolidated++;
-    }
+    await ctx.db.execute(
+      `UPDATE ${table("memory_units")}
+          SET superseded_by = $1
+        WHERE id = ANY($2::uuid[])`,
+      [synthId, toPgArray(rawRows.map((r) => r.id))],
+    );
+    result.consolidated++;
   }
 
   // --- Phase 3: Forgetting -------------------------------------------------
