@@ -64,6 +64,22 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "LLM model (Dream consolidation)",
         default: "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf",
       },
+      neoserviceUrl: {
+        type: "string",
+        title: "Neoservice URL (Claude curator)",
+        description:
+          "Base URL of the central neoservice Frappe instance hosting the Claude memory " +
+          "curator endpoint. Used in Dream Phase 2 for fact_type ∈ {preference, style, rule}.",
+        default: "https://neoservice.neoffice.me",
+      },
+      relayToken: {
+        type: "string",
+        title: "Curator relay token (HMAC)",
+        description:
+          "Shared secret used to sign requests to neoservice's memory_curator endpoint " +
+          "(X-Relay-Token + HMAC body). If empty, Claude routing is disabled and Dream " +
+          "falls back to Qwen for every cluster.",
+      },
     },
   },
   database: {
@@ -145,16 +161,52 @@ const manifest: PaperclipPluginManifestV1 = {
       name: "memory_dream",
       displayName: "Dream (consolidate memory)",
       description:
-        "Sleep-time consolidation. Three phases: Light Sleep (dedup near-identical memories), " +
-        "Deep Sleep (summarise old raw memory clusters into compact syntheses via the LLM), " +
-        "Forgetting (drop superseded, never-recalled, old memories). Keeps the memory compact " +
-        "and the long-term context dense. Intended to run nightly via a scheduled trigger.",
+        "Sleep-time consolidation. Four phases: Light Sleep (dedup near-identical memories), " +
+        "Deep Sleep (summarise old raw memory clusters into compact syntheses via Qwen/Claude), " +
+        "Forgetting (drop superseded, never-recalled, old memories), Wiki Promotion (push the " +
+        "most stable/recalled summaries into the company wiki). Intended to run nightly.",
       parametersSchema: {
         type: "object",
         properties: {
           companyId: { type: "string" },
-          bankId: { type: "string", description: "Optional — restrict to one bank. Omit to consolidate all banks." },
-          dryRun: { type: "boolean", description: "If true, report what would change without writing." },
+          bankId: {
+            type: "string",
+            description:
+              "Optional — restrict to one bank. Omit to consolidate all banks of the company.",
+          },
+          dryRun: {
+            type: "boolean",
+            description: "If true, report what would change without writing.",
+          },
+          staleDays: {
+            type: "integer",
+            minimum: 0,
+            maximum: 365,
+            description:
+              "Age (in days) above which raw memories become candidates for Deep Sleep / " +
+              "Forgetting. Default 14. Set to 0 only for debug runs to consolidate everything.",
+          },
+          minClusterSize: {
+            type: "integer",
+            minimum: 2,
+            maximum: 100,
+            description:
+              "Minimum number of stale memories in a bank before Deep Sleep synthesises them. " +
+              "Default 8. Lower for debug, higher to require stronger signal.",
+          },
+          useClaude: {
+            type: "boolean",
+            description:
+              "If true (default), route comportemental clusters (fact_type ∈ preference/style/rule) " +
+              "to the Claude curator on neoservice. Set false to force Qwen for every cluster.",
+          },
+          promoteToWiki: {
+            type: "boolean",
+            description:
+              "If true (default), Phase 4 promotes stable summaries (access_count ≥ 3, " +
+              "proof_count ≥ 2, curator-flagged promote=true) into wiki/entreprise/. Set " +
+              "false to skip the promotion phase entirely.",
+          },
         },
         required: ["companyId"],
       },

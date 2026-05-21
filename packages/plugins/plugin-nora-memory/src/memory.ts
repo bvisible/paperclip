@@ -23,6 +23,10 @@ interface MemoryConfig {
   llmUrl: string;
   llmModel: string;
   apiKey: string;
+  /** Base URL of the Claude curator on neoservice — optional. */
+  neoserviceUrl: string;
+  /** Shared-secret HMAC token for the curator endpoint — optional. */
+  relayToken: string;
 }
 
 const DEFAULT_CONFIG: MemoryConfig = {
@@ -31,6 +35,8 @@ const DEFAULT_CONFIG: MemoryConfig = {
   llmUrl: "https://olares1.noraai.ch/v1/chat/completions",
   llmModel: "Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf",
   apiKey: "",
+  neoserviceUrl: "https://neoservice.neoffice.me",
+  relayToken: "",
 };
 
 /** Resolve the plugin config (operator values over defaults). */
@@ -51,6 +57,8 @@ async function resolveConfig(ctx: PluginContext): Promise<MemoryConfig> {
     llmUrl: pick("llmUrl"),
     llmModel: pick("llmModel"),
     apiKey: typeof operator.apiKey === "string" ? operator.apiKey : "",
+    neoserviceUrl: pick("neoserviceUrl"),
+    relayToken: typeof operator.relayToken === "string" ? operator.relayToken : "",
   };
 }
 
@@ -66,6 +74,20 @@ const RECALL_DEFAULT_LIMIT = 15;
 const LIST_DEFAULT_LIMIT = 100;
 const DEDUP_COSINE_THRESHOLD = 0.95; // Light Sleep: near-identical memories
 const HTTP_TIMEOUT_MS = 30_000;
+
+// Dream defaults — operator-overridable via memory_dream tool params.
+const DEFAULT_STALE_DAYS = 14;
+const DEFAULT_MIN_CLUSTER_SIZE = 8;
+const FORGOTTEN_AGE_DAYS = 30; // Phase 3 keeps its own (longer) horizon
+
+// Claude curator (Phase 2) — comportemental fact_types route through it.
+const CLAUDE_FACT_TYPES = new Set(["preference", "style", "rule"]);
+const CLAUDE_CLUSTER_TIMEOUT_MS = 60_000;
+const MAX_CLAUDE_CALLS_PER_RUN = 5;
+
+// Phase 4 — promotion to the company wiki.
+const WIKI_PROMOTION_MIN_ACCESS = 3;
+const WIKI_PROMOTION_MIN_PROOF = 2;
 
 type ToolParams = Record<string, unknown>;
 
@@ -126,15 +148,24 @@ export function toPgArray(items: string[]): string {
   );
 }
 
+interface FetchInit extends RequestInit {
+  /** Per-call timeout override (ms). Defaults to HTTP_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
 async function fetchWithTimeout(
   ctx: PluginContext,
   url: string,
-  init: RequestInit,
+  init: FetchInit,
 ): Promise<Response> {
+  const { timeoutMs, ...rest } = init;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => controller.abort(),
+    typeof timeoutMs === "number" && timeoutMs > 0 ? timeoutMs : HTTP_TIMEOUT_MS,
+  );
   try {
-    return await ctx.http.fetch(url, { ...init, signal: controller.signal });
+    return await ctx.http.fetch(url, { ...rest, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -444,13 +475,31 @@ export function registerMemoryTools(ctx: PluginContext): void {
       const bankFilter =
         typeof input.bankId === "string" && input.bankId.trim() ? input.bankId.trim() : null;
       const dryRun = input.dryRun === true;
+      const staleDays =
+        typeof input.staleDays === "number" ? input.staleDays : undefined;
+      const minClusterSize =
+        typeof input.minClusterSize === "number" ? input.minClusterSize : undefined;
+      const useClaude =
+        typeof input.useClaude === "boolean" ? input.useClaude : undefined;
+      const promoteToWiki =
+        typeof input.promoteToWiki === "boolean" ? input.promoteToWiki : undefined;
 
-      const result = await runDream(ctx, { companyId, bankFilter, dryRun });
+      const result = await runDream(ctx, {
+        companyId,
+        bankFilter,
+        dryRun,
+        staleDays,
+        minClusterSize,
+        useClaude,
+        promoteToWiki,
+      });
       return {
         content:
           `Dream ${dryRun ? "(dry-run) " : ""}complete — ` +
-          `deduped ${result.deduped}, consolidated ${result.consolidated} cluster(s), ` +
-          `forgot ${result.forgotten}.`,
+          `deduped ${result.deduped}, consolidated ${result.consolidated} cluster(s) ` +
+          `(claude=${result.curatorCalls.claude}, qwen=${result.curatorCalls.qwen}, ` +
+          `fallback=${result.curatorCalls.qwen_fallback}), ` +
+          `forgot ${result.forgotten}, promoted ${result.promoted}.`,
         data: { companyId, ...result },
       };
     },
@@ -461,26 +510,58 @@ export function registerMemoryTools(ctx: PluginContext): void {
 // Dream — sleep-time consolidation
 // ---------------------------------------------------------------------------
 
-interface DreamResult {
+export interface DreamResult {
   deduped: number;
   consolidated: number;
   forgotten: number;
+  promoted: number;
+  curatorCalls: { claude: number; qwen: number; qwen_fallback: number };
+  costUsdTotal: number;
+}
+
+export interface DreamOpts {
+  companyId: string;
+  bankFilter: string | null;
+  dryRun: boolean;
+  /** Age (days) above which raw memories enter Deep Sleep / Forgetting. Default 14. */
+  staleDays?: number;
+  /** Minimum stale memories per bank to trigger a synthesis. Default 8. */
+  minClusterSize?: number;
+  /** If true, route comportemental clusters to Claude. Default true. */
+  useClaude?: boolean;
+  /** If true, run Phase 4 wiki promotion. Default true. */
+  promoteToWiki?: boolean;
 }
 
 /**
- * Three-phase consolidation (cf. SCM / OpenClaw dreaming):
- *   1. Light Sleep   — dedup near-identical memories (cosine > 0.95)
- *   2. Deep Sleep    — summarise old raw-memory clusters into syntheses
- *   3. Forgetting    — drop superseded, never-recalled, old memories
+ * Four-phase consolidation (cf. SCM / OpenClaw dreaming):
+ *   1. Light Sleep    — dedup near-identical memories (cosine > 0.95)
+ *   2. Deep Sleep     — summarise old raw-memory clusters into syntheses
+ *                       (Claude for comportemental clusters, Qwen otherwise)
+ *   3. Forgetting     — drop superseded, never-recalled, old memories
+ *   4. Wiki Promotion — push the most stable/recalled summaries into the
+ *                       company wiki (tier C, local to the tenant)
  *
  * Runs as a one-shot job (intended: nightly cron) — no resident process.
  */
 export async function runDream(
   ctx: PluginContext,
-  opts: { companyId: string; bankFilter: string | null; dryRun: boolean },
+  opts: DreamOpts,
 ): Promise<DreamResult> {
   const { companyId, bankFilter, dryRun } = opts;
-  const result: DreamResult = { deduped: 0, consolidated: 0, forgotten: 0 };
+  const staleDays = clampInt(opts.staleDays, 0, 365, DEFAULT_STALE_DAYS);
+  const minClusterSize = clampInt(opts.minClusterSize, 2, 100, DEFAULT_MIN_CLUSTER_SIZE);
+  const useClaude = opts.useClaude !== false;
+  const promoteToWiki = opts.promoteToWiki !== false;
+
+  const result: DreamResult = {
+    deduped: 0,
+    consolidated: 0,
+    forgotten: 0,
+    promoted: 0,
+    curatorCalls: { claude: 0, qwen: 0, qwen_fallback: 0 },
+    costUsdTotal: 0,
+  };
 
   const bankClause = bankFilter ? "AND bank_id = $2" : "";
   const bankArg = bankFilter ? [bankFilter] : [];
@@ -490,6 +571,7 @@ export async function runDream(
   // bank (cosine distance < 1 - threshold) and fold it in.
   // The Phase 1 query self-joins `memory_units` against itself, so an
   // unqualified `bank_id` would be ambiguous. Use an aliased clause here.
+  // (Same `bankClauseAliased` is reused in Phase 2 below.)
   const bankClauseAliased = bankFilter ? "AND a.bank_id = $2" : "";
   const dupPairs = await ctx.db.query<{ keep_id: string; drop_id: string }>(
     `SELECT a.id AS keep_id, b.id AS drop_id
@@ -523,52 +605,88 @@ export async function runDream(
   result.deduped = dupPairs.length;
 
   // --- Phase 2: Deep Sleep — consolidate old raw clusters ------------------
-  // Take raw (non-consolidated, non-superseded) memories older than 14 days,
-  // grouped by bank, and summarise each bank's batch into one synthesis.
+  // Take raw (non-consolidated, non-superseded) memories older than `staleDays`,
+  // grouped by bank, and summarise each bank's batch into one synthesis. The
+  // synthesis path depends on the cluster's dominant fact_type :
+  //   - preference / style / rule  → Claude (via neoservice curator)
+  //   - everything else            → Qwen (local Olares LLM)
+  // A hard cap of MAX_CLAUDE_CALLS_PER_RUN protects cost & latency.
+  // `bankClauseAliased` is the same variable as Phase 1 (declared above).
   const oldBanks = await ctx.db.query<{ bank_id: string; n: number }>(
     `SELECT bank_id, count(*)::int AS n
-       FROM ${table("memory_units")}
-      WHERE company_id = $1 ${bankClause}
-        AND superseded_by IS NULL
-        AND consolidated = false
-        AND fact_type <> 'summary'
-        AND created_at < now() - interval '14 days'
+       FROM ${table("memory_units")} a
+      WHERE a.company_id = $1 ${bankClauseAliased}
+        AND a.superseded_by IS NULL
+        AND a.consolidated = false
+        AND a.fact_type <> 'summary'
+        AND a.created_at < now() - interval '${staleDays} days'
       GROUP BY bank_id
-      HAVING count(*) >= 8`,
+      HAVING count(*) >= ${minClusterSize}`,
     [companyId, ...bankArg],
   );
   for (const bank of oldBanks) {
-    const rawRows = await ctx.db.query<{ id: string; content: string }>(
-      `SELECT id, content
+    const rawRows = await ctx.db.query<{
+      id: string;
+      content: string;
+      fact_type: string;
+    }>(
+      `SELECT id, content, fact_type
          FROM ${table("memory_units")}
         WHERE company_id = $1 AND bank_id = $2
           AND superseded_by IS NULL AND consolidated = false
           AND fact_type <> 'summary'
-          AND created_at < now() - interval '14 days'
+          AND created_at < now() - interval '${staleDays} days'
         ORDER BY created_at ASC
         LIMIT 60`,
       [companyId, bank.bank_id],
     );
-    if (rawRows.length < 8) continue;
+    if (rawRows.length < minClusterSize) continue;
+
+    // Majority vote on fact_type → route Qwen vs Claude.
+    const majorityFactType = dominantFactType(rawRows.map((r) => r.fact_type));
+    const claudeBudgetLeft = result.curatorCalls.claude < MAX_CLAUDE_CALLS_PER_RUN;
+    const shouldUseClaude =
+      useClaude && claudeBudgetLeft && CLAUDE_FACT_TYPES.has(majorityFactType);
+
     if (dryRun) {
       result.consolidated++;
+      if (shouldUseClaude) result.curatorCalls.claude++;
+      else result.curatorCalls.qwen++;
       continue;
     }
-    const synthesis = await llmComplete(
+
+    const consolidated = await consolidateCluster(
       ctx,
-      "Tu consolides la mémoire d'un agent. À partir des souvenirs bruts fournis, " +
-        "produis UNE synthèse dense et factuelle en français (5-12 phrases) qui " +
-        "préserve les faits, décisions et préférences durables. Pas de bla-bla.",
-      rawRows.map((r, i) => `${i + 1}. ${r.content}`).join("\n"),
+      bank.bank_id,
+      majorityFactType,
+      rawRows,
+      shouldUseClaude,
     );
-    if (!synthesis) continue;
-    const [synthVec] = await embed(ctx, [synthesis]);
+    if (!consolidated || !consolidated.synthesis) continue;
+    result.curatorCalls[consolidated.curator]++;
+    result.costUsdTotal += consolidated.costUsd ?? 0;
+
+    const [synthVec] = await embed(ctx, [consolidated.synthesis]);
+    const synthMetadata = {
+      curator: consolidated.curator,
+      promote: consolidated.promote ?? false,
+      wiki_slug: consolidated.wikiSlug ?? null,
+      origin_count: rawRows.length,
+      origin_fact_type: majorityFactType,
+    };
     const insertedRows = await ctx.db.query<{ id: string }>(
       `INSERT INTO ${table("memory_units")}
-         (company_id, bank_id, content, embedding, fact_type, consolidated)
-       VALUES ($1, $2, $3, $4::vector, 'summary', true)
+         (company_id, bank_id, content, embedding, fact_type, consolidated, metadata)
+       VALUES ($1, $2, $3, $4::vector, $5, true, $6::jsonb)
        RETURNING id`,
-      [companyId, bank.bank_id, synthesis, toVectorLiteral(synthVec!)],
+      [
+        companyId,
+        bank.bank_id,
+        consolidated.synthesis,
+        toVectorLiteral(synthVec!),
+        consolidated.factType ?? "summary",
+        JSON.stringify(synthMetadata),
+      ],
     );
     const synthId = insertedRows[0]?.id;
     if (synthId) {
@@ -592,7 +710,7 @@ export async function runDream(
         WHERE company_id = $1 ${bankClause}
           AND superseded_by IS NOT NULL
           AND access_count = 0
-          AND created_at < now() - interval '30 days'`,
+          AND created_at < now() - interval '${FORGOTTEN_AGE_DAYS} days'`,
       [companyId, ...bankArg],
     );
     result.forgotten = n;
@@ -602,12 +720,296 @@ export async function runDream(
         WHERE company_id = $1 ${bankClause}
           AND superseded_by IS NOT NULL
           AND access_count = 0
-          AND created_at < now() - interval '30 days'`,
+          AND created_at < now() - interval '${FORGOTTEN_AGE_DAYS} days'`,
       [companyId, ...bankArg],
     );
     result.forgotten = forgotten.rowCount;
   }
 
+  // --- Phase 4: Wiki Promotion --------------------------------------------
+  // Push the most stable summaries (recalled at least N times, reinforced
+  // at least M times, and flagged promote=true by the curator) into the
+  // company wiki under wiki/entreprise/memory/. Tier C local — never
+  // propagated cross-instance. Failures here NEVER break the Dream.
+  if (promoteToWiki) {
+    try {
+      result.promoted = await runWikiPromotion(ctx, companyId, bankFilter, dryRun);
+    } catch (err) {
+      ctx.logger.warn?.("memory_dream Phase 4 (wiki promotion) failed", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   ctx.logger.info("memory_dream complete", { companyId, ...result, dryRun });
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Cluster consolidation — routes Qwen (local) or Claude (via neoservice)
+// ---------------------------------------------------------------------------
+
+interface ConsolidatedCluster {
+  synthesis: string;
+  curator: "claude" | "qwen" | "qwen_fallback";
+  factType?: string;
+  promote?: boolean;
+  wikiSlug?: string | null;
+  costUsd?: number;
+}
+
+const QWEN_DREAM_SYSTEM_PROMPT =
+  "Tu consolides la mémoire d'un agent. À partir des souvenirs bruts fournis, " +
+  "produis UNE synthèse dense et factuelle en français (5-12 phrases) qui " +
+  "préserve les faits, décisions et préférences durables. Pas de bla-bla.";
+
+async function consolidateCluster(
+  ctx: PluginContext,
+  bankId: string,
+  factType: string,
+  rawRows: Array<{ id: string; content: string }>,
+  preferClaude: boolean,
+): Promise<ConsolidatedCluster | null> {
+  const userPayload = rawRows.map((r, i) => `${i + 1}. ${r.content}`).join("\n");
+
+  // Route to Claude (via neoservice) for comportemental clusters.
+  if (preferClaude) {
+    const claudeResult = await consolidateClusterClaude(ctx, bankId, factType, rawRows);
+    if (claudeResult) return claudeResult;
+    // Claude unreachable / errored / timed out → graceful fallback to Qwen.
+    ctx.logger.warn?.("memory_dream Claude cluster fallback to Qwen", { bankId, factType });
+    const synthesis = await llmComplete(ctx, QWEN_DREAM_SYSTEM_PROMPT, userPayload);
+    if (!synthesis) return null;
+    return { synthesis, curator: "qwen_fallback", factType: "summary" };
+  }
+
+  // Default path — Qwen on Olares.
+  const synthesis = await llmComplete(ctx, QWEN_DREAM_SYSTEM_PROMPT, userPayload);
+  if (!synthesis) return null;
+  return { synthesis, curator: "qwen", factType: "summary" };
+}
+
+/** POST to the neoservice Claude curator. Returns null on any failure. */
+async function consolidateClusterClaude(
+  ctx: PluginContext,
+  bankId: string,
+  factType: string,
+  rawRows: Array<{ id: string; content: string }>,
+): Promise<ConsolidatedCluster | null> {
+  const cfg = await resolveConfig(ctx);
+  if (!cfg.relayToken || !cfg.neoserviceUrl) return null;
+
+  const payload = {
+    bankId,
+    factType,
+    contents: rawRows.map((r) => r.content),
+  };
+  const bodyJson = JSON.stringify(payload);
+
+  const url =
+    cfg.neoserviceUrl.replace(/\/+$/, "") +
+    "/api/method/neoffice_devops.api.memory_curator.consolidate_memory_cluster";
+
+  let resp: Response;
+  try {
+    resp = await fetchWithTimeout(ctx, url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Relay-Token": cfg.relayToken,
+      },
+      body: bodyJson,
+      timeoutMs: CLAUDE_CLUSTER_TIMEOUT_MS,
+    });
+  } catch (err) {
+    ctx.logger.warn?.("Claude curator unreachable", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+  if (!resp.ok) {
+    ctx.logger.warn?.("Claude curator returned non-2xx", { status: resp.status });
+    return null;
+  }
+  type CuratorEnvelope = {
+    message?: {
+      synthesis?: string;
+      fact_type?: string;
+      promote?: boolean;
+      wiki_slug?: string | null;
+      cost_usd?: number;
+    };
+  };
+  let json: CuratorEnvelope;
+  try {
+    json = (await resp.json()) as CuratorEnvelope;
+  } catch {
+    return null;
+  }
+  // Frappe whitelisted methods wrap the return value in {"message": ...}.
+  const inner = json.message ?? (json as unknown as CuratorEnvelope["message"]);
+  if (!inner || typeof inner.synthesis !== "string" || !inner.synthesis.trim()) {
+    return null;
+  }
+  return {
+    synthesis: inner.synthesis.trim(),
+    curator: "claude",
+    factType: typeof inner.fact_type === "string" ? inner.fact_type : "summary",
+    promote: inner.promote === true,
+    wikiSlug: typeof inner.wiki_slug === "string" ? inner.wiki_slug : null,
+    costUsd: typeof inner.cost_usd === "number" ? inner.cost_usd : 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — wiki promotion (tier C local)
+// ---------------------------------------------------------------------------
+
+const LLM_WIKI_PLUGIN_ID = "paperclipai.plugin-llm-wiki";
+
+async function runWikiPromotion(
+  ctx: PluginContext,
+  companyId: string,
+  bankFilter: string | null,
+  dryRun: boolean,
+): Promise<number> {
+  const bankClause = bankFilter ? "AND bank_id = $2" : "";
+  const bankArg = bankFilter ? [bankFilter] : [];
+
+  const candidates = await ctx.db.query<{
+    id: string;
+    bank_id: string;
+    content: string;
+    metadata: Record<string, unknown> | null;
+    fact_type: string;
+    proof_count: number;
+    access_count: number;
+    created_at: string;
+  }>(
+    `SELECT id, bank_id, content, metadata, fact_type, proof_count,
+            access_count, created_at
+       FROM ${table("memory_units")}
+      WHERE company_id = $1 ${bankClause}
+        AND fact_type IN ('summary', 'preference', 'style', 'rule')
+        AND consolidated = true
+        AND access_count >= ${WIKI_PROMOTION_MIN_ACCESS}
+        AND proof_count >= ${WIKI_PROMOTION_MIN_PROOF}
+        AND (metadata->>'promote')::boolean IS TRUE
+        AND metadata->>'wiki_promoted' IS NULL
+      ORDER BY access_count DESC, created_at ASC
+      LIMIT 20`,
+    [companyId, ...bankArg],
+  );
+  if (candidates.length === 0) return 0;
+  if (dryRun) return candidates.length;
+
+  let promoted = 0;
+  for (const row of candidates) {
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    const slug =
+      typeof meta.wiki_slug === "string" && meta.wiki_slug.trim()
+        ? slugify(meta.wiki_slug)
+        : slugify(row.content.slice(0, 60));
+    const bankSlug = slugify(row.bank_id).slice(0, 60);
+    const path = `wiki/entreprise/memory/${bankSlug}/${slug}.md`;
+    const frontmatter = [
+      "---",
+      `source: dream`,
+      `fact_type: ${row.fact_type}`,
+      `proof_count: ${row.proof_count}`,
+      `access_count: ${row.access_count}`,
+      `created_at: ${row.created_at}`,
+      `bank_id: "${row.bank_id}"`,
+      "---",
+      "",
+    ].join("\n");
+    const contents = frontmatter + row.content + "\n";
+
+    let success = false;
+    try {
+      success = await invokeWikiWritePage(ctx, companyId, path, contents);
+    } catch (err) {
+      ctx.logger.warn?.("wiki_write_page invocation failed", {
+        path,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if (!success) continue;
+
+    await ctx.db.execute(
+      `UPDATE ${table("memory_units")}
+          SET metadata = COALESCE(metadata, '{}'::jsonb)
+                          || jsonb_build_object(
+                               'wiki_promoted', now()::text,
+                               'wiki_path', $2::text
+                             )
+        WHERE id = $1`,
+      [row.id, path],
+    );
+    promoted++;
+  }
+  return promoted;
+}
+
+/** POST to the plugin-llm-wiki write-page action. */
+async function invokeWikiWritePage(
+  ctx: PluginContext,
+  companyId: string,
+  path: string,
+  contents: string,
+): Promise<boolean> {
+  const url = `http://127.0.0.1:3100/api/plugins/${LLM_WIKI_PLUGIN_ID}/actions/write-page`;
+  const resp = await fetchWithTimeout(ctx, url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Paperclip-User": "system",
+      "X-Paperclip-Admin": "1",
+    },
+    body: JSON.stringify({ companyId, path, contents, source: "memory_dream" }),
+    timeoutMs: 15_000,
+  });
+  return resp.ok;
+}
+
+// ---------------------------------------------------------------------------
+// Small helpers (Q.12 additions)
+// ---------------------------------------------------------------------------
+
+function clampInt(
+  v: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+  const i = Math.floor(v);
+  if (i < min) return min;
+  if (i > max) return max;
+  return i;
+}
+
+function dominantFactType(values: string[]): string {
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let best = "fact";
+  let bestN = 0;
+  for (const [k, n] of counts) {
+    if (n > bestN) {
+      best = k;
+      bestN = n;
+    }
+  }
+  return best;
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "unnamed";
+}
+
