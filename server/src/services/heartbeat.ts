@@ -8442,6 +8442,56 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         const promotedContinuationAttempt = readContinuationAttempt(
           promotedContextSnapshot.livenessContinuationAttempt,
         );
+
+        //// Neoffice Modification: cap-promotion-loop
+        //// Why: incident osiris 2026-05-21 — une issue (PRI-2469) a été
+        ////      re-promue 130 fois via `issue_execution_promoted` : chaque
+        ////      run, en finissant, promeut un deferred wake en nouveau run,
+        ////      qui crée à son tour un deferred wake → boucle infinie de
+        ////      runs `succeeded` sans jamais terminer l'issue. 80 runs en
+        ////      30 min, RAM/CPU brûlés. Le mécanisme de promotion des
+        ////      deferred wakes n'avait aucun plafond par-issue. On compte
+        ////      ici les runs de l'issue sur 2h ; au-delà du plafond on
+        ////      refuse de promouvoir : le deferred wake est marqué
+        ////      `skipped` et on relâche sans créer de run. L'issue, privée
+        ////      d'execution path, sera ensuite escaladée proprement en
+        ////      `blocked` par le scan de recovery.
+        //// Date: 2026-05-21
+        //// Refs: NORA Sprint Q.13 — NORA/38-anti-hallucination-briefing-refonte/01-incident-pri-2386
+        const NEOFFICE_MAX_PROMOTION_RUNS_PER_ISSUE = 30;
+        const NEOFFICE_PROMOTION_LOOP_WINDOW_MS = 2 * 60 * 60 * 1000;
+        const neofficeRecentRunCount = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.companyId, issue.companyId),
+              sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+              gt(
+                heartbeatRuns.createdAt,
+                new Date(Date.now() - NEOFFICE_PROMOTION_LOOP_WINDOW_MS),
+              ),
+            ),
+          )
+          .then((rows) => rows[0]?.n ?? 0);
+        if (neofficeRecentRunCount >= NEOFFICE_MAX_PROMOTION_RUNS_PER_ISSUE) {
+          await tx
+            .update(agentWakeupRequests)
+            .set({
+              status: "skipped",
+              finishedAt: new Date(),
+              error: `promotion loop cap: ${neofficeRecentRunCount} runs in 2h`,
+              updatedAt: new Date(),
+            })
+            .where(eq(agentWakeupRequests.id, deferred.id));
+          logger.warn(
+            `[heartbeat] promotion loop cap hit for issue ${issue.identifier ?? issue.id} ` +
+              `(${neofficeRecentRunCount} runs in 2h) — deferred wake skipped`,
+          );
+          return { kind: "released" as const };
+        }
+        //// End Neoffice Modification: cap-promotion-loop
+
         const now = new Date();
         const newRun = await tx
           .insert(heartbeatRuns)
