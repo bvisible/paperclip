@@ -730,21 +730,16 @@ export async function runDream(
   }
 
   // --- Phase 4: Wiki Promotion --------------------------------------------
-  // Push the most stable summaries (recalled at least N times, reinforced
-  // at least M times, and flagged promote=true by the curator) into the
-  // company wiki under wiki/entreprise/memory/. Tier C local — never
-  // propagated cross-instance. Failures here NEVER break the Dream.
+  // Counted here for the dry-run / status report, but the actual cross-plugin
+  // write (llm-wiki:wiki_write_page) is performed from the Frappe-side runner
+  // — `nora.tasks.memory_dream.run()` — for simpler routing & auth (the
+  // plugin worker can't easily forward a fresh runContext to another plugin's
+  // tool). Phase 4 here just lists how many candidates would be promoted.
   if (promoteToWiki) {
     try {
-      result.promoted = await runWikiPromotion(
-        ctx,
-        companyId,
-        bankFilter,
-        dryRun,
-        opts.runContext ?? null,
-      );
+      result.promoted = await countWikiPromotionCandidates(ctx, companyId, bankFilter);
     } catch (err) {
-      ctx.logger.warn?.("memory_dream Phase 4 (wiki promotion) failed", {
+      ctx.logger.warn?.("memory_dream Phase 4 candidates count failed", {
         err: err instanceof Error ? err.message : String(err),
       });
     }
@@ -874,34 +869,23 @@ async function consolidateClusterClaude(
 // Phase 4 — wiki promotion (tier C local)
 // ---------------------------------------------------------------------------
 
-const LLM_WIKI_PLUGIN_ID = "paperclipai.plugin-llm-wiki";
-
-async function runWikiPromotion(
+/**
+ * Phase 4 inside the worker just COUNTS how many summaries are eligible for
+ * promotion. The actual write to the wiki happens from the Frappe-side
+ * runner (`nora.tasks.memory_dream.run`) which calls the new tool
+ * `memory_promote_candidates` to enumerate, then POSTs each one to the
+ * llm-wiki plugin from Frappe — same pattern as `wiki_sync.py`. Cleaner
+ * routing, easier auth, and the Dream tool stays read-only on llm-wiki.
+ */
+async function countWikiPromotionCandidates(
   ctx: PluginContext,
   companyId: string,
   bankFilter: string | null,
-  dryRun: boolean,
-  runContext: ToolRunContext | null,
 ): Promise<number> {
-  if (!runContext) {
-    ctx.logger.warn?.("Phase 4 skipped — no runContext to invoke llm-wiki");
-    return 0;
-  }
   const bankClause = bankFilter ? "AND bank_id = $2" : "";
   const bankArg = bankFilter ? [bankFilter] : [];
-
-  const candidates = await ctx.db.query<{
-    id: string;
-    bank_id: string;
-    content: string;
-    metadata: Record<string, unknown> | null;
-    fact_type: string;
-    proof_count: number;
-    access_count: number;
-    created_at: string;
-  }>(
-    `SELECT id, bank_id, content, metadata, fact_type, proof_count,
-            access_count, created_at
+  const [{ n }] = await ctx.db.query<{ n: number }>(
+    `SELECT count(*)::int AS n
        FROM ${table("memory_units")}
       WHERE company_id = $1 ${bankClause}
         AND fact_type IN ('summary', 'preference', 'style', 'rule')
@@ -909,101 +893,10 @@ async function runWikiPromotion(
         AND access_count >= ${WIKI_PROMOTION_MIN_ACCESS}
         AND proof_count >= ${WIKI_PROMOTION_MIN_PROOF}
         AND (metadata->>'promote')::boolean IS TRUE
-        AND metadata->>'wiki_promoted' IS NULL
-      ORDER BY access_count DESC, created_at ASC
-      LIMIT 20`,
+        AND metadata->>'wiki_promoted' IS NULL`,
     [companyId, ...bankArg],
   );
-  if (candidates.length === 0) return 0;
-  if (dryRun) return candidates.length;
-
-  let promoted = 0;
-  for (const row of candidates) {
-    const meta = (row.metadata ?? {}) as Record<string, unknown>;
-    const slug =
-      typeof meta.wiki_slug === "string" && meta.wiki_slug.trim()
-        ? slugify(meta.wiki_slug)
-        : slugify(row.content.slice(0, 60));
-    const bankSlug = slugify(row.bank_id).slice(0, 60);
-    const path = `wiki/entreprise/memory/${bankSlug}/${slug}.md`;
-    const frontmatter = [
-      "---",
-      `source: dream`,
-      `fact_type: ${row.fact_type}`,
-      `proof_count: ${row.proof_count}`,
-      `access_count: ${row.access_count}`,
-      `created_at: ${row.created_at}`,
-      `bank_id: "${row.bank_id}"`,
-      "---",
-      "",
-    ].join("\n");
-    const contents = frontmatter + row.content + "\n";
-
-    let success = false;
-    try {
-      success = await invokeWikiWritePage(ctx, companyId, path, contents, runContext);
-    } catch (err) {
-      ctx.logger.warn?.("wiki_write_page invocation failed", {
-        path,
-        err: err instanceof Error ? err.message : String(err),
-      });
-    }
-    if (!success) continue;
-
-    await ctx.db.execute(
-      `UPDATE ${table("memory_units")}
-          SET metadata = COALESCE(metadata, '{}'::jsonb)
-                          || jsonb_build_object(
-                               'wiki_promoted', now()::text,
-                               'wiki_path', $2::text
-                             )
-        WHERE id = $1`,
-      [row.id, path],
-    );
-    promoted++;
-  }
-  return promoted;
-}
-
-/** Invoke the llm-wiki plugin's wiki_write_page tool via /api/plugins/tools/execute. */
-async function invokeWikiWritePage(
-  ctx: PluginContext,
-  companyId: string,
-  path: string,
-  contents: string,
-  runContext: ToolRunContext,
-): Promise<boolean> {
-  const url = "http://127.0.0.1:3100/api/plugins/tools/execute";
-  const body = {
-    tool: `${LLM_WIKI_PLUGIN_ID}:wiki_write_page`,
-    parameters: {
-      companyId,
-      wikiId: "default",
-      path,
-      contents,
-      summary: "memory_dream Phase 4 promotion",
-    },
-    runContext: {
-      agentId: runContext.agentId,
-      runId: runContext.runId,
-      companyId: runContext.companyId ?? companyId,
-      projectId: runContext.projectId,
-    },
-  };
-  const resp = await fetchWithTimeout(ctx, url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Paperclip-User": "system",
-      "X-Paperclip-Admin": "1",
-    },
-    body: JSON.stringify(body),
-    timeoutMs: 15_000,
-  });
-  if (!resp.ok) {
-    ctx.logger.warn?.("wiki_write_page returned non-2xx", { path, status: resp.status });
-  }
-  return resp.ok;
+  return n;
 }
 
 // ---------------------------------------------------------------------------
