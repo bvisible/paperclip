@@ -492,6 +492,7 @@ export function registerMemoryTools(ctx: PluginContext): void {
         minClusterSize,
         useClaude,
         promoteToWiki,
+        runContext: runCtx,
       });
       return {
         content:
@@ -531,6 +532,8 @@ export interface DreamOpts {
   useClaude?: boolean;
   /** If true, run Phase 4 wiki promotion. Default true. */
   promoteToWiki?: boolean;
+  /** Caller's runContext — required to invoke the llm-wiki plugin in Phase 4. */
+  runContext?: ToolRunContext;
 }
 
 /**
@@ -733,7 +736,13 @@ export async function runDream(
   // propagated cross-instance. Failures here NEVER break the Dream.
   if (promoteToWiki) {
     try {
-      result.promoted = await runWikiPromotion(ctx, companyId, bankFilter, dryRun);
+      result.promoted = await runWikiPromotion(
+        ctx,
+        companyId,
+        bankFilter,
+        dryRun,
+        opts.runContext ?? null,
+      );
     } catch (err) {
       ctx.logger.warn?.("memory_dream Phase 4 (wiki promotion) failed", {
         err: err instanceof Error ? err.message : String(err),
@@ -872,7 +881,12 @@ async function runWikiPromotion(
   companyId: string,
   bankFilter: string | null,
   dryRun: boolean,
+  runContext: ToolRunContext | null,
 ): Promise<number> {
+  if (!runContext) {
+    ctx.logger.warn?.("Phase 4 skipped — no runContext to invoke llm-wiki");
+    return 0;
+  }
   const bankClause = bankFilter ? "AND bank_id = $2" : "";
   const bankArg = bankFilter ? [bankFilter] : [];
 
@@ -927,7 +941,7 @@ async function runWikiPromotion(
 
     let success = false;
     try {
-      success = await invokeWikiWritePage(ctx, companyId, path, contents);
+      success = await invokeWikiWritePage(ctx, companyId, path, contents, runContext);
     } catch (err) {
       ctx.logger.warn?.("wiki_write_page invocation failed", {
         path,
@@ -951,14 +965,31 @@ async function runWikiPromotion(
   return promoted;
 }
 
-/** POST to the plugin-llm-wiki write-page action. */
+/** Invoke the llm-wiki plugin's wiki_write_page tool via /api/plugins/tools/execute. */
 async function invokeWikiWritePage(
   ctx: PluginContext,
   companyId: string,
   path: string,
   contents: string,
+  runContext: ToolRunContext,
 ): Promise<boolean> {
-  const url = `http://127.0.0.1:3100/api/plugins/${LLM_WIKI_PLUGIN_ID}/actions/write-page`;
+  const url = "http://127.0.0.1:3100/api/plugins/tools/execute";
+  const body = {
+    tool: `${LLM_WIKI_PLUGIN_ID}:wiki_write_page`,
+    parameters: {
+      companyId,
+      wikiId: "default",
+      path,
+      contents,
+      summary: "memory_dream Phase 4 promotion",
+    },
+    runContext: {
+      agentId: runContext.agentId,
+      runId: runContext.runId,
+      companyId: runContext.companyId ?? companyId,
+      projectId: runContext.projectId,
+    },
+  };
   const resp = await fetchWithTimeout(ctx, url, {
     method: "POST",
     headers: {
@@ -966,9 +997,12 @@ async function invokeWikiWritePage(
       "X-Paperclip-User": "system",
       "X-Paperclip-Admin": "1",
     },
-    body: JSON.stringify({ companyId, path, contents, source: "memory_dream" }),
+    body: JSON.stringify(body),
     timeoutMs: 15_000,
   });
+  if (!resp.ok) {
+    ctx.logger.warn?.("wiki_write_page returned non-2xx", { path, status: resp.status });
+  }
   return resp.ok;
 }
 
