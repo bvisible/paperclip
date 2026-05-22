@@ -39,6 +39,12 @@ import { frappeOutstandingPayables } from "./analytics/outstanding-payables.js";
 import { frappeEmailDraft } from "./email/email-draft.js";
 import { frappeEmailConfirm } from "./email/email-confirm.js";
 
+// Webmail — inbox reading (4) — for the `webmail` agent (incoming-mail triage)
+import { noraEmailList } from "./email/email-list.js";
+import { noraEmailGet } from "./email/email-get.js";
+import { noraEmailSearch } from "./email/email-search.js";
+import { noraEmailDownloadAttachment } from "./email/email-download-attachment.js";
+
 // Scheduling — Wave 2 (5)
 import { frappeReminderCreate } from "./scheduling/reminder-create.js";
 import { frappeAutomationList } from "./scheduling/automation-list.js";
@@ -159,6 +165,11 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
   // Wave 2 email
   frappeEmailDraft,
   frappeEmailConfirm,
+  // Webmail — inbox reading (4)
+  noraEmailList,
+  noraEmailGet,
+  noraEmailSearch,
+  noraEmailDownloadAttachment,
   // Wave 2 scheduling
   frappeReminderCreate,
   frappeAutomationList,
