@@ -5938,7 +5938,39 @@ export function issueRoutes(
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
       const assigneeId = currentIssue.assigneeAgentId;
       const actorIsAgent = actor.actorType === "agent";
-      const selfComment = actorIsAgent && actor.actorId === assigneeId;
+      //// Neoffice Modification: selfcomment-via-run-agent
+      //// Why: the NORA agent runner posts the agent's OWN reply as an issue
+      ////      comment, but authenticates with a runtime key that Paperclip
+      ////      resolves as a NON-agent actor (actor.type !== "agent",
+      ////      actor.agentId === null — visible as authorAgentId null on
+      ////      agent comments). The upstream self-comment check
+      ////      `actorIsAgent && actor.actorId === assigneeId` therefore
+      ////      NEVER matches for a runner-posted comment, so every agent
+      ////      reply fires an `issue_commented` wakeup of the assignee → the
+      ////      agent re-wakes on its own comment → infinite answer-loop
+      ////      (observed 6+ runs/issue; on busy instances 99% of all runs;
+      ////      also the root of the deferred-promotion loop that needed the
+      ////      `cap-promotion-loop` band-aid). Fix: when the comment carries
+      ////      a runId, resolve the agent that owns that run; if it is the
+      ////      assignee, it is a self-comment — skip the wakeup. A comment
+      ////      from another agent's run still wakes the assignee
+      ////      (coordination preserved); a human comment (no runId) still
+      ////      wakes it.
+      //// Date: 2026-05-22
+      //// Refs: NORA — call-tool answer-loop root cause
+      let commentRunAgentId: string | null = actor.agentId;
+      if (!commentRunAgentId && actor.runId) {
+        try {
+          const ownRun = await heartbeat.getRun(actor.runId);
+          commentRunAgentId = ownRun?.agentId ?? null;
+        } catch {
+          // non-fatal: fall back to the upstream actorId check below
+        }
+      }
+      const selfComment =
+        (actorIsAgent && actor.actorId === assigneeId) ||
+        (commentRunAgentId != null && commentRunAgentId === assigneeId);
+      //// End Neoffice Modification: selfcomment-via-run-agent
       const skipWake = selfComment || isClosed;
       if (assigneeId && (reopened || !skipWake)) {
         if (reopened) {
