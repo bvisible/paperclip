@@ -30,6 +30,13 @@ export interface AuthUrlParams {
   state: string;
   /** Optional: override scopes. */
   scopes?: string[];
+  //// Neocompany Modification — Facebook Login for Business config id.
+  //// When set, the Meta providers (facebook/instagram) drive the OAuth
+  //// dialog with `config_id=<id>` instead of a raw `scope` list — the
+  //// permissions are defined by the configuration in the Meta app.
+  //// Ignored by providers that don't use Login for Business (LinkedIn).
+  //// End Neocompany Modification
+  configId?: string;
 }
 
 export interface AuthUrl {

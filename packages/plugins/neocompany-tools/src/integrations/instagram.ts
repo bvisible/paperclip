@@ -65,13 +65,21 @@ export const instagram: SocialProvider = {
   scopes: DEFAULT_SCOPES,
   recommendedFeedDimensions: { width: 1080, height: 1080 },
 
-  buildAuthUrl({ clientId, redirectUri, state, scopes }: AuthUrlParams): AuthUrl {
+  //// Neocompany Modification — Facebook Login for Business support.
+  //// Instagram shares the "NeoCompany Social" Meta app, which uses
+  //// Facebook Login for Business: the OAuth dialog is driven by a
+  //// `config_id` rather than a raw `scope` list. Falls back to `scope`
+  //// when no `configId` is set. See facebook.ts for the rationale.
+  //// End Neocompany Modification
+  buildAuthUrl({ clientId, redirectUri, state, scopes, configId }: AuthUrlParams): AuthUrl {
     const qs = buildQuery({
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
       state,
-      scope: (scopes ?? DEFAULT_SCOPES).join(","),
+      ...(configId
+        ? { config_id: configId }
+        : { scope: (scopes ?? DEFAULT_SCOPES).join(",") }),
     });
     return { url: `${FB_AUTH_URL}?${qs}` };
   },

@@ -186,6 +186,14 @@ const manifest: PaperclipPluginManifestV1 = {
         description: "Secret reference to the Meta app secret.",
         format: "secret-ref",
       },
+      //// Neocompany Modification — Facebook Login for Business config id.
+      facebookConfigId: {
+        type: "string",
+        title: "Facebook Login for Business — Configuration ID",
+        description: "Config ID from the Meta app's Facebook Login for Business → Configurations. Drives the OAuth dialog (permissions are defined by the configuration, not a raw scope list). Shared by the Facebook + Instagram connectors.",
+        default: "",
+      },
+      //// End Neocompany Modification
     },
   },
 

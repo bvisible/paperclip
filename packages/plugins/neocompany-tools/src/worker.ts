@@ -65,6 +65,14 @@ interface PlatformConfig {
   linkedinClientSecretRef?: string;
   facebookAppId?: string;
   facebookAppSecretRef?: string;
+  //// Neocompany Modification — Facebook Login for Business config id.
+  //// The modern Meta app model ("Facebook Login for Business") drives the
+  //// OAuth dialog with a `config_id` (which encodes the requested
+  //// permissions + asset types) instead of a raw `scope` list. Shared by
+  //// the facebook + instagram providers (same Meta app). See the app
+  //// "NeoCompany Social" → Facebook Login for Business → Configurations.
+  //// End Neocompany Modification
+  facebookConfigId?: string;
 }
 
 /**
@@ -1092,11 +1100,18 @@ const plugin = definePlugin({
       }
       const redirectUri = `${publicUrl.replace(/\/+$/, "")}${oauthCallbackPath}`;
 
+      //// Neocompany Modification — pass the Facebook Login for Business
+      //// config id for the Meta providers. LinkedIn ignores `configId`.
+      //// End Neocompany Modification
+      const configId = (provider === "facebook" || provider === "instagram")
+        ? platform.facebookConfigId
+        : undefined;
       const state = randomState();
       const auth = providerImpl.buildAuthUrl({
         clientId,
         redirectUri,
         state,
+        configId,
       });
 
       const returnTo = (params.returnTo as string | undefined) ?? `/content/channels?connected=${provider}`;

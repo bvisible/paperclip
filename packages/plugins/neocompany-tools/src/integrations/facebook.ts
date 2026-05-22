@@ -64,13 +64,23 @@ export const facebook: SocialProvider = {
   scopes: DEFAULT_SCOPES,
   recommendedFeedDimensions: { width: 1200, height: 630 },
 
-  buildAuthUrl({ clientId, redirectUri, state, scopes }: AuthUrlParams): AuthUrl {
+  //// Neocompany Modification — Facebook Login for Business support.
+  //// The "NeoCompany Social" Meta app uses Facebook Login for Business,
+  //// which drives the OAuth dialog with a `config_id` instead of a raw
+  //// `scope` list (the configuration defines the permissions + asset
+  //// types). When `configId` is provided we omit `scope` entirely.
+  //// Falls back to the classic `scope` flow when no `configId` is set,
+  //// so a plain "Facebook Login" app keeps working.
+  //// End Neocompany Modification
+  buildAuthUrl({ clientId, redirectUri, state, scopes, configId }: AuthUrlParams): AuthUrl {
     const qs = buildQuery({
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
       state,
-      scope: (scopes ?? DEFAULT_SCOPES).join(","),
+      ...(configId
+        ? { config_id: configId }
+        : { scope: (scopes ?? DEFAULT_SCOPES).join(",") }),
     });
     return { url: `${FB_AUTH_URL}?${qs}` };
   },
