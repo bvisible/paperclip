@@ -4683,6 +4683,52 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       return { outcome: "satisfied" as const, queuedRun: null };
     }
 
+    //// Neoffice Modification: comment-backstop-skip-on-reassign
+    //// Why: Sprint Q.17 — NORA's `main` agent routes a request by
+    ////      REASSIGNING the issue to a specialist (PATCH assigneeAgentId)
+    ////      mid-run, then ends WITHOUT posting a comment — by design, the
+    ////      specialist answers. But main's run was woken by
+    ////      `issue_assigned`, so this comment backstop demands a comment
+    ////      and queues a `missing_issue_comment` retry run for main; that
+    ////      retry steals the issue's executionRunId, which makes
+    ////      releaseIssueExecutionAndPromote() bail — so the specialist's
+    ////      `deferred_issue_execution` wake is NEVER promoted and the
+    ////      specialist never starts (issue stuck in_progress forever).
+    ////      A run whose issue is no longer assigned to it has handed the
+    ////      work over: it owes no comment. Waive the requirement.
+    //// Date: 2026-05-22
+    //// Refs: NORA Sprint Q.17 — main-centric routing
+    {
+      const reassignCheck = await db
+        .select({ assigneeAgentId: issues.assigneeAgentId })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.companyId, run.companyId)))
+        .then((rows) => rows[0] ?? null);
+      if (
+        reassignCheck
+        && reassignCheck.assigneeAgentId
+        && reassignCheck.assigneeAgentId !== run.agentId
+      ) {
+        if (run.issueCommentStatus !== "not_applicable") {
+          await patchRunIssueCommentStatus(run.id, {
+            issueCommentStatus: "not_applicable",
+            issueCommentSatisfiedByCommentId: null,
+            issueCommentRetryQueuedAt: null,
+          });
+        }
+        await appendRunEvent(run, await nextRunEventSeq(run.id), {
+          eventType: "lifecycle",
+          stream: "system",
+          level: "info",
+          message:
+            "Run ended without a comment but the issue was reassigned to "
+            + "another agent (delegation) — comment requirement waived",
+        });
+        return { outcome: "not_applicable" as const, queuedRun: null };
+      }
+    }
+    //// End Neoffice Modification: comment-backstop-skip-on-reassign
+
     if (readNonEmptyString(contextSnapshot.retryReason) === "missing_issue_comment") {
       await patchRunIssueCommentStatus(run.id, {
         issueCommentStatus: "retry_exhausted",
