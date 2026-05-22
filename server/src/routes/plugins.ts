@@ -73,10 +73,6 @@ import {
   requireLocalFolderDeclaration,
   setStoredLocalFolder,
 } from "../services/plugin-local-folders.js";
-import {
-  extractSecretRefPathsFromConfig,
-  PLUGIN_SECRET_REFS_DISABLED_MESSAGE,
-} from "../services/plugin-secrets-handler.js";
 import { badRequest, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 
 /** UI slot declaration extracted from plugin manifest */
@@ -1953,12 +1949,16 @@ export function pluginRoutes(
     }
 
     try {
-      const secretRefsByPath = extractSecretRefPathsFromConfig(body.configJson, schema);
-      if (secretRefsByPath.size > 0) {
-        res.status(422).json({ error: PLUGIN_SECRET_REFS_DISABLED_MESSAGE });
-        return;
-      }
-
+      //// Neoffice Modification: re-enable plugin secret references
+      //// Why: the upstream secrets-vault merge (PR #5429) gated plugin
+      //// secret refs off ("disabled until company-scoped plugin config
+      //// lands"), which broke paperclip-plugin-whatsapp — its 4 tokens
+      //// are company-secret refs (webhookSecretRef etc.), so every
+      //// inbound WhatsApp webhook failed X-Relay-Token auth → 502. The
+      //// resolver is already re-enabled (company-scoped resolution in
+      //// plugin-secrets-handler.ts); this lifts the matching config-write
+      //// guard so a config carrying secret refs can be saved again.
+      //// Refs: NORA — WhatsApp router resync 2026-05-22
       const result = await registry.upsertConfig(plugin.id, {
         configJson: body.configJson,
       });
