@@ -508,7 +508,7 @@ const DEFAULT_AGENT_TOOL_ALLOWLIST: Record<string, ReadonlySet<string>> = {
     "nora-frappe-tools:noraDriveUpload",
     "nora-frappe-tools:noraWorkItemComplete",
   ]),
-  "webmail-v15": new Set<string>([
+  "redacteur-v15": new Set<string>([
     "nora-frappe-tools:frappeDocumentCount",
     "nora-frappe-tools:frappeDocumentList",
     "nora-frappe-tools:frappeDocumentGet",
