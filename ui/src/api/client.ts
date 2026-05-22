@@ -26,8 +26,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => null);
+    //// Neocompany Modification — also surface the plugin bridge error shape.
+    //// Plugin bridge failures return `PluginBridgeError` = { code, message },
+    //// not the classic { error } shape. Without reading `message` the UI
+    //// only ever showed a useless "Request failed: 502" toast and hid the
+    //// real worker error (e.g. "instagram is not configured").
+    //// End Neocompany Modification
+    const eb = errorBody as { error?: string; message?: string } | null;
     throw new ApiError(
-      (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
+      eb?.error ?? eb?.message ?? `Request failed: ${res.status}`,
       res.status,
       errorBody,
     );
