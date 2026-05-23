@@ -6,7 +6,6 @@ const InputSchema = z.object({
   uid: z.string().min(1),
   account: z.string().optional(),
   folder: z.string().optional(),
-  mark_read: z.boolean().optional(),
 });
 
 interface InboxEmailResponse {
@@ -14,6 +13,8 @@ interface InboxEmailResponse {
   subject?: string;
   from_email?: string;
   attachments?: unknown[];
+  nora_seen?: boolean;
+  seen?: boolean;
   error?: string;
 }
 
@@ -24,8 +25,10 @@ export const noraEmailGet: RegisteredToolEntry = {
     description:
       "LECTURE de la boîte de réception : récupère le contenu COMPLET d'un " +
       "email REÇU (corps texte/HTML, destinataires, pièces jointes) par son uid " +
-      "obtenu via noraEmailList. Ne marque PAS l'email comme lu par défaut " +
-      "(mark_read=false) — une relève ne doit pas toucher l'état de la boîte.",
+      "obtenu via noraEmailList. **Ne touche JAMAIS au statut « lu humain » " +
+      "(\\Seen IMAP)** — l'utilisateur garde ses emails comme « non lu » dans " +
+      "son client mail même après que NORA les a consultés. Pour marquer un " +
+      "email comme « traité par NORA », appelle noraEmailMarkNoraSeen.",
     parametersSchema: {
       type: "object",
       properties: {
@@ -35,10 +38,6 @@ export const noraEmailGet: RegisteredToolEntry = {
           description: "Nom du compte Webmail (optionnel — compte par défaut sinon).",
         },
         folder: { type: "string", description: "Dossier de la boîte (défaut INBOX)." },
-        mark_read: {
-          type: "boolean",
-          description: "Marquer l'email comme lu (défaut false). Laisser false pour une relève.",
-        },
       },
       required: ["uid"],
     },
@@ -50,7 +49,6 @@ export const noraEmailGet: RegisteredToolEntry = {
     const body: Record<string, unknown> = { uid: input.uid };
     if (input.account) body.account = input.account;
     if (input.folder) body.folder = input.folder;
-    if (input.mark_read !== undefined) body.mark_read = input.mark_read;
 
     const res = await frappeFetch<InboxEmailResponse | string>(
       config,
