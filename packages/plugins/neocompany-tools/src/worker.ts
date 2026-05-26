@@ -272,32 +272,75 @@ function makeCtxAccess(ctx: PluginContext): ToolContextAccess {
 
     async getEmailSendConfig(companyId: string, agentId: string) {
       const platform = await readPlatformConfig(ctx);
-      if (!platform.resendApiKeyRef) throw new Error("Resend API key is not configured");
-      const apiKey = await ctx.secrets.resolve(platform.resendApiKeyRef);
 
-      // Prefer the agent's own email identity if set on metadata,
-      // fall back to the platform default From address.
-      let defaultFrom = platform.resendDefaultFrom ?? platform.defaultFromAddress ?? "";
+      // Resolve the agent's email identity (address + display name). The
+      // fromName falls back to agent.name so renaming the agent (Atlas →
+      // Melvin) propagates to the From header without re-editing the identity.
+      let fromName: string | undefined;
+      let identityAddress: string | undefined;
       try {
         const agent = await ctx.agents.get(agentId, companyId);
         const metadata = (agent?.metadata ?? {}) as Record<string, unknown>;
         const identity = metadata.emailIdentity as { address?: string; fromName?: string } | undefined;
         if (identity?.address) {
-          //// Neocompany Modification — fallback fromName on agent.name so
-          //// renaming the agent (Atlas → Melvin) propagates to the From
-          //// header without re-editing emailIdentity.
-          //// End Neocompany Modification
-          const fromName = identity.fromName ?? agent?.name;
-          defaultFrom = fromName
-            ? `${fromName} <${identity.address}>`
-            : identity.address;
+          identityAddress = identity.address;
+          fromName = identity.fromName ?? agent?.name ?? undefined;
         }
       } catch {
         // Agent lookup failure falls back to the instance default
       }
 
+      const platformFrom = platform.resendDefaultFrom ?? platform.defaultFromAddress ?? "";
+      const platformBare = platformFrom.replace(/^.*<([^>]+)>.*$/, "$1").trim();
+      const desiredAddress = identityAddress ?? platformBare;
+      const fmt = (addr: string) => (fromName ? `${fromName} <${addr}>` : addr);
+
+      //// Neocompany Modification — SMTP-first transport selection.
+      //// If an email_account with `smtpHost` exists for the From address
+      //// (or, as a company fallback, any account that can send) we send
+      //// through that mailbox's own SMTP server — required for our own boxes
+      //// (e.g. Infomaniak) whose domain isn't verified with Resend. SMTP can
+      //// only authenticate the mailbox's own address, so the From address is
+      //// pinned to the account address (display name preserved). Otherwise
+      //// fall back to the platform Resend config.
+      //// End Neocompany Modification
+      try {
+        const accounts = await ctx.entities.list({
+          entityType: "email_account",
+          scopeKind: "company",
+          scopeId: companyId,
+          limit: 200,
+        });
+        const acct =
+          accounts.find((a) => {
+            const d = a.data as unknown as EmailAccountData | undefined;
+            return Boolean(d?.smtpHost) && d?.address === desiredAddress;
+          }) ?? accounts.find((a) => Boolean((a.data as unknown as EmailAccountData | undefined)?.smtpHost));
+        const data = acct?.data as unknown as EmailAccountData | undefined;
+        if (data?.smtpHost && data.imapPassRef) {
+          const password = await ctx.secrets.resolve(data.imapPassRef);
+          return {
+            provider: "smtp" as const,
+            smtp: {
+              host: data.smtpHost,
+              port: data.smtpPort ?? 465,
+              user: data.imapUser || data.address,
+              password,
+            },
+            defaultFrom: fmt(data.address),
+          };
+        }
+      } catch {
+        // Account lookup / secret resolution failed → fall back to Resend.
+      }
+
+      const defaultFrom = identityAddress ? fmt(identityAddress) : platformFrom;
       if (!defaultFrom) throw new Error("No email identity configured for this agent");
-      return { provider: "resend", apiKey, defaultFrom };
+      if (!platform.resendApiKeyRef) {
+        throw new Error("No SMTP-capable email account configured and Resend API key is missing");
+      }
+      const apiKey = await ctx.secrets.resolve(platform.resendApiKeyRef);
+      return { provider: "resend" as const, apiKey, defaultFrom };
     },
 
     //// Neocompany Modification — Resolve + interpolate the signature HTML.
@@ -1953,6 +1996,10 @@ const plugin = definePlugin({
         imapPort: Number(params.imapPort ?? 993),
         imapUser: (params.imapUser as string | undefined) ?? address,
         imapPassRef: (params.imapPassRef as string | undefined) ?? "",
+        //// Neocompany Modification — optional outbound SMTP (see email/types.ts).
+        smtpHost: (params.smtpHost as string | undefined) ?? undefined,
+        smtpPort: params.smtpPort !== undefined ? Number(params.smtpPort) : undefined,
+        //// End Neocompany Modification
         pollingEnabled: Boolean(params.pollingEnabled ?? false),
         pollIntervalMin: Number(params.pollIntervalMin ?? 5),
         allowedAgents: Array.isArray(params.allowedAgents)

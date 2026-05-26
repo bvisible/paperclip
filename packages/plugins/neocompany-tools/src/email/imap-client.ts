@@ -63,7 +63,16 @@ export async function pollImapAccount(input: ImapPollInput): Promise<ImapPollRes
       const maxMessages = input.maxMessages ?? 100;
       let processed = 0;
 
-      for await (const msg of client.fetch(range, { uid: true, envelope: true, source: true })) {
+      //// Neocompany Modification — UID-range fetch fix.
+      //// `lastSeenUid` is a UID, so the `${lastSeenUid+1}:*` range must be
+      //// interpreted as a UID range. imapflow only does that when `uid:true`
+      //// is in the *options* (3rd arg); passing it in the query (2nd arg)
+      //// merely echoes the UID back while still fetching by sequence number,
+      //// which throws "Invalid messageset" once lastSeenUid exceeds the
+      //// message count (incremental polls were broken — only the first
+      //// lastSeenUid=0 → "1:*" poll worked).
+      //// End Neocompany Modification
+      for await (const msg of client.fetch(range, { uid: true, envelope: true, source: true }, { uid: true })) {
         if (processed >= maxMessages) break;
         if (typeof msg.uid !== "number") continue;
 

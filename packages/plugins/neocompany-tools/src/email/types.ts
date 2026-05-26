@@ -16,6 +16,17 @@ export interface EmailAccountData {
   imapUser: string;
   /** Secret reference for the IMAP password / app password. */
   imapPassRef: string;
+  //// Neocompany Modification — outbound SMTP.
+  //// When `smtpHost` is set this account can SEND, via the dependency-free
+  //// implicit-TLS client in `email/smtp.ts`, reusing `imapUser` +
+  //// `imapPassRef` for authentication (true for Infomaniak and most
+  //// providers where IMAP and SMTP credentials are identical). When unset,
+  //// the send path falls back to the platform-wide Resend config.
+  //// End Neocompany Modification
+  /** SMTP host for outbound mail (e.g. mail.infomaniak.com). Enables sending. */
+  smtpHost?: string;
+  /** SMTP port — implicit TLS only (465). Defaults to 465 when omitted. */
+  smtpPort?: number;
   /** Whether IMAP polling is enabled for this account. */
   pollingEnabled: boolean;
   /** Cron-style poll interval in minutes (default 5). */
