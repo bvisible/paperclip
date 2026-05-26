@@ -575,35 +575,81 @@ function createPlatformConfigRoutes(db: Db): Router {
         };
 
         // 3. fetch pages (and linked IG accounts) owned by the user
+        type FbPageNode = {
+          id: string;
+          name: string;
+          access_token?: string;
+          category?: string;
+          instagram_business_account?: { id: string; username?: string };
+        };
         const fields = pending.provider === "instagram"
           ? "id,name,access_token,instagram_business_account{id,username}"
           : "id,name,access_token,category";
         const pagesUrl = `${GRAPH_BASE}/me/accounts?fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`;
-        const pagesRes = await fetchJson<{
-          data: Array<{
-            id: string;
-            name: string;
-            access_token: string;
-            category?: string;
-            instagram_business_account?: { id: string; username?: string };
-          }>;
-        }>(pagesUrl);
+        const pagesRes = await fetchJson<{ data: FbPageNode[] }>(pagesUrl);
+        let pageNodes: FbPageNode[] = pagesRes.data ?? [];
+        console.log(`[neocompany-oauth] /me/accounts returned ${pageNodes.length} page(s)`);
+
+        // Fallback: /me/accounts omits "new Pages experience" pages granted via
+        // Facebook Login for Business. Discover them through the user's business
+        // portfolios, then resolve a Page access token per discovered page.
+        if (pageNodes.length === 0) {
+          const discovered = new Map<string, { id: string; name?: string }>();
+          try {
+            const bizRes = await fetchJson<{ data: Array<{ id: string; name?: string }> }>(
+              `${GRAPH_BASE}/me/businesses?fields=id,name&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`,
+            );
+            console.log(`[neocompany-oauth] /me/businesses returned ${bizRes.data?.length ?? 0} business(es)`);
+            for (const biz of bizRes.data ?? []) {
+              for (const edge of ["owned_pages", "client_pages"] as const) {
+                try {
+                  const edgeRes = await fetchJson<{ data: Array<{ id: string; name?: string }> }>(
+                    `${GRAPH_BASE}/${biz.id}/${edge}?fields=id,name&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`,
+                  );
+                  for (const p of edgeRes.data ?? []) discovered.set(p.id, p);
+                  console.log(`[neocompany-oauth] biz ${biz.id} ${edge}: ${edgeRes.data?.length ?? 0} page(s)`);
+                } catch (e) {
+                  console.log(`[neocompany-oauth] biz ${biz.id} ${edge} failed: ${String(e)}`);
+                }
+              }
+            }
+          } catch (e) {
+            console.log(`[neocompany-oauth] /me/businesses failed: ${String(e)}`);
+          }
+          // Resolve a Page access token (+ IG link) for each discovered page.
+          const resolved: FbPageNode[] = [];
+          for (const p of discovered.values()) {
+            try {
+              const node = await fetchJson<FbPageNode>(
+                `${GRAPH_BASE}/${p.id}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(auth.accessToken)}`,
+              );
+              if (node?.access_token) resolved.push(node);
+              else console.log(`[neocompany-oauth] page ${p.id} returned no access_token`);
+            } catch (e) {
+              console.log(`[neocompany-oauth] page ${p.id} resolve failed: ${String(e)}`);
+            }
+          }
+          pageNodes = resolved;
+          console.log(`[neocompany-oauth] business fallback resolved ${resolved.length} page(s) with tokens`);
+        }
 
         if (pending.provider === "facebook") {
-          accounts = pagesRes.data.map((p) => ({
-            accountId: p.id,
-            accountName: p.name,
-            accessToken: p.access_token,
-          }));
+          accounts = pageNodes
+            .filter((p) => p.access_token)
+            .map((p) => ({
+              accountId: p.id,
+              accountName: p.name,
+              accessToken: p.access_token!,
+            }));
         } else {
-          accounts = pagesRes.data
-            .filter((p) => p.instagram_business_account?.id)
+          accounts = pageNodes
+            .filter((p) => p.instagram_business_account?.id && p.access_token)
             .map((p) => ({
               accountId: p.instagram_business_account!.id,
               accountName: p.instagram_business_account!.username
                 ? `@${p.instagram_business_account!.username}`
                 : p.name,
-              accessToken: p.access_token,
+              accessToken: p.access_token!,
             }));
         }
 
