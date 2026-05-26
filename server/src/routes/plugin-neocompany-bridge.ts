@@ -594,43 +594,62 @@ function createPlatformConfigRoutes(db: Db): Router {
         // Facebook Login for Business. Discover them through the user's business
         // portfolios, then resolve a Page access token per discovered page.
         if (pageNodes.length === 0) {
-          const discovered = new Map<string, { id: string; name?: string }>();
+          // Recover the granted Page IDs from the token's granular_scopes via
+          // debug_token (works with only pages_show_list), plus a business-
+          // portfolio fallback (needs business_management; ignored otherwise).
+          const pageIds = new Set<string>();
           try {
-            const bizRes = await fetchJson<{ data: Array<{ id: string; name?: string }> }>(
-              `${GRAPH_BASE}/me/businesses?fields=id,name&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`,
+            const dbg = await fetchJson<{
+              data?: { granular_scopes?: Array<{ scope: string; target_ids?: string[] }> };
+            }>(
+              `${GRAPH_BASE}/debug_token?input_token=${encodeURIComponent(auth.accessToken)}&access_token=${encodeURIComponent(`${clientId}|${clientSecret}`)}`,
             );
-            console.log(`[neocompany-oauth] /me/businesses returned ${bizRes.data?.length ?? 0} business(es)`);
+            const gs = dbg.data?.granular_scopes ?? [];
+            console.log(
+              `[neocompany-oauth] granular_scopes: ${JSON.stringify(gs.map((s) => ({ scope: s.scope, n: s.target_ids?.length ?? 0 })))}`,
+            );
+            for (const s of gs) {
+              if (s.scope.startsWith("pages_") || s.scope.startsWith("instagram_")) {
+                for (const id of s.target_ids ?? []) pageIds.add(id);
+              }
+            }
+          } catch (e) {
+            console.log(`[neocompany-oauth] debug_token failed: ${String(e)}`);
+          }
+          try {
+            const bizRes = await fetchJson<{ data: Array<{ id: string }> }>(
+              `${GRAPH_BASE}/me/businesses?fields=id&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`,
+            );
             for (const biz of bizRes.data ?? []) {
               for (const edge of ["owned_pages", "client_pages"] as const) {
                 try {
-                  const edgeRes = await fetchJson<{ data: Array<{ id: string; name?: string }> }>(
-                    `${GRAPH_BASE}/${biz.id}/${edge}?fields=id,name&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`,
+                  const edgeRes = await fetchJson<{ data: Array<{ id: string }> }>(
+                    `${GRAPH_BASE}/${biz.id}/${edge}?fields=id&limit=100&access_token=${encodeURIComponent(auth.accessToken)}`,
                   );
-                  for (const p of edgeRes.data ?? []) discovered.set(p.id, p);
-                  console.log(`[neocompany-oauth] biz ${biz.id} ${edge}: ${edgeRes.data?.length ?? 0} page(s)`);
-                } catch (e) {
-                  console.log(`[neocompany-oauth] biz ${biz.id} ${edge} failed: ${String(e)}`);
+                  for (const p of edgeRes.data ?? []) pageIds.add(p.id);
+                } catch {
+                  /* edge unavailable for this business */
                 }
               }
             }
           } catch (e) {
-            console.log(`[neocompany-oauth] /me/businesses failed: ${String(e)}`);
+            console.log(`[neocompany-oauth] /me/businesses unavailable: ${String(e)}`);
           }
           // Resolve a Page access token (+ IG link) for each discovered page.
           const resolved: FbPageNode[] = [];
-          for (const p of discovered.values()) {
+          for (const id of pageIds) {
             try {
               const node = await fetchJson<FbPageNode>(
-                `${GRAPH_BASE}/${p.id}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(auth.accessToken)}`,
+                `${GRAPH_BASE}/${id}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(auth.accessToken)}`,
               );
               if (node?.access_token) resolved.push(node);
-              else console.log(`[neocompany-oauth] page ${p.id} returned no access_token`);
+              else console.log(`[neocompany-oauth] page ${id} returned no access_token`);
             } catch (e) {
-              console.log(`[neocompany-oauth] page ${p.id} resolve failed: ${String(e)}`);
+              console.log(`[neocompany-oauth] page ${id} resolve failed: ${String(e)}`);
             }
           }
           pageNodes = resolved;
-          console.log(`[neocompany-oauth] business fallback resolved ${resolved.length} page(s) with tokens`);
+          console.log(`[neocompany-oauth] fallback discovered ${pageIds.size} id(s), resolved ${resolved.length} page(s)`);
         }
 
         if (pending.provider === "facebook") {
