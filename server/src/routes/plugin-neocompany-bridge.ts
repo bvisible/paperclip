@@ -544,6 +544,78 @@ function createPlatformConfigRoutes(db: Db): Router {
             iconUrl: info.picture,
           },
         ];
+
+        //// Neocompany Modification: linkedin-page-posting
+        // Fetch admin'd Company Pages and emit one channel account per Page
+        // alongside the personal-feed account above. Requires scopes
+        // r_organization_admin + w_organization_social (see DEFAULT_SCOPES in
+        // packages/plugins/neocompany-tools/src/integrations/linkedin.ts).
+        // The plugin's `publish` method is URN-agnostic — accountId is used
+        // verbatim as the UGC post's `author`, so a Page URN
+        // (urn:li:organization:<id>) works the same way as a person URN.
+        try {
+          interface LinkedInOrgAcl {
+            organization?: string;
+            role?: string;
+            state?: string;
+          }
+          const aclsRes = await fetchJson<{ elements?: LinkedInOrgAcl[] }>(
+            `https://api.linkedin.com/rest/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED`,
+            {
+              headers: {
+                Authorization: `Bearer ${auth.accessToken}`,
+                "X-Restli-Protocol-Version": "2.0.0",
+                "LinkedIn-Version": "202605",
+              },
+            },
+          );
+          const orgUrns = (aclsRes.elements ?? [])
+            .map((el) => el.organization)
+            .filter(
+              (u): u is string =>
+                typeof u === "string" && u.startsWith("urn:li:organization:"),
+            );
+          console.log(
+            `[neocompany-oauth] linkedin organizationAcls: ${orgUrns.length} page(s)`,
+          );
+          for (const orgUrn of orgUrns) {
+            const orgId = orgUrn.replace("urn:li:organization:", "");
+            try {
+              const org = await fetchJson<{
+                vanityName?: string;
+                localizedName?: string;
+                name?: { localized?: Record<string, string> };
+              }>(
+                `https://api.linkedin.com/rest/organizations/${encodeURIComponent(orgId)}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${auth.accessToken}`,
+                    "X-Restli-Protocol-Version": "2.0.0",
+                    "LinkedIn-Version": "202605",
+                  },
+                },
+              );
+              const name =
+                org.localizedName ||
+                (org.name?.localized && Object.values(org.name.localized)[0]) ||
+                org.vanityName ||
+                `Page ${orgId}`;
+              accounts.push({
+                accountId: orgUrn,
+                accountName: name,
+              });
+            } catch (e) {
+              console.log(
+                `[neocompany-oauth] linkedin org ${orgId} fetch failed: ${String(e)}`,
+              );
+            }
+          }
+        } catch (e) {
+          console.log(
+            `[neocompany-oauth] linkedin organizationAcls failed: ${String(e)}`,
+          );
+        }
+        // End Neocompany Modification: linkedin-page-posting
       } else if (pending.provider === "facebook" || pending.provider === "instagram") {
         const GRAPH_V = "v23.0";
         const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_V}`;

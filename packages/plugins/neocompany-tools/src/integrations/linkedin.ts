@@ -32,7 +32,25 @@ const LINKEDIN_UGC_POSTS_URL = "https://api.linkedin.com/v2/ugcPosts";
 const LINKEDIN_ASSETS_REGISTER_URL =
   "https://api.linkedin.com/v2/assets?action=registerUpload";
 
-const DEFAULT_SCOPES = ["openid", "profile", "email", "w_member_social"];
+//// Neocompany Modification: linkedin-page-posting
+// Why: ship Page posting alongside personal feed posting. The bridge OAuth
+// callback (server/src/routes/plugin-neocompany-bridge.ts) now also fetches
+// the member's admin'd Pages via /rest/organizationAcls and emits one
+// channel account per Page (author URN = urn:li:organization:<id>) in
+// addition to the personal account (urn:li:person:<sub>). Two extra scopes
+// are required for that: r_organization_admin (list admin Pages) and
+// w_organization_social (publish/comment/like as the organization).
+// All five scopes are standard tier — no Marketing Developer Platform
+// approval is required.
+// End Neocompany Modification: linkedin-page-posting
+const DEFAULT_SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "w_member_social",
+  "r_organization_admin",
+  "w_organization_social",
+];
 
 interface LinkedInTokenResponse {
   access_token: string;
