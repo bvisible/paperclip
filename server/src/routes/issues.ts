@@ -3709,6 +3709,97 @@ export function issueRoutes(
     });
   });
 
+  //// Neocompany Modification — dedicated delegation endpoint for the main
+  //// coordinator (Nora). The chat agent runs on the `hermes_local` adapter,
+  //// which only exposes Hermes' native tools (terminal, write_file, …) — it
+  //// CANNOT call Paperclip plugin tools. So Nora delegates by calling this
+  //// endpoint via `terminal`+curl. Passing a ROLE (a fixed vocabulary she
+  //// knows from her routing table) instead of an agent id removes the
+  //// failure mode where the model picks the wrong assignee id from a list
+  //// (observed: it assigned the task to itself). The server resolves the
+  //// role → specialist agent and creates the issue assigned to them with a
+  //// guaranteed `status=todo`, so the assignment wakeup always fires.
+  router.post("/companies/:companyId/issues/delegate", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const specialist = typeof body.specialist === "string" ? body.specialist.trim().toLowerCase() : "";
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    const request = typeof body.request === "string" ? body.request.trim() : "";
+    if (!specialist) { res.status(400).json({ error: "`specialist` (role) is required" }); return; }
+    if (!title) { res.status(400).json({ error: "`title` is required" }); return; }
+    if (!request) { res.status(400).json({ error: "`request` is required" }); return; }
+
+    const actor = getActorInfo(req);
+
+    // Resolve the calling agent + the target specialist within this company.
+    const agents = await agentsSvc.list(companyId);
+    if (actor.agentId) {
+      const caller = agents.find((a) => a.id === actor.agentId);
+      if (caller && String(caller.role).toLowerCase() !== "main") {
+        res.status(403).json({
+          error: "Only the main coordinator can delegate to specialists. Do the work yourself and report on your issue.",
+        });
+        return;
+      }
+    }
+
+    const target =
+      agents.find((a) => String(a.role).toLowerCase() === specialist && a.status !== "terminated")
+      ?? agents.find((a) => String(a.name).toLowerCase() === specialist && a.status !== "terminated");
+    if (!target) {
+      const available = agents
+        .filter((a) => String(a.role).toLowerCase() !== "main" && a.status !== "terminated")
+        .map((a) => `${a.name} (${a.role})`)
+        .join(", ");
+      res.status(400).json({
+        error: `No specialist with role "${specialist}" in this company. Available: ${available || "none"}.`,
+      });
+      return;
+    }
+
+    const issue = await svc.create(companyId, {
+      title,
+      description: request,
+      status: "todo",
+      assigneeAgentId: target.id,
+      createdByAgentId: actor.agentId,
+      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
+    });
+
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      runId: actor.runId,
+      action: "issue.created",
+      entityType: "issue",
+      entityId: issue.id,
+      details: { title: issue.title, identifier: issue.identifier, delegatedTo: target.name, delegatedRole: target.role },
+    });
+
+    void queueIssueAssignmentWakeup({
+      heartbeat,
+      issue,
+      reason: "issue_assigned",
+      mutation: "create",
+      contextSource: "issue.delegate",
+      requestedByActorType: actor.actorType,
+      requestedByActorId: actor.actorId,
+    });
+
+    res.status(201).json({
+      issueId: issue.id,
+      identifier: issue.identifier,
+      specialist: target.name,
+      role: target.role,
+      message: `Routed to ${target.name} (${target.role}). They are now on it.`,
+    });
+  });
+  //// End Neocompany Modification
+
   router.post("/issues/:id/children", applyCreateIssueStatusDefault, validate(createChildIssueSchema), async (req, res) => {
     const parentId = req.params.id as string;
     const parent = await svc.getById(parentId);

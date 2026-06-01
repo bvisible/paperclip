@@ -490,11 +490,18 @@ const plugin = definePlugin({
 
       // Build agent context for the first message so the copilot knows about
       // available agents and can reference them for handoff.
+      //// Neocompany Modification — include the agent `id` so the main
+      //// coordinator (Nora) can delegate in a SINGLE Paperclip API call
+      //// (POST /issues with assigneeAgentId) without a prior GET /agents
+      //// lookup. The id is the only thing a reliable one-shot delegation
+      //// needs; without it the model has to fetch + parse + match, which
+      //// is the fragile path we are removing.
+      //// End Neocompany Modification
       let enrichedMessage = message;
       if (isNewSession) {
         const allAgents = await ctx.agents.list({ companyId });
         const agentContext = allAgents.length > 0
-          ? `[Available Agents]\n${allAgents.map(a => `- @${a.name} (Role: ${a.role ?? "general"}, Title: ${a.title ?? "N/A"}, Status: ${a.status ?? "unknown"})`).join("\n")}\n\n`
+          ? `[Available Agents]\n${allAgents.map(a => `- @${a.name} (id: ${a.id}, role: ${a.role ?? "general"}, title: ${a.title ?? "N/A"}, status: ${a.status ?? "unknown"})`).join("\n")}\n\n`
           : "";
         enrichedMessage = agentContext + message;
       }
