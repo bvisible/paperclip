@@ -677,11 +677,33 @@ export function createPluginWorkerHandle(
       const companyId = String(params.companyId ?? "");
       const context = contextForWorkerMessage(notification);
       if (context.invalidInvocationScope) {
-        log.warn(
+        //// Neocompany Modification — tolerate async stream emits that lost the
+        //// invocation's AsyncLocalStorage context. paperclip-chat emits chat
+        //// stream chunks from host→worker agent-stream callbacks, which run
+        //// OUTSIDE the originating performAction handler's ALS scope, so the
+        //// worker SDK can't tag them with paperclipInvocationId and upstream's
+        //// strict check drops them (chat reply never reaches the UI → stuck
+        //// "Thinking…"). Security is preserved: allow only when the stream's
+        //// companyId matches a currently-active invocation scope OR an
+        //// already-open channel's company; otherwise drop as before.
+        const matchesActiveCompany =
+          companyId.length > 0 &&
+          (Array.from(activeInvocations.values()).some(
+            (inv) => inv.scope.companyId === companyId,
+          ) ||
+            Array.from(openStreamChannels.values()).includes(companyId));
+        if (!matchesActiveCompany) {
+          log.warn(
+            { method: notification.method, companyId },
+            "dropping plugin stream notification with invalid invocation scope",
+          );
+          return;
+        }
+        log.debug(
           { method: notification.method, companyId },
-          "dropping plugin stream notification with invalid invocation scope",
+          "allowing async stream notification by company-scope match (ALS context lost)",
         );
-        return;
+        //// End Neocompany Modification
       }
       const allowedCompanyId = context.invocationScope?.companyId;
       if (allowedCompanyId && companyId !== allowedCompanyId) {
