@@ -189,6 +189,22 @@ export function companyService(db: Db) {
     create: async (data: typeof companies.$inferInsert) => {
       const created = await createCompanyWithUniquePrefix(data);
       await environmentsSvc.ensureLocalEnvironment(created.id);
+      //// Neocompany Modification — seed a default project. NeoCompany operates
+      //// company-scoped (issues have no project; the UI has no Projects view),
+      //// but POST /plugins/tools/execute requires a valid projectId belonging
+      //// to the company (validateToolRunContextScope). Without at least one
+      //// project, agents cannot call business tools. This default project is
+      //// invisible in the NeoCompany UI but unblocks tool execution.
+      await db
+        .insert(projects)
+        .values({
+          companyId: created.id,
+          name: "General",
+          description:
+            "Default project (NeoCompany is company-scoped; required for plugin tool execution).",
+        })
+        .onConflictDoNothing();
+      //// End Neocompany Modification
       const row = await getCompanyQuery(db)
         .where(eq(companies.id, created.id))
         .then((rows) => rows[0] ?? null);
