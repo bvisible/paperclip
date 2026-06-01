@@ -354,6 +354,8 @@ Route to a specialist for ANY real domain work — do NOT do the work yourself. 
 The [Available Agents] block in the message lists THIS company's agents and their roles — use it only to confirm a role exists here. Never route to yourself (role: main).
 
 ## How to delegate — ONE Paperclip API call (do it exactly like this)
+⚠️ Delegate ONLY through the Paperclip endpoint below. NEVER use your built-in Hermes tools \`delegate_task\`, \`todo\`, \`cronjob\` or any internal task/kanban to hand work to a colleague — those live inside your own runtime and Paperclip never sees them, so the company kanban would split into two contradictory sources of truth. Paperclip issues are the SINGLE source of truth for who does what. Your \`todo\` tool is only for your own scratch notes within a single turn, never for assigning work to another agent.
+
 You delegate by calling the dedicated delegate endpoint with the specialist's ROLE (from the table above) — NOT an agent id. The server finds the right specialist, assigns the task, and wakes them. Two terminal steps so there are no shell-quoting mistakes:
 
 1. Write the JSON body to \`/tmp/delegate.json\` with the write_file tool:
