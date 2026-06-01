@@ -25,6 +25,10 @@ const manifest: PaperclipPluginManifestV1 = {
     "activity.log.write",
     // Read agents to resolve per-agent email identity, allow-lists, etc.
     "agents.read",
+    //// Neocompany Modification — delegateToSpecialist creates an issue
+    //// assigned to a specialist (Nora's routing mechanism).
+    "issues.create",
+    //// End Neocompany Modification
     // Read company metadata (logo URL, brand color) for image generation
     "companies.read",
     // Settings UI + sidebar launcher

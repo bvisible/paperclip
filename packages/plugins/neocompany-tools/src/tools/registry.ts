@@ -266,6 +266,16 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: true,
     allowedRoles: ["support", "commercial", "main"],
   },
+  //// Neocompany Modification — delegation tool, restricted to the main coordinator (Nora)
+  delegateToSpecialist: {
+    name: "delegateToSpecialist",
+    label: "Delegate to specialist",
+    category: ToolCategory.INTERNAL,
+    defaultEnabled: true,
+    internal: true,
+    allowedRoles: ["main"],
+  },
+  //// End Neocompany Modification
   emailListMessages: {
     name: "emailListMessages",
     label: "List incoming emails",

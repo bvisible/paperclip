@@ -47,6 +47,9 @@ import {
   type WcGetProductParams,
 } from "./woocommerce/get-product.js";
 import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams, type EmailSendConfig } from "./email/send.js";
+//// Neocompany Modification — delegation tool for the main coordinator (Nora)
+import { runDelegateToSpecialist, delegateToSpecialistDeclaration } from "./delegate.js";
+//// End Neocompany Modification
 import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessagesParams } from "./email/inbox-list.js";
 import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
 import { runEmailListSignatures, emailListSignaturesDeclaration, type EmailListSignaturesParams } from "./email/list-signatures.js";
@@ -667,4 +670,11 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     run: async (params, runCtx, ctxAccess) =>
       runImageDelete(params as { imageId: string }, {}, runCtx, ctxAccess),
   },
+  //// Neocompany Modification — delegation tool (Nora routes to specialists)
+  {
+    name: "delegateToSpecialist",
+    declaration: delegateToSpecialistDeclaration,
+    run: (params, runCtx, ctxAccess) => runDelegateToSpecialist(params, runCtx, ctxAccess),
+  },
+  //// End Neocompany Modification
 ];

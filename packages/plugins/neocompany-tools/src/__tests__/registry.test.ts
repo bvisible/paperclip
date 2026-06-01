@@ -1,5 +1,5 @@
 //// Neocompany Modification — registry sanity tests for neocompany-tools
-//// Pins the contract that the plugin exposes exactly 34 tools with the
+//// Pins the contract that the plugin exposes exactly 35 tools with the
 //// expected names. Catches accidental removal / renaming during refactors,
 //// and acts as a smoke test for the whole tool surface.
 //// End Neocompany Modification
@@ -50,11 +50,13 @@ const EXPECTED_TOOLS = [
   "imageList",
   "imageApprove",
   "imageDelete",
+  // Orchestration (main coordinator only)
+  "delegateToSpecialist",
 ];
 
 describe("ALL_TOOLS registry", () => {
-  it("exposes exactly 34 tools", () => {
-    expect(ALL_TOOLS).toHaveLength(34);
+  it("exposes exactly 35 tools", () => {
+    expect(ALL_TOOLS).toHaveLength(35);
   });
 
   it("exposes all expected tool names", () => {
