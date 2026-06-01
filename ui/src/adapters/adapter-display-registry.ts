@@ -108,16 +108,19 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Managed remote Cursor agent",
     icon: MousePointer2,
   },
-  //// Neocompany Modification — patch #4 (drop comingSoon for openclaw_gateway)
-  // OpenClaw is our primary adapter (production on app.neocompany.ch).
-  // Removing the `comingSoon` flag exposes it in the visual adapter picker.
-  // Migration path: PR upstream once we're confident the adapter is stable
-  // for everyone (it currently requires manual openclaw.json config).
+  //// Neocompany Modification — patch #4 SUPERSEDED (2026-06 upstream sync)
+  // We previously dropped `comingSoon` to expose openclaw_gateway in the
+  // visual picker (it was our primary adapter). All agents have since
+  // migrated to `hermes_local`; openclaw_gateway is now legacy, so we keep
+  // upstream's hidden / coming-soon treatment.
   //// End Neocompany Modification
   openclaw_gateway: {
     label: "OpenClaw Gateway",
-    description: "Invoke OpenClaw via gateway protocol",
+    description: "External gateway adapter",
     icon: Bot,
+    comingSoon: true,
+    disabledLabel: "Invite external agents from the add-agent modal",
+    hideFromVisualSelection: true,
   },
   process: {
     label: "Process",
