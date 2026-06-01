@@ -328,10 +328,18 @@ export function createHermesPlainTextParser(emit: (event: ChatStreamEvent) => vo
         return;
       } else {
         pendingLines.push(line);
-        // Cap buffer to a reasonable size in case neither marker ever shows up.
-        if (pendingLines.length > 200) {
-          mode = "quiet";
-          for (const buf of pendingLines) emitQuietLine(buf);
+        //// Neocompany Modification — large unmarked preamble = verbose prompt echo, drop it.
+        // When Hermes runs verbose with a LARGE system prompt (e.g. the main
+        // agent Nora, whose prompt embeds the safety rules + the full agent
+        // roster + routing instructions), the echoed prompt can exceed the cap
+        // BEFORE the `╭─ ⚕ Hermes` reply box arrives, and none of its lines may
+        // match a HERMES_VERBOSE_PREAMBLE marker. Treating that overflow as
+        // "quiet" emitted the entire prompt into the chat bubble (observed
+        // 2026-06-01 on Nora). A buffer this large without a `session_id:` line
+        // is overwhelmingly a verbose preamble, so switch to verbose and DROP
+        // it; the real reply still streams from inside the box that follows.
+        if (pendingLines.length > 2000) {
+          mode = "verbose";
           pendingLines = [];
         }
         return;
