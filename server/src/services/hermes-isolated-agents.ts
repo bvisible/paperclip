@@ -30,7 +30,7 @@
  * for local dev / smoke tests, NOT safe for prod multi-tenant.
  */
 
-import { copyFile, mkdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -117,6 +117,99 @@ async function seedHermesHomeCredentials(home: string): Promise<void> {
   }
 }
 
+//// Neocompany Modification — per-agent workspace + tools guide.
+//// The hermes_local run cwd is `config.cwd || ctx.config.workspaceDir || "."`
+//// (hermes-paperclip-adapter/server/execute.js). When unset it falls back to
+//// the server process cwd, so the agent never sees any company-specific
+//// AGENTS.md. We point the run cwd at this workspace dir and drop an
+//// `AGENTS.md` here; Hermes auto-injects AGENTS.md from the cwd ON TOP of its
+//// built-in task prompt — so a specialist learns to actually call the
+//// NeoCompany business tools (via /plugins/tools/execute) instead of
+//// fabricating a "dry-run" result, WITHOUT us replacing Hermes' default
+//// assigned-issue workflow.
+
+/** The per-agent working directory Hermes runs from (sibling of memories/). */
+export function agentWorkspaceDir(home: string): string {
+  return join(home, "workspace");
+}
+
+/**
+ * The AGENTS.md content Hermes auto-injects from the run cwd. Role-aware:
+ * the main coordinator routes (its chat promptTemplate already covers that),
+ * specialists execute their assigned issue with the real business tools.
+ */
+function buildToolsGuide(role: string | null | undefined, name: string | null | undefined): string {
+  const who = name ? name : "this agent";
+  const r = (role ?? "").toLowerCase();
+  if (r === "main") {
+    return [
+      `# ${who} — coordinator`,
+      "",
+      "You route work to specialists; you do not execute domain tasks yourself.",
+      "Delegate ONLY via the Paperclip endpoint described in your chat instructions",
+      "(POST /companies/{companyId}/issues/delegate). Never use Hermes' native",
+      "delegate_task / todo / cronjob to hand work to a colleague — Paperclip issues",
+      "are the single source of truth.",
+      "",
+    ].join("\n");
+  }
+  return [
+    `# ${who} — using your NeoCompany business tools`,
+    "",
+    "You are working an assigned Paperclip issue. When the task needs a real",
+    "business action (write/publish a blog post, send an email, generate an image,",
+    "draft a social post, run an SEO/analytics check), you MUST call the real",
+    "NeoCompany tool. NEVER fabricate the result, invent a metric/URL, or write a",
+    "\"dry-run\" stand-in — do the real action or say plainly what you could not do.",
+    "",
+    "## How to run a business tool",
+    "Tools execute server-side with the company's stored credentials. Call them via",
+    "the Paperclip tool endpoint, using the SAME API base you use for issues",
+    "(`$PAPERCLIP_API_URL`):",
+    "",
+    "1. Write the body to `/tmp/tool.json` with the write_file tool:",
+    '   {"tool":"<toolName>","parameters":{ ... }}',
+    "2. Run it with the terminal tool:",
+    '   curl -sS -X POST "$PAPERCLIP_API_URL/plugins/tools/execute" \\',
+    '     -H "Authorization: Bearer $PAPERCLIP_API_KEY" \\',
+    '     -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \\',
+    '     -H "Content-Type: application/json" --data @/tmp/tool.json',
+    "3. Read the JSON response. On error, report it honestly in your issue comment.",
+    "",
+    "## Available tools (use the ones for your role)",
+    "- Content: `contentGenerateSocialPosts`, `contentTopicIdeas`",
+    "- Blog / WordPress: `wpCreatePost`, `wpUpdatePost`, `wpListPosts`, `wpListCategories`, `wpSiteHealth`",
+    "- Email: `emailSendMessage`, `emailListMessages`, `emailReadMessage`, `emailListSignatures`",
+    "- Images: `imageGenerate`, `imageList`, `imageApprove`",
+    "- SEO / analytics: `seoGa4Traffic`, `seoGscKeywords`, `seoGscTopPages`, `seoPageSpeed`, `seoContentAudit`, `seoQuickWins`, `seoTrendAnalysis`",
+    "",
+    "## Social posts (LinkedIn / Facebook / Instagram) — DRAFT for approval",
+    "You do NOT publish social posts directly, and you NEVER fabricate a published",
+    "post. Generate the copy with `contentGenerateSocialPosts`, then create a DRAFT",
+    "for human approval with the `socialDraftCreate` tool (parameters: `provider`",
+    "[linkedin|facebook|instagram], `text`, optional `imageId`). It lands in the",
+    "Approvals screen for a human to approve; approval triggers the real publish.",
+    "Then comment on the issue that the draft is queued for approval.",
+    "",
+    "## When done",
+    "Post a comment on your assigned issue describing exactly what you did (and any",
+    "draft/post ids), then set the issue status to done via the Paperclip API.",
+    "",
+  ].join("\n");
+}
+
+/** Create the workspace dir and write the role-aware AGENTS.md tools guide. */
+async function seedAgentWorkspace(
+  home: string,
+  role: string | null | undefined,
+  name: string | null | undefined,
+): Promise<void> {
+  const ws = agentWorkspaceDir(home);
+  await mkdir(ws, { recursive: true });
+  // Overwrite each run so the guide always reflects the current code.
+  await writeFile(join(ws, "AGENTS.md"), buildToolsGuide(role, name), "utf8");
+}
+
 /**
  * Ensure the `HERMES_HOME` directory (and its `memories/` subdir) exists.
  * No-op + returns `null` when isolation is disabled. Returns the resolved
@@ -132,10 +225,18 @@ export async function ensureHermesHome(
   companyId: string,
   userId: string | null | undefined,
   agentId: string,
+  //// Neocompany Modification — optional agent identity so the workspace
+  //// AGENTS.md tools guide can be role-aware. Optional to keep existing
+  //// callers (tests) working.
+  opts?: { role?: string | null; name?: string | null },
+  //// End Neocompany Modification
 ): Promise<string | null> {
   const home = resolveHermesHome(companyId, userId, agentId);
   if (!home) return null;
   await mkdir(join(home, "memories"), { recursive: true });
   await seedHermesHomeCredentials(home);
+  //// Neocompany Modification — seed the per-agent workspace + tools guide.
+  await seedAgentWorkspace(home, opts?.role, opts?.name);
+  //// End Neocompany Modification
   return home;
 }

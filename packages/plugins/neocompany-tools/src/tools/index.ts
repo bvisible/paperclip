@@ -50,6 +50,9 @@ import { runEmailSendMessage, emailSendMessageDeclaration, type EmailSendParams,
 //// Neocompany Modification — delegation tool for the main coordinator (Nora)
 import { runDelegateToSpecialist, delegateToSpecialistDeclaration } from "./delegate.js";
 //// End Neocompany Modification
+//// Neocompany Modification — social draft tool (specialist → Approvals)
+import { runSocialDraftCreate, socialDraftCreateDeclaration } from "./social-draft.js";
+//// End Neocompany Modification
 import { runEmailListMessages, emailListMessagesDeclaration, type EmailListMessagesParams } from "./email/inbox-list.js";
 import { runEmailReadMessage, emailReadMessageDeclaration, type EmailReadMessageParams } from "./email/inbox-read.js";
 import { runEmailListSignatures, emailListSignaturesDeclaration, type EmailListSignaturesParams } from "./email/list-signatures.js";
@@ -675,6 +678,13 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     name: "delegateToSpecialist",
     declaration: delegateToSpecialistDeclaration,
     run: (params, runCtx, ctxAccess) => runDelegateToSpecialist(params, runCtx, ctxAccess),
+  },
+  //// End Neocompany Modification
+  //// Neocompany Modification — social draft (specialist → Approvals)
+  {
+    name: "socialDraftCreate",
+    declaration: socialDraftCreateDeclaration,
+    run: (params, runCtx, ctxAccess) => runSocialDraftCreate(params, runCtx, ctxAccess),
   },
   //// End Neocompany Modification
 ];

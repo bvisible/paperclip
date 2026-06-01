@@ -143,7 +143,7 @@ import { getDisabledAdapterTypes } from "../services/adapter-plugin-store.js";
 import { processAdapter } from "./process/index.js";
 import { httpAdapter } from "./http/index.js";
 //// Neocompany Modification — per-(company,user,agent) HERMES_HOME isolation
-import { ensureHermesHome } from "../services/hermes-isolated-agents.js";
+import { ensureHermesHome, agentWorkspaceDir } from "../services/hermes-isolated-agents.js";
 //// End Neocompany Modification
 
 function readConfiguredCommand(config: Record<string, unknown>, fallback: string): string {
@@ -524,7 +524,14 @@ async function injectHermesHome<
 >(ctx: T): Promise<T> {
   const actorUserId =
     typeof ctx.context?.actorUserId === "string" ? ctx.context.actorUserId : null;
-  const home = await ensureHermesHome(ctx.agent.companyId, actorUserId, ctx.agent.id);
+  //// Neocompany Modification — pass agent identity so the workspace AGENTS.md
+  //// tools guide is role-aware.
+  const agentMeta = ctx.agent as { role?: string | null; name?: string | null };
+  const home = await ensureHermesHome(ctx.agent.companyId, actorUserId, ctx.agent.id, {
+    role: agentMeta.role,
+    name: agentMeta.name,
+  });
+  //// End Neocompany Modification
   if (!home) return ctx;
   const existingConfig =
     typeof ctx.agent.adapterConfig === "object" && ctx.agent.adapterConfig !== null
@@ -543,6 +550,11 @@ async function injectHermesHome<
       adapterConfig: {
         ...existingConfig,
         env: { ...existingEnv, HERMES_HOME: home },
+        //// Neocompany Modification — run cwd = the per-agent workspace so
+        //// Hermes auto-injects its AGENTS.md tools guide. Only set when not
+        //// already configured, so an explicit cwd still wins.
+        ...(existingConfig.cwd ? {} : { cwd: agentWorkspaceDir(home) }),
+        //// End Neocompany Modification
       },
     },
   };

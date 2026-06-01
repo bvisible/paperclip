@@ -275,6 +275,15 @@ export const TOOL_REGISTRY: Record<string, ToolMetadata> = {
     internal: true,
     allowedRoles: ["main"],
   },
+  //// Neocompany Modification — social draft, queued for human approval
+  socialDraftCreate: {
+    name: "socialDraftCreate",
+    label: "Create social draft (for approval)",
+    category: ToolCategory.SOCIAL,
+    defaultEnabled: true,
+    internal: true,
+    allowedRoles: ["social", "community", "designer", "main"],
+  },
   //// End Neocompany Modification
   emailListMessages: {
     name: "emailListMessages",
