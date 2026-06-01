@@ -441,13 +441,30 @@ const plugin = definePlugin({
         // fall back to the default preference order.
         const agents = await ctx.agents.list({ companyId });
         const matching = agents.filter((a) => a.adapterType === thread.adapterType);
+        // `role: "main"` is the NeoCompany seed value for the orchestrator (Nora).
+        // The SDK AgentRole union doesn't list "main", so compare as a string.
+        const isMainAgent = (a: (typeof matching)[number]): boolean =>
+          (a.role as string) === "main" ||
+          (a as { metadata?: { isMain?: boolean } }).metadata?.isMain === true;
+        const mainAgent = matching.find(isMainAgent);
         let agent = thread.agentId
           ? matching.find((a) => a.id === thread.agentId)
           : undefined;
+        //// Neocompany Modification — chat is permanently fixed on the main agent (Nora).
+        // The user always talks to the orchestrator (Nora, role="main"); Nora then
+        // routes work to specialists via native issue reassignment (kanban). Standard
+        // UI threads ALWAYS bind to main — this both routes fresh threads to main AND
+        // re-routes any existing UI thread previously pinned to a specialist back to
+        // main (rewriting thread.agentId below). Only external-bridge threads
+        // (externalId set — NORA / future WhatsApp channels) keep their pinned agent.
+        if (mainAgent && !thread.externalId && (!agent || !isMainAgent(agent))) {
+          agent = mainAgent;
+        }
+        //// End Neocompany Modification
         if (!agent) {
-          // Preference order:
+          // Fallback preference order (only when no main agent exists):
           //   1. Explicit "Chat Assistant" named agent (NeoCompany convention)
-          //   2. CEO role (Neoffice CEO pattern — chat always routes to the coordinator)
+          //   2. CEO role (legacy Neoffice pattern)
           //   3. Generic "general" role
           //   4. First matching agent
           agent =
