@@ -568,8 +568,25 @@ const hermesLocalAdapter: ServerAdapterModule = {
         : {};
     const explicitApiKey =
       typeof existingEnv.PAPERCLIP_API_KEY === "string" && existingEnv.PAPERCLIP_API_KEY.trim().length > 0;
+    //// Neocompany Modification — apply the stored chat promptTemplate ONLY on
+    //// chat runs. The promptTemplate is a conversational template ("you are in
+    //// a direct conversation with a human, NOT a heartbeat"); applying it to an
+    //// ISSUE/heartbeat run mis-prompts the specialist (observed: the agent
+    //// echoed the auth-guard preamble as its comment and never did the work,
+    //// triggering a handoff escalation). A chat run is the one where the
+    //// paperclip-chat plugin set ctx.context.chatPrompt (see injectChatPrompt).
+    //// For non-chat runs we drop the template so Hermes falls back to its
+    //// built-in task/heartbeat prompt, which carries the assigned-issue
+    //// workflow instructions (the agent has $PAPERCLIP_API_KEY in env either
+    //// way). This cannot affect chat — it gates on the same signal chat
+    //// already relies on.
+    const chatPromptRaw = (isolatedCtx.context as Record<string, unknown> | undefined)?.chatPrompt;
+    const isChatRun = typeof chatPromptRaw === "string" && chatPromptRaw.trim().length > 0;
+    //// End Neocompany Modification
     const promptTemplate =
-      typeof existingConfig.promptTemplate === "string" && existingConfig.promptTemplate.trim().length > 0
+      isChatRun
+      && typeof existingConfig.promptTemplate === "string"
+      && existingConfig.promptTemplate.trim().length > 0
         ? existingConfig.promptTemplate
         : "";
     const authGuardPrompt = [
@@ -600,6 +617,12 @@ const hermesLocalAdapter: ServerAdapterModule = {
       patchedConfig.promptTemplate = persona
         ? `${persona}\n\n${authGuardPrompt}\n\n${promptTemplate}`
         : `${authGuardPrompt}\n\n${promptTemplate}`;
+    } else if (!isChatRun) {
+      //// Neocompany Modification — strip the chat template (carried in via the
+      //// `...existingConfig` spread) so Hermes uses its default task prompt for
+      //// issue/heartbeat runs.
+      delete patchedConfig.promptTemplate;
+      //// End Neocompany Modification
     }
 
     const patchedCtx = {

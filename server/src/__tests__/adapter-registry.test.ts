@@ -327,7 +327,10 @@ describe("server adapter registry", () => {
       },
       runtime: {},
       config: {},
-      context: {},
+      // chatPrompt present => this is a CHAT run, so the stored promptTemplate
+      // is applied (and the auth guard injected). Issue/heartbeat runs are
+      // covered by the dedicated test below.
+      context: { chatPrompt: "Bonjour" },
       onLog: async () => {},
       onMeta: async () => {},
       onSpawn: async () => {},
@@ -351,6 +354,46 @@ describe("server adapter registry", () => {
     );
     expect(patchedCtx.agent.adapterConfig.promptTemplate).toContain("Existing prompt");
   });
+
+  //// Neocompany Modification — the conversational promptTemplate must be
+  //// applied ONLY on chat runs. On an issue/heartbeat run (no chatPrompt) it
+  //// is dropped so Hermes uses its built-in task prompt; env auth still set.
+  it("drops the chat promptTemplate on a non-chat (issue) run and keeps env auth", async () => {
+    const adapter = requireServerAdapter("hermes_local");
+
+    await adapter.execute({
+      runId: "run-456",
+      agent: {
+        id: "agent-456",
+        companyId: "company-123",
+        name: "Nova",
+        role: "social",
+        adapterType: "hermes_local",
+        adapterConfig: {
+          env: { OPENAI_API_KEY: "llm-token" },
+          promptTemplate: "You are in a direct conversation with a human",
+        },
+      },
+      runtime: {},
+      config: {},
+      // No chatPrompt => issue/heartbeat run.
+      context: {},
+      onLog: async () => {},
+      onMeta: async () => {},
+      onSpawn: async () => {},
+      authToken: "agent-run-jwt",
+    });
+
+    expect(hermesExecuteMock).toHaveBeenCalledTimes(1);
+    const [patchedCtx] = hermesExecuteMock.mock.calls[0];
+    // Env auth is injected on every run...
+    expect(patchedCtx.agent.adapterConfig).toMatchObject({
+      env: { PAPERCLIP_API_KEY: "agent-run-jwt", PAPERCLIP_RUN_ID: "run-456" },
+    });
+    // ...but the conversational template is dropped so Hermes uses its default.
+    expect(patchedCtx.agent.adapterConfig.promptTemplate).toBeUndefined();
+  });
+  //// End Neocompany Modification
 
   it("preserves Hermes command normalization while injecting auth", async () => {
     const adapter = requireServerAdapter("hermes_local");
