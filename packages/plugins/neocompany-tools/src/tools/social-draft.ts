@@ -106,7 +106,12 @@ export async function runSocialDraftCreate(
   const data: SocialPostData = {
     text,
     imageId,
-    channel: { provider, channelKey: accountId },
+    // channelKey must be `<provider>:<accountId>`: the publisher resolves the
+    // stored channel token via parseAccountId(), which splits on the FIRST
+    // colon and uses the remainder as the account id. Storing just the bare
+    // accountId (which itself contains colons, e.g. urn:li:person:xxx) makes
+    // the lookup miss the first segment and fail with "Channel token missing".
+    channel: { provider, channelKey: `${provider}:${accountId}` },
     proposedAt,
     status: "pending_review",
     generatedByAgentId: runCtx.agentId,
