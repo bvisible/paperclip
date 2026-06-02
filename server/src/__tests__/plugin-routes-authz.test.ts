@@ -706,6 +706,86 @@ describe.sequential("plugin tool and bridge authz", () => {
   }, 20_000);
   //// End Neocompany Modification
 
+  //// Neocompany Modification — agent-supplied projectId tolerance. An agent
+  //// run sometimes sends a projectId that is not a real project of its company
+  //// (commonly the companyId itself). We resolve a valid project of the agent's
+  //// own company instead of 403-ing, and we keep a genuine projectId untouched.
+  it("resolves an agent-supplied projectId that is not a real project (e.g. the companyId) to the company's first project", async () => {
+    const executeTool = vi.fn().mockResolvedValue({ content: "ok" });
+    const { app } = await createApp(agentActor(), {}, {
+      db: createSelectQueueDb([
+        [], // provided projectId (=companyA) does not resolve to a project of this company
+        [{ id: projectA }], // fallback — the company's first project
+        [{ companyId: companyA }], // scope check: agent
+        [{ companyId: companyA, agentId: agentA }], // scope check: run
+        [{ companyId: companyA }], // scope check: project (now projectA)
+      ]),
+      toolDeps: {
+        toolDispatcher: {
+          listToolsForAgent: vi.fn(),
+          getTool: vi.fn(() => ({ name: "paperclip.example:search" })),
+          executeTool,
+        },
+      },
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/tools/execute")
+      .send({
+        tool: "paperclip.example:search",
+        parameters: { q: "test" },
+        // Agent sends the companyId as projectId — the observed bad placeholder.
+        runContext: { projectId: companyA },
+      });
+
+    expect(res.status).toBe(200);
+    expect(executeTool).toHaveBeenCalledWith(
+      "paperclip.example:search",
+      { q: "test" },
+      {
+        agentId: agentA,
+        runId: runA,
+        companyId: companyA,
+        projectId: projectA,
+      },
+    );
+  }, 20_000);
+
+  it("keeps an agent-supplied projectId that is a real project of the company", async () => {
+    const executeTool = vi.fn().mockResolvedValue({ content: "ok" });
+    const { app } = await createApp(agentActor(), {}, {
+      db: createSelectQueueDb([
+        [{ id: projectA }], // provided projectId resolves to a project of this company — trusted
+        [{ companyId: companyA }], // scope check: agent
+        [{ companyId: companyA, agentId: agentA }], // scope check: run
+        [{ companyId: companyA }], // scope check: project
+      ]),
+      toolDeps: {
+        toolDispatcher: {
+          listToolsForAgent: vi.fn(),
+          getTool: vi.fn(() => ({ name: "paperclip.example:search" })),
+          executeTool,
+        },
+      },
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/tools/execute")
+      .send({
+        tool: "paperclip.example:search",
+        parameters: { q: "test" },
+        runContext: { projectId: projectA },
+      });
+
+    expect(res.status).toBe(200);
+    expect(executeTool).toHaveBeenCalledWith(
+      "paperclip.example:search",
+      { q: "test" },
+      expect.objectContaining({ projectId: projectA }),
+    );
+  }, 20_000);
+  //// End Neocompany Modification
+
   it.each([
     ["legacy data", "post", `/api/plugins/${pluginId}/bridge/data`, { key: "health" }],
     ["legacy action", "post", `/api/plugins/${pluginId}/bridge/action`, { key: "sync" }],

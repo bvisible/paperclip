@@ -988,14 +988,34 @@ export function pluginRoutes(
       // back to companyId as the projectId (legacy behaviour) breaks
       // validateToolRunContextScope, which checks projects.id == projectId.
       let projectId = (body.runContext as { projectId?: string } | undefined)?.projectId;
-      if (!projectId && companyId) {
-        const [companyProject] = await db
-          .select({ id: projects.id })
-          .from(projects)
-          .where(eq(projects.companyId, companyId))
-          .limit(1);
-        projectId = companyProject?.id;
+      //// Neocompany Modification — projectId is an optional scoping hint for
+      //// agent calls. Agents sometimes send a value that is not a real project
+      //// of this company (commonly the companyId itself), which made the
+      //// downstream scope check reject the call with a transient 403
+      //// ("projectId does not belong to companyId"). Trust the provided id only
+      //// when it resolves to a project OWNED by this company; otherwise fall
+      //// back to the company's first project. The fallback is always within the
+      //// agent's own company, so the resolved scope can never widen.
+      if (companyId) {
+        const provided = projectId
+          ? await db
+              .select({ id: projects.id })
+              .from(projects)
+              .where(and(eq(projects.id, projectId), eq(projects.companyId, companyId)))
+              .limit(1)
+          : [];
+        if (provided.length > 0) {
+          projectId = provided[0].id;
+        } else {
+          const [companyProject] = await db
+            .select({ id: projects.id })
+            .from(projects)
+            .where(eq(projects.companyId, companyId))
+            .limit(1);
+          projectId = companyProject?.id;
+        }
       }
+      //// End Neocompany Modification
       if (!agentId || !companyId || !runId || !projectId) {
         res.status(400).json({
           error:
