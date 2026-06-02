@@ -236,7 +236,7 @@ export async function runSocialPublisherTick(ctx: PluginContext): Promise<{
         // Flip to `publishing` to reduce contention with other ticks.
         await transitionPost(ctx, company.id, externalId, row.title, row.status, data, "publishing");
 
-        const channelKey = `channel:${data.channel.provider}:${parseAccountId(data.channel.channelKey)}`;
+        const channelKey = `channel:${data.channel.provider}:${resolveChannelAccountId(data.channel.provider, data.channel.channelKey)}`;
         const storedRaw = await ctx.state.get({
           scopeKind: "company",
           scopeId: company.id,
@@ -381,10 +381,23 @@ export async function runSocialPublisherTick(ctx: PluginContext): Promise<{
   return report;
 }
 
-function parseAccountId(channelKey: string): string {
-  // channelKey = `<provider>:<accountId>` — accountId may itself contain
-  // colons (e.g. `urn:li:person:xxx`), so we split on the FIRST colon only.
-  const idx = channelKey.indexOf(":");
-  if (idx < 0) return channelKey;
-  return channelKey.slice(idx + 1);
+//// Neocompany Modification — tolerant channel-key → accountId resolver.
+//// The stored token lives at `channel:<provider>:<accountId>`, where
+//// accountId is the provider's native id (a LinkedIn URN like
+//// `urn:li:person:xxx` — which itself contains colons — or a numeric
+//// Facebook/Instagram id). A draft's `channel.channelKey` has historically
+//// been stored in TWO shapes depending on who created it:
+////   - canonical `<provider>:<accountId>` (e.g. `linkedin:urn:li:person:xxx`)
+////   - bare `<accountId>` (e.g. `urn:li:person:xxx` or `1049…`)
+//// The old parser blindly split on the first colon, which silently corrupted
+//// bare LinkedIn URNs (dropping `urn:`) → "Channel token missing". Resolve
+//// BOTH shapes: strip a leading `<provider>:` only when present, otherwise
+//// treat the value as the bare accountId. This makes publishing work for
+//// every draft source (socialDraftCreate, UI draftCreate, Pixel autopilot)
+//// and every already-stored draft, without a data backfill.
+function resolveChannelAccountId(provider: string, channelKey: string): string {
+  const prefix = `${provider}:`;
+  if (channelKey.startsWith(prefix)) return channelKey.slice(prefix.length);
+  return channelKey;
 }
+//// End Neocompany Modification
