@@ -442,7 +442,15 @@ export async function runImageGenerate(
   ctxAccess: ToolContextAccess,
 ): Promise<ToolResult> {
   const ctx = ctxAccess.getPluginContext();
-  const { templateId, provider = "openai", batchId, logoUrl, productId, sceneStyle, sceneVariantId, filterRefsWhiteBg } = params;
+  //// Neocompany Modification — default image provider is `codex-cli`, not
+  //// `openai`. NeoCompany instances have no OpenAI API key configured, so the
+  //// `openai` default failed every agent imageGenerate call with
+  //// MISSING_OPENAI_KEY (surfaced to the agent as a misleading HTTP 502). The
+  //// Pixel autopilot already generates images via `codex-cli` (the codex
+  //// binary the Hermes agents use, no separate API key), so we align the
+  //// agent-facing default with the path that actually works here. A caller can
+  //// still pass `provider: "openai"` explicitly on instances that set a key.
+  const { templateId, provider = "codex-cli", batchId, logoUrl, productId, sceneStyle, sceneVariantId, filterRefsWhiteBg } = params;
   const sceneVariantIndex = params.sceneVariantIndex ?? 0;
   let { prompt } = params;
   let referenceImageIds = params.referenceImageIds;
