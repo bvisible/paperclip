@@ -195,15 +195,21 @@ export function companyService(db: Db) {
       //// to the company (validateToolRunContextScope). Without at least one
       //// project, agents cannot call business tools. This default project is
       //// invisible in the NeoCompany UI but unblocks tool execution.
-      await db
-        .insert(projects)
-        .values({
-          companyId: created.id,
-          name: "General",
-          description:
-            "Default project (NeoCompany is company-scoped; required for plugin tool execution).",
-        })
-        .onConflictDoNothing();
+      //// Skipped under PAPERCLIP_SKIP_DEFAULT_AGENTS=1 (same flag the upstream
+      //// company import/export e2e test sets to opt out of the fork's default
+      //// seeding) so its project-count assertions stay valid; production never
+      //// sets the flag, so the default project is always seeded there.
+      if (process.env.PAPERCLIP_SKIP_DEFAULT_AGENTS !== "1") {
+        await db
+          .insert(projects)
+          .values({
+            companyId: created.id,
+            name: "General",
+            description:
+              "Default project (NeoCompany is company-scoped; required for plugin tool execution).",
+          })
+          .onConflictDoNothing();
+      }
       //// End Neocompany Modification
       const row = await getCompanyQuery(db)
         .where(eq(companies.id, created.id))
