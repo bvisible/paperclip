@@ -799,7 +799,7 @@ export async function runImageGenerate(
       mimeType = gen.mimeType;
     } else {
       return {
-        content: `Provider "${provider}" is not yet implemented. Use provider=openai.`,
+        content: `Provider "${provider}" is not implemented. Leave provider unset to use the Codex CLI generator (codex-cli).`,
         error: "UNSUPPORTED_PROVIDER",
       };
     }

@@ -553,13 +553,13 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
     declaration: {
       displayName: "Generate image with AI",
       description:
-        "Generate a new image via an AI provider (OpenAI gpt-image-2 by default). If a templateId is provided, the brand template is composited on top of the raw image before saving. If a productId is provided, the prompt is grounded in the product's name + description and the product's gallery images are attached as references. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
+        "Generate a new image. By default it uses the Codex CLI image generator (gpt-image, via the codex binary the company already uses — no API key needed). Just pass a `prompt`; do NOT set `provider`. If a templateId is provided, the brand template is composited on top of the raw image before saving. If a productId is provided, the prompt is grounded in the product's name + description and the product's gallery images are attached as references. The image is saved as a pending generated_image entity and must be approved to enter the stock.",
       parametersSchema: {
         type: "object",
         properties: {
           prompt: { type: "string", description: "Free-form description of the image to generate" },
           templateId: { type: "string", description: "Optional brand template id (externalId) to composite on top" },
-          provider: { type: "string", description: "AI provider — currently only 'openai' is supported" },
+          provider: { type: "string", description: "Image provider. Leave UNSET to use the Codex CLI generator (recommended, no key needed). Only set to 'openai' on instances that have an OpenAI API key configured." },
           width: { type: "number", description: "Desired width in pixels (ignored if templateId is set)" },
           height: { type: "number", description: "Desired height in pixels (ignored if templateId is set)" },
           batchId: { type: "string", description: "Optional batch id to group several generations together" },
