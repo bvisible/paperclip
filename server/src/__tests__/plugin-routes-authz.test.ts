@@ -633,6 +633,79 @@ describe.sequential("plugin tool and bridge authz", () => {
     );
   });
 
+  //// Neocompany Modification — startup-race retry on the heartbeat_runs lookup.
+  //// A run row that is briefly invisible on the agent's first tool call is
+  //// retried (not-found case only) so it resolves instead of surfacing a 403.
+  //// A row that NEVER appears still ends in the same 403 — the retry can only
+  //// absorb invisibility, never relax an ownership check (isolation preserved).
+  it("retries a briefly-invisible heartbeat run row and then allows execution", async () => {
+    const executeTool = vi.fn().mockResolvedValue({ content: "ok" });
+    const { app } = await createApp(boardActor(), {}, {
+      db: createSelectQueueDb([
+        [{ companyId: companyA }], // agent lookup — ok
+        [], // run lookup attempt 1 — row not yet visible (startup race)
+        [{ companyId: companyA, agentId: agentA }], // run lookup attempt 2 — now visible
+        [{ companyId: companyA }], // project lookup — ok
+      ]),
+      toolDeps: {
+        toolDispatcher: {
+          listToolsForAgent: vi.fn(),
+          getTool: vi.fn(() => ({ name: "paperclip.example:search" })),
+          executeTool,
+        },
+      },
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/tools/execute")
+      .send({
+        tool: "paperclip.example:search",
+        parameters: { q: "test" },
+        runContext: {
+          agentId: agentA,
+          runId: runA,
+          companyId: companyA,
+          projectId: projectA,
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(executeTool).toHaveBeenCalledTimes(1);
+  }, 20_000);
+
+  it("still rejects when the heartbeat run row never becomes visible (retry never relaxes isolation)", async () => {
+    const executeTool = vi.fn();
+    const { app } = await createApp(boardActor(), {}, {
+      // Only the agent lookup yields a row; every run lookup then drains to []
+      // (queue exhausted) — i.e. the run row never appears across all retries.
+      db: createSelectQueueDb([[{ companyId: companyA }]]),
+      toolDeps: {
+        toolDispatcher: {
+          listToolsForAgent: vi.fn(),
+          getTool: vi.fn(() => ({ name: "paperclip.example:search" })),
+          executeTool,
+        },
+      },
+    });
+
+    const res = await request(app)
+      .post("/api/plugins/tools/execute")
+      .send({
+        tool: "paperclip.example:search",
+        parameters: {},
+        runContext: {
+          agentId: agentA,
+          runId: runA,
+          companyId: companyA,
+          projectId: projectA,
+        },
+      });
+
+    expect(res.status).toBe(403);
+    expect(executeTool).not.toHaveBeenCalled();
+  }, 20_000);
+  //// End Neocompany Modification
+
   it.each([
     ["legacy data", "post", `/api/plugins/${pluginId}/bridge/data`, { key: "health" }],
     ["legacy action", "post", `/api/plugins/${pluginId}/bridge/action`, { key: "sync" }],

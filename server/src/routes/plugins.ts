@@ -728,17 +728,45 @@ export function pluginRoutes(
       return '"runContext.agentId" does not belong to "runContext.companyId"';
     }
 
-    const [run] = await db
-      .select({ companyId: heartbeatRuns.companyId, agentId: heartbeatRuns.agentId })
-      .from(heartbeatRuns)
-      .where(eq(heartbeatRuns.id, runContext.runId))
-      .limit(1);
+    //// Neocompany Modification — absorb a brief startup race where a freshly
+    //// spawned run's heartbeat_runs row is not yet visible on its first tool
+    //// call, which otherwise surfaces to the agent as a transient 403. We retry
+    //// ONLY the not-found case: a row that EXISTS with a mismatched company or
+    //// agent is a real scope violation and is rejected immediately below, so the
+    //// retry can NEVER relax an actual ownership check — multi-tenant isolation
+    //// is preserved. A row that never appears ends in the exact same rejection
+    //// as before (no masking); we just log it so the rare case is diagnosable.
+    const lookupScopedRun = () =>
+      db
+        .select({ companyId: heartbeatRuns.companyId, agentId: heartbeatRuns.agentId })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runContext.runId))
+        .limit(1);
+    const RUN_LOOKUP_MAX_ATTEMPTS = 6;
+    const RUN_LOOKUP_RETRY_MS = 150;
+    let [run] = await lookupScopedRun();
+    let runLookupAttempts = 1;
+    while (!run && runLookupAttempts < RUN_LOOKUP_MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, RUN_LOOKUP_RETRY_MS));
+      [run] = await lookupScopedRun();
+      runLookupAttempts += 1;
+    }
+    if (runLookupAttempts > 1) {
+      console.warn(
+        `[plugins/tools/execute] heartbeat_runs visibility lag run=${runContext.runId} ` +
+          `agent=${runContext.agentId} company=${runContext.companyId}: ` +
+          (run
+            ? `resolved after ${runLookupAttempts} attempts`
+            : `still missing after ${runLookupAttempts} attempts`),
+      );
+    }
     if (!run || run.companyId !== runContext.companyId) {
       return '"runContext.runId" does not belong to "runContext.companyId"';
     }
     if (run.agentId !== runContext.agentId) {
       return '"runContext.runId" does not belong to "runContext.agentId"';
     }
+    //// End Neocompany Modification
 
     const [project] = await db
       .select({ companyId: projects.companyId })
