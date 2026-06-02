@@ -30,7 +30,7 @@
  * for local dev / smoke tests, NOT safe for prod multi-tenant.
  */
 
-import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -311,6 +311,23 @@ async function seedAgentWorkspace(
   const skillDir = join(home, "skills", "neocompany", "image-generate");
   await mkdir(skillDir, { recursive: true });
   await writeFile(join(skillDir, "SKILL.md"), buildCodexImageSkill(), "utf8");
+  //// Remove the competing image-generation skills Hermes ships (FAL via
+  //// inference-sh, and the gpt-image illustration skills). They make skill
+  //// selection non-deterministic — the agent sometimes picks a FAL/Nous-Portal
+  //// path it cannot run and then reports "image generation unavailable" instead
+  //// of using our Codex skill. Removing them leaves the Codex skill as the only
+  //// image generator, which is the reliable, key-free path on this instance.
+  //// Per-run + idempotent; only touches this isolated per-agent HERMES_HOME.
+  const competingImageSkills = [
+    join(home, "skills", "inference-sh"),
+    join(home, "skills", "creative", "baoyu-comic"),
+    join(home, "skills", "creative", "baoyu-infographic"),
+    join(home, "skills", "creative", "baoyu-article-illustrator"),
+    join(home, "skills", "creative", "pixel-art"),
+  ];
+  for (const dir of competingImageSkills) {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
   //// End Neocompany Modification
 }
 
