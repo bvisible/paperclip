@@ -427,7 +427,13 @@ export async function seedDefaultAgentsForCompany(
             // to match the HERMES_HOME config.yaml the registry seeds.
             model: "gpt-5.5",
             persistSession: true,
-            timeoutSec: 300,
+            //// Neocompany Modification — 600s (was 300s) to give slow tools
+            //// room within a single agent run. codex-cli image generation
+            //// (gpt-image) legitimately takes minutes; at 300s the image was
+            //// produced but the run timed out before the generated_image entity
+            //// could be saved, sending the issue to recovery/blocked.
+            timeoutSec: 600,
+            //// End Neocompany Modification
             // Point at the venv-installed hermes binary when it's not on
             // the service PATH (PAPERCLIP_HERMES_COMMAND). Omitted → adapter
             // keeps its bare "hermes" default.
