@@ -126,6 +126,28 @@ export function ContentApprovals() {
     refetchOnWindowFocus: false,
   });
 
+  //// Neocompany Modification — resolve draft-card images regardless of approval
+  //// status. The approved-only `imagesQuery` above drives the auto-draft
+  //// generator, but a draft can reference a freshly generated (still pending)
+  //// image; fetch ALL library images so the card shows the attached visual the
+  //// human is approving instead of "No image".
+  const allImagesQuery = useQuery({
+    queryKey: ["all-library", selectedCompanyId],
+    queryFn: async (): Promise<LibraryImage[]> => {
+      if (!pluginId || !selectedCompanyId) return [];
+      const res = await pluginsApi.bridgeGetData(
+        pluginId,
+        "imageList",
+        { companyId: selectedCompanyId, limit: 200 },
+        selectedCompanyId,
+      );
+      return (res as { data: { images: LibraryImage[] } }).data?.images ?? [];
+    },
+    enabled: !!pluginId && !!selectedCompanyId,
+    refetchOnWindowFocus: false,
+  });
+  //// End Neocompany Modification
+
   const approveMut = useMutation({
     mutationFn: async (postId: string) => {
       if (!pluginId || !selectedCompanyId) throw new Error("Plugin not available");
@@ -234,9 +256,11 @@ export function ContentApprovals() {
 
   const imageById = useMemo(() => {
     const map = new Map<string, LibraryImage>();
-    for (const img of imagesQuery.data ?? []) map.set(img.id, img);
+    //// Neocompany Modification — build from ALL images (incl. pending) so a
+    //// draft's attached visual renders even before the image is approved.
+    for (const img of allImagesQuery.data ?? []) map.set(img.id, img);
     return map;
-  }, [imagesQuery.data]);
+  }, [allImagesQuery.data]);
 
   if (pluginsQuery.isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   if (!neoPlugin) {
