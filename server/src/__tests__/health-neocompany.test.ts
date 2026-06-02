@@ -230,6 +230,7 @@ describe("GET /health — neocompany fork stats", () => {
     expect(res.body).toEqual({
       status: "ok",
       deploymentMode: "authenticated",
+      deploymentExposure: "public",
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
     });

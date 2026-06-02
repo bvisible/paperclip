@@ -136,7 +136,7 @@ describe("seedDefaultAgentsForCompany — PAPERCLIP_SEED_ADAPTER flag", () => {
       // openai-codex provider = ChatGPT Pro OAuth, no API key.
       expect(cfg.provider).toBe("openai-codex");
       expect(cfg.persistSession).toBe(true);
-      expect(cfg.timeoutSec).toBe(300);
+      expect(cfg.timeoutSec).toBe(600);
       // HERMES_HOME must NOT be baked in at seed time — it is resolved per
       // (company, user, agent) at runtime by the registry wrapper.
       expect(cfg.env).toBeUndefined();

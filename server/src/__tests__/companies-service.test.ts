@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { companies, createDb } from "@paperclipai/db";
+import { companies, projects, createDb } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -25,6 +25,9 @@ describeEmbeddedPostgres("companyService", () => {
   }, 20_000);
 
   afterEach(async () => {
+    // create() seeds a default "General" project (FK projects -> companies);
+    // delete projects first so the raw company cleanup doesn't hit the FK.
+    await db.delete(projects);
     await db.delete(companies);
   });
 
