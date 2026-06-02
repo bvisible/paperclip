@@ -1314,6 +1314,31 @@ const plugin = definePlugin({
       if (status) posts = posts.filter((p) => p.status === status);
       // Newest first for approvals, chronological for calendar — caller sorts.
       posts.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+      //// Neocompany Modification — resolve each draft's attached image URL
+      //// server-side so the Approvals UI renders the visual WITHOUT fetching
+      //// the whole image library (full data-URLs, ~MBs each) client-side. Only
+      //// the images referenced by the listed drafts are sent to the client.
+      const neededImageIds = [
+        ...new Set(posts.map((p) => p.imageId).filter((x): x is string => typeof x === "string" && x.length > 0)),
+      ];
+      if (neededImageIds.length > 0) {
+        const imageRows = await ctx.entities.list({
+          entityType: IMAGE_ENTITY_TYPE,
+          scopeKind: "company",
+          scopeId: companyId,
+          limit: 500,
+        });
+        const urlById = new Map<string, string>();
+        for (const r of imageRows) {
+          const id = r.externalId ?? r.id;
+          const url = (r.data as unknown as GeneratedImageData).finalImageUrl;
+          if (id && url) urlById.set(id, url);
+        }
+        posts = posts.map((p) =>
+          p.imageId ? { ...p, imageFinalUrl: urlById.get(p.imageId) } : p,
+        );
+      }
+      //// End Neocompany Modification
       return { posts, count: posts.length };
     });
 
