@@ -161,6 +161,18 @@ function buildToolsGuide(role: string | null | undefined, name: string | null | 
     "draft a social post, run an SEO/analytics check), you MUST call the real",
     "NeoCompany tool. NEVER fabricate the result, invent a metric/URL, or write a",
     "\"dry-run\" stand-in — do the real action or say plainly what you could not do.",
+    "You may report an inability ONLY AFTER you actually ran the tool call and saw",
+    "its real error. NEVER declare a tool/feature \"unavailable\", \"not configured\",",
+    "or missing a key WITHOUT having executed it first — that is a fabrication.",
+    "",
+    "## CRITICAL — authenticate EVERY call",
+    "Every request to `$PAPERCLIP_API_URL` — including GET/reads — MUST carry",
+    "`-H \"Authorization: Bearer $PAPERCLIP_API_KEY\"` (plus",
+    "`-H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\"` on writes). The key is already in",
+    "your environment. A `401` means you OMITTED the header — add it and retry. A 401",
+    "NEVER means the API, a tool, or image generation is \"unavailable\". Do NOT make",
+    "exploratory GET calls to \"read\" your issue first — the task is already in this",
+    "prompt. Go straight to your deliverable tool.",
     "",
     "## Be efficient and resilient",
     "Go STRAIGHT to the action tool for the task — do NOT run pre-checks first",
@@ -194,8 +206,16 @@ function buildToolsGuide(role: string | null | undefined, name: string | null | 
     "  `socialDraftCreate` (params: `provider` [linkedin|facebook|instagram], `text`,",
     "  optional `imageId`). It lands in the Approvals screen; approval publishes it.",
     "  NEVER publish directly, NEVER fabricate a published post.",
-    "- **Image / visual** → generate it with `imageGenerate` (it lands in the image",
-    "  library). Also: `imageList`, `imageApprove`.",
+    "- **Image / visual** → call the Paperclip `imageGenerate` tool via the curl",
+    "  recipe above (POST /plugins/tools/execute). This is a PAPERCLIP TOOL, NOT a",
+    "  Hermes-native capability. IGNORE any built-in / Nous Portal / Tool Gateway /",
+    "  FAL image generation — none of that exists or is used here. The Paperclip",
+    "  `imageGenerate` tool runs the server's Codex CLI (our subscription) and needs",
+    "  NO API key, NO FAL_KEY, NO Nous Portal login. For ANY image request your FIRST",
+    "  action MUST be the imageGenerate curl — do NOT reason about availability, do",
+    "  NOT list issues first, just run it and wait (it takes ~2 min). NEVER write that",
+    "  image generation is unavailable / missing FAL / missing a key — that is FALSE",
+    "  and is a fabrication. The result lands in the image library. Also: `imageList`, `imageApprove`.",
     "- **Email** → `emailSendMessage` to send (only when the task clearly asks to send",
     "  to a real recipient); `emailListMessages` / `emailReadMessage` to read inbound.",
     "- **SEO / analytics** → read LIVE with `seoGa4Traffic`, `seoGscKeywords`,",
@@ -216,6 +236,66 @@ function buildToolsGuide(role: string | null | undefined, name: string | null | 
 }
 
 /** Create the workspace dir and write the role-aware AGENTS.md tools guide. */
+//// Neocompany Modification — codex image-generation Hermes skill.
+//// Hermes agents reach for their NATIVE image skills (creative/*, inference-sh
+//// = FAL, the Nous Portal / Tool Gateway managed-FAL path) when asked for an
+//// image, find them unconfigured, and give up — they ignore the AGENTS.md
+//// prose that points them at the Paperclip `imageGenerate` curl. Skills are the
+//// mechanism Hermes actively SELECTS for a task, so we ship a dominant
+//// image-generation skill that routes to the Paperclip tool (which runs the
+//// local Codex CLI, no key). Strong description + tags so the skill scanner
+//// picks it over the FAL ones; explicit "do not use FAL/Nous Portal" so the
+//// model stops confabulating unavailability.
+function buildCodexImageSkill(): string {
+  return [
+    "---",
+    "name: neocompany-image-generate",
+    'description: "Generate ANY raster image — product photo, illustration, mockup, social visual, background, logo concept, picture — for a NeoCompany task. This is the ONLY working image generator on this instance: it runs the local Codex CLI via the Paperclip imageGenerate tool and needs NO API key, NO FAL, NO Nous Portal, NO OpenAI key. ALWAYS use this skill for any image/visual/picture/photo request. NEVER use inference-sh, FAL, built-in image_gen, or the Nous Portal / Tool Gateway path — they are not configured here and do not apply."',
+    "version: 1.0.0",
+    "author: NeoCompany",
+    "license: MIT",
+    "platforms: [linux]",
+    "prerequisites:",
+    "  env_vars: [PAPERCLIP_API_URL, PAPERCLIP_API_KEY, PAPERCLIP_RUN_ID]",
+    "  commands: [curl]",
+    "metadata:",
+    "  hermes:",
+    "    tags: [image, image-generation, generate-image, create-image, product-photo, illustration, visual, picture, photo, mockup, design, graphic, render]",
+    "---",
+    "",
+    "# NeoCompany Image Generation (Codex CLI — no key)",
+    "",
+    "Generate an image for the current task. Image generation IS available here and",
+    "needs NO API key. It runs the server's **Codex CLI** through the Paperclip",
+    "`imageGenerate` tool. There is **NO FAL, NO Nous Portal, NO Tool Gateway, NO",
+    "OpenAI key** involved — ignore any such requirement, it does not apply on this",
+    "instance. The generated image is saved to the company image library.",
+    "",
+    "## When to use",
+    "For ANY request to create / generate / draw / render / produce an image, photo,",
+    "illustration, mockup, background, social visual, or picture. This is the ONLY",
+    "image generator that works here. Do NOT reach for inference-sh, FAL, a built-in",
+    "image tool, or `hermes model` / Nous Portal — they are NOT used and will not work.",
+    "",
+    "## How — this is your FIRST and only action for an image task",
+    "1. Write the request body to `/tmp/imgtool.json` with the write_file tool",
+    "   (pick width×height: 1024x1024 square, 1024x1536 portrait, 1536x1024 landscape):",
+    '   {"tool":"imageGenerate","parameters":{"prompt":"<full descriptive prompt>","width":1024,"height":1024}}',
+    "2. Run it with the terminal tool (it takes ~2 min while Codex renders — wait for it):",
+    '   curl -sS -X POST "$PAPERCLIP_API_URL/plugins/tools/execute" \\',
+    '     -H "Authorization: Bearer $PAPERCLIP_API_KEY" \\',
+    '     -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \\',
+    '     -H "Content-Type: application/json" --data @/tmp/imgtool.json',
+    "3. On success the JSON result holds the generated image id and it is in the",
+    "   library — report success with that id.",
+    "4. If (and only if) the call returns an explicit error, report that EXACT error.",
+    "   NEVER write that image generation is unavailable / missing FAL_KEY / needs a",
+    "   key or Nous Portal login — that is FALSE here and is a fabrication.",
+    "",
+  ].join("\n");
+}
+//// End Neocompany Modification
+
 async function seedAgentWorkspace(
   home: string,
   role: string | null | undefined,
@@ -225,6 +305,13 @@ async function seedAgentWorkspace(
   await mkdir(ws, { recursive: true });
   // Overwrite each run so the guide always reflects the current code.
   await writeFile(join(ws, "AGENTS.md"), buildToolsGuide(role, name), "utf8");
+  //// Neocompany Modification — seed the codex image-generation skill so the
+  //// Hermes skill scanner offers it (and the agent selects it) for image tasks
+  //// instead of the FAL / Nous Portal native skills. Re-seeded each run.
+  const skillDir = join(home, "skills", "neocompany", "image-generate");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(join(skillDir, "SKILL.md"), buildCodexImageSkill(), "utf8");
+  //// End Neocompany Modification
 }
 
 /**

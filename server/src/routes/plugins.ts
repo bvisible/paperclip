@@ -1005,8 +1005,24 @@ export function pluginRoutes(
       return;
     }
 
+    //// Neocompany Modification — tolerate bare tool names. Agents frequently
+    //// call a tool by its bare name (e.g. `imageGenerate`) instead of the
+    //// fully namespaced `<pluginKey>:imageGenerate` the dispatcher expects,
+    //// which otherwise 404s. If the bare name matches exactly one registered
+    //// tool, resolve it to the namespaced name so both forms work.
+    let resolvedTool = tool;
+    if (!toolDeps.toolDispatcher.getTool(resolvedTool) && !resolvedTool.includes(":")) {
+      const matches = toolDeps.toolDispatcher
+        .listToolsForAgent()
+        .filter((t) => t.name.endsWith(`:${resolvedTool}`));
+      if (matches.length === 1) {
+        resolvedTool = matches[0].name;
+      }
+    }
+    //// End Neocompany Modification
+
     // Verify the tool exists
-    const registeredTool = toolDeps.toolDispatcher.getTool(tool);
+    const registeredTool = toolDeps.toolDispatcher.getTool(resolvedTool);
     if (!registeredTool) {
       res.status(404).json({ error: `Tool "${tool}" not found` });
       return;
@@ -1014,7 +1030,7 @@ export function pluginRoutes(
 
     try {
       const result = await toolDeps.toolDispatcher.executeTool(
-        tool,
+        resolvedTool,
         parameters ?? {},
         runContext,
       );

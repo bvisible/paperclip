@@ -179,7 +179,23 @@ async function generateWithCodexCli(
   //// vertical story) so the chosen format actually reaches Codex.
   //// End Neocompany Modification
   const aspectHint = describeAspectRatio(width, height);
-  const instruction = `generate image (${aspectHint}): ${prompt}`;
+  //// Neocompany Modification — force the built-in image_gen path (no key).
+  //// codex's imagegen skill has two modes: the built-in `image_gen` tool
+  //// (default, OAuth subscription, NO OPENAI_API_KEY) and a CLI fallback
+  //// (`scripts/image_gen.py`, which DOES require OPENAI_API_KEY). In
+  //// non-interactive `codex exec` mode codex may stall — ask a clarifying
+  //// question it can never get answered, or reason without ever calling
+  //// the tool — and exit with no PNG. We give it an imperative, no-questions
+  //// instruction that pins the built-in tool and forbids the keyed fallback,
+  //// so the subscription path is taken every time and codex generates now.
+  //// End Neocompany Modification
+  const instruction =
+    `Use the built-in image_gen tool to generate exactly one image right now. ` +
+    `Do NOT ask any question, do NOT request clarification or confirmation — ` +
+    `make reasonable creative assumptions and proceed immediately. ` +
+    `Do NOT use the CLI fallback, scripts/image_gen.py, gpt-image-1.5, or any OPENAI_API_KEY path. ` +
+    `Aspect ratio: ${aspectHint}. ` +
+    `Image to create: ${prompt}`;
 
   const env = {
     ...process.env,

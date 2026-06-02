@@ -284,13 +284,13 @@ describe("imageGenerate — reference images plumbing", () => {
     expect(refPath).toMatch(/codex-refs-.+ref_0\.png$/);
 
     // The prompt fed to codex (last arg after `--`) should:
-    //  - open with the aspect-ratio hint surfaced from width/height
+    //  - carry the aspect-ratio hint surfaced from width/height
     //  - contain a focal-point directive that names the product
     //  - carry the short description after the [Product] tag
     //  - keep the user's brief at the end
     const sepIdx = args.findIndex((a) => a === "--");
     const promptArg = args[sepIdx + 1]!;
-    expect(promptArg).toMatch(/^generate image \([^)]+\):/);
+    expect(promptArg).toMatch(/Aspect ratio: [^.]+\. Image to create:/);
     expect(promptArg).toContain('reference images show "Robe d\'été"');
     expect(promptArg).toContain("MUST be the focal point");
     expect(promptArg).toContain("entire");
@@ -330,7 +330,7 @@ describe("imageGenerate — reference images plumbing", () => {
     const sepIdx = args.findIndex((a) => a === "--");
     const promptArg = args[sepIdx + 1]!;
     // The unmodified user prompt should reach codex when the product
-    // lookup fails — only the aspect-ratio hint is prepended.
-    expect(promptArg).toMatch(/^generate image \([^)]+\): no product here$/);
+    // lookup fails — appended after the aspect-ratio hint.
+    expect(promptArg).toMatch(/Aspect ratio: [^.]+\. Image to create: no product here$/);
   });
 });

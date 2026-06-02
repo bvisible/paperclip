@@ -1969,7 +1969,10 @@ export function pluginLoader(
       // ------------------------------------------------------------------
       const toolDeclarations = manifest.tools ?? [];
       if (toolDeclarations.length > 0) {
-        toolDispatcher.registerPluginTools(pluginKey, manifest);
+        // Pass the DB UUID (pluginId) as pluginDbId so executeTool can resolve
+        // the worker, which the worker manager keys by UUID. Without it the
+        // registry falls back to the plugin key and isRunning(key) misses → 502.
+        toolDispatcher.registerPluginTools(pluginKey, manifest, pluginId);
         registered.tools = toolDeclarations.length;
 
         log.info(
