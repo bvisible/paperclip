@@ -3759,9 +3759,34 @@ export function issueRoutes(
       return;
     }
 
+    //// Neocompany Modification — append a per-role deliverable directive to the
+    //// task itself. A cwd AGENTS.md tools-guide alone proved insufficient (a
+    //// writer kept saving a .md file instead of calling wpCreatePost); the issue
+    //// description is the highest-salience instruction the specialist reads, so
+    //// we name the required tool + deliverable right in the task.
+    const DELIVERABLE_BY_ROLE: Record<string, string> = {
+      writer:
+        "Create the article as a WordPress DRAFT with the `wpCreatePost` tool (status=draft) via POST $PAPERCLIP_API_URL/plugins/tools/execute. The deliverable is the WordPress draft — do NOT just save a local .md file or an issue document.",
+      social:
+        "Generate the copy, then queue a DRAFT for human approval with the `socialDraftCreate` tool (params: provider, text, optional imageId). Never publish directly, never fabricate a published post.",
+      community:
+        "Generate the copy, then queue a DRAFT for approval with the `socialDraftCreate` tool. Never publish directly.",
+      designer:
+        "Generate the image with the `imageGenerate` tool (it lands in the image library). Do not fabricate an image URL.",
+      seo:
+        "Read the data LIVE with the seo* tools (`seoGa4Traffic`, `seoGscKeywords`, `seoGscTopPages`, …). If the company has no Google connection the tool errors — report that honestly, never invent numbers.",
+      support:
+        "Use the email tools (`emailListMessages`/`emailReadMessage` to read; `emailSendMessage` only when explicitly asked to send to a real recipient).",
+    };
+    const deliverable = DELIVERABLE_BY_ROLE[String(target.role).toLowerCase()];
+    const description = deliverable
+      ? `${request}\n\n[Deliverable — use the real tool, do not fabricate] ${deliverable}`
+      : request;
+    //// End Neocompany Modification
+
     const issue = await svc.create(companyId, {
       title,
-      description: request,
+      description,
       status: "todo",
       assigneeAgentId: target.id,
       createdByAgentId: actor.agentId,
