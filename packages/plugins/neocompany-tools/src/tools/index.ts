@@ -559,7 +559,15 @@ export const ALL_TOOLS: RegisteredToolEntry[] = [
         properties: {
           prompt: { type: "string", description: "Free-form description of the image to generate" },
           templateId: { type: "string", description: "Optional brand template id (externalId) to composite on top" },
-          provider: { type: "string", description: "Image provider. Leave UNSET to use the Codex CLI generator (recommended, no key needed). Only set to 'openai' on instances that have an OpenAI API key configured." },
+          //// Neocompany Modification — `provider` is intentionally NOT exposed
+          //// to agents. They kept passing provider=openai (which needs an
+          //// OpenAI key the instance lacks -> MISSING_OPENAI_KEY) even when the
+          //// description said to leave it unset. With the field removed, the
+          //// agent can't pick a provider and runImageGenerate falls back to its
+          //// codex-cli default (the working path on this instance). The UI and
+          //// the Pixel autopilot still pass provider explicitly in their own
+          //// calls (they don't use this declaration).
+          //// End Neocompany Modification
           width: { type: "number", description: "Desired width in pixels (ignored if templateId is set)" },
           height: { type: "number", description: "Desired height in pixels (ignored if templateId is set)" },
           batchId: { type: "string", description: "Optional batch id to group several generations together" },
