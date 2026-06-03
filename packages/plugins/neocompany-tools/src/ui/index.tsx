@@ -1,6 +1,6 @@
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { usePluginData, usePluginAction, useHostContext } from "@paperclipai/plugin-sdk/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types — mirror the shape returned by the worker's data handlers
@@ -508,7 +508,13 @@ export function SettingsPage(_props: PluginPageProps) {
     emailAccountsResp.refresh();
   }, [catalogResp, accessResp, configResp, emailAccountsResp]);
 
-  const catalog = catalogResp.data;
+  //// Neocompany Modification — keep the last loaded catalog so any refresh
+  //// (catalogResp.data goes undefined for a tick) doesn't collapse the whole
+  //// "{!catalog ? Loading : …}" section and blank a scrolled viewport.
+  const lastCatalogRef = useRef<ToolCatalog | null>(null);
+  if (catalogResp.data) lastCatalogRef.current = catalogResp.data;
+  const catalog = catalogResp.data ?? lastCatalogRef.current;
+  //// End Neocompany Modification
   const access = accessResp.data;
   const config = configResp.data;
   const emailAccounts = emailAccountsResp.data?.accounts ?? [];
@@ -636,10 +642,15 @@ export function SettingsPage(_props: PluginPageProps) {
       body: JSON.stringify({ enabled: next }),
     });
     if (res.ok) {
+      //// Neocompany Modification — do NOT refresh the tool catalog here. The
+      //// allowlist (enabledTools) is independent of the catalog definitions;
+      //// refreshing cleared catalog to undefined for a tick, collapsing the
+      //// whole "{!catalog ? Loading : …}" section and stranding a scrolled
+      //// viewport on blank space — the "white screen when I tick a checkbox"
+      //// bug. setEnabledTools already reflects the change optimistically.
       setEnabledTools(next);
-      catalogResp.refresh();
     }
-  }, [catalogResp]);
+  }, []);
 
   const saveCompanyConfig = useCallback(
     async (patch: Partial<CompanyConfigView>) => {
