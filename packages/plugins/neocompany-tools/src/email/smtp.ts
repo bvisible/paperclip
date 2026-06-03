@@ -207,3 +207,37 @@ export async function smtpSendMail(config: SmtpConfig, msg: SmtpMessage): Promis
     socket.destroy();
   }
 }
+
+/**
+ * Verify SMTP connectivity + credentials WITHOUT sending a message:
+ * implicit-TLS connect → EHLO → AUTH LOGIN → QUIT. A 235 on the password step
+ * proves the host + mailbox credentials accept outbound mail. Used by the
+ * "Test" button so the operator knows sending works before an agent tries.
+ */
+export async function smtpVerify(config: SmtpConfig): Promise<{ ok: true; greeting: string }> {
+  if (config.port !== 465) {
+    throw new Error(`smtpVerify only supports implicit TLS on port 465 (got ${config.port})`);
+  }
+  const socket = tlsConnect({ host: config.host, port: config.port, servername: config.host });
+  const dialogue = new SmtpDialogue(socket);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("secureConnect", () => resolve());
+      socket.once("error", reject);
+    });
+    const greeting = await dialogue.read();
+    if (!greeting.startsWith("220")) throw new Error(`SMTP greeting not 220: ${greeting}`);
+    await dialogue.cmd(`EHLO ${config.host}`, ["250"]);
+    await dialogue.cmd("AUTH LOGIN", ["334"]);
+    await dialogue.cmd(b64(config.user), ["334"]);
+    await dialogue.cmd(b64(config.password), ["235"]);
+    try {
+      await dialogue.cmd("QUIT", ["221"]);
+    } catch {
+      // Some servers drop the connection right after QUIT — ignore.
+    }
+    return { ok: true, greeting: greeting.slice(0, 80) };
+  } finally {
+    socket.destroy();
+  }
+}

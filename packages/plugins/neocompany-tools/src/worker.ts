@@ -15,6 +15,7 @@ import { ALL_TOOLS, type ToolContextAccess } from "./tools/index.js";
 import { TOOL_REGISTRY, CATEGORY_LABELS, type ToolMetadata } from "./tools/registry.js";
 import { runImapPollJob } from "./email/poller.js";
 import { pollImapAccount } from "./email/imap-client.js";
+import { smtpVerify } from "./email/smtp.js";
 import type { EmailAccountData } from "./email/types.js";
 import { IMAGE_ENTITY_TYPE, type GeneratedImageData } from "./images/types.js";
 import type { BrandTemplateData } from "./templates/types.js";
@@ -1996,6 +1997,11 @@ const plugin = definePlugin({
           imapHost: data.imapHost,
           imapPort: data.imapPort,
           imapUser: data.imapUser,
+          //// Neocompany Modification — surface outbound SMTP so the UI can show
+          //// whether the account can SEND (smtpHost set) or is receive-only.
+          smtpHost: data.smtpHost ?? null,
+          smtpPort: data.smtpPort ?? null,
+          //// End Neocompany Modification
           pollingEnabled: data.pollingEnabled,
           pollIntervalMin: data.pollIntervalMin ?? 5,
           lastSeenUid: data.lastSeenUid ?? 0,
@@ -2102,6 +2108,11 @@ const plugin = definePlugin({
       const data = (target.data ?? {}) as unknown as EmailAccountData;
       if (!data.imapPassRef) throw new Error("Account has no IMAP password ref configured");
       const password = await ctx.secrets.resolve(data.imapPassRef);
+      //// Neocompany Modification — test BOTH IMAP (receiving) and, when the
+      //// account is configured to send (smtpHost set), SMTP (sending), so the
+      //// operator knows in one click whether agents can read AND write mail.
+      let imapOk = false;
+      let imapMsg = "";
       try {
         const result = await pollImapAccount({
           host: data.imapHost,
@@ -2112,11 +2123,33 @@ const plugin = definePlugin({
           lastSeenUid: Number.MAX_SAFE_INTEGER - 1,
           maxMessages: 0,
         });
-        return { ok: true, message: `Connected to ${data.imapHost}:${data.imapPort}`, latestUid: result.newLastSeenUid };
+        imapOk = true;
+        imapMsg = `IMAP ✓ ${data.imapHost}:${data.imapPort} (uid ${result.newLastSeenUid})`;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { ok: false, error: message };
+        imapMsg = `IMAP ✗ ${err instanceof Error ? err.message : String(err)}`;
       }
+
+      let smtpOk = true; // "not configured" doesn't count as a failure
+      let smtpMsg = "SMTP — not configured (receive-only; set an SMTP host to let agents send)";
+      if (data.smtpHost) {
+        smtpOk = false;
+        try {
+          await smtpVerify({
+            host: data.smtpHost,
+            port: data.smtpPort ?? 465,
+            user: data.imapUser,
+            password,
+          });
+          smtpOk = true;
+          smtpMsg = `SMTP ✓ ${data.smtpHost}:${data.smtpPort ?? 465}`;
+        } catch (err) {
+          smtpMsg = `SMTP ✗ ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
+      const message = `${imapMsg}  ·  ${smtpMsg}`;
+      return imapOk && smtpOk ? { ok: true, message } : { ok: false, error: message };
+      //// End Neocompany Modification
     });
 
     for (const tool of ALL_TOOLS) {

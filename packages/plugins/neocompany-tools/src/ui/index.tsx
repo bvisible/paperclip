@@ -61,6 +61,8 @@ interface EmailAccountView {
   imapHost: string;
   imapPort: number;
   imapUser: string;
+  smtpHost: string | null;
+  smtpPort: number | null;
   pollingEnabled: boolean;
   pollIntervalMin: number;
   lastSeenUid: number;
@@ -491,7 +493,9 @@ export function SettingsPage(_props: PluginPageProps) {
     imapHost: "",
     imapPort: 993,
     imapUser: "",
-    imapPassRef: "",
+    imapPass: "",
+    smtpHost: "",
+    smtpPort: 465,
     pollIntervalMin: 5,
     pollingEnabled: true,
   });
@@ -523,9 +527,25 @@ export function SettingsPage(_props: PluginPageProps) {
   );
 
   const onAddAccount = useCallback(async () => {
-    if (!companyId || !draft.address || !draft.imapHost) return;
+    if (!companyId || !draft.address || !draft.imapHost || !draft.imapPass) return;
     setPendingAccountAction("add");
     try {
+      //// Neocompany Modification — store the mailbox password as an encrypted
+      //// company secret, then reference it. The operator types the real
+      //// password (used for both IMAP and SMTP, same credentials) — no more
+      //// pasting a pre-created secret ref UUID.
+      const secretRes = await fetch(`/api/companies/${companyId}/secrets`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `Email mailbox — ${draft.address}`, value: draft.imapPass }),
+      });
+      if (!secretRes.ok) {
+        const detail = await secretRes.text();
+        setAccountTestResult({ id: "__add__", ok: false, message: `Could not store password: ${detail.slice(0, 140)}` });
+        return;
+      }
+      const secret = (await secretRes.json()) as { id: string };
       await emailAccountUpsert({
         companyId,
         address: draft.address,
@@ -533,10 +553,13 @@ export function SettingsPage(_props: PluginPageProps) {
         imapHost: draft.imapHost,
         imapPort: Number(draft.imapPort),
         imapUser: draft.imapUser || draft.address,
-        imapPassRef: draft.imapPassRef,
+        imapPassRef: secret.id,
+        smtpHost: draft.smtpHost.trim() || undefined,
+        smtpPort: draft.smtpHost.trim() ? Number(draft.smtpPort) || 465 : undefined,
         pollIntervalMin: Number(draft.pollIntervalMin),
         pollingEnabled: draft.pollingEnabled,
       });
+      //// End Neocompany Modification
       setShowAddForm(false);
       setDraft({
         address: "",
@@ -544,7 +567,9 @@ export function SettingsPage(_props: PluginPageProps) {
         imapHost: "",
         imapPort: 993,
         imapUser: "",
-        imapPassRef: "",
+        imapPass: "",
+        smtpHost: "",
+        smtpPort: 465,
         pollIntervalMin: 5,
         pollingEnabled: true,
       });
@@ -874,12 +899,32 @@ export function SettingsPage(_props: PluginPageProps) {
                 />
               </label>
               <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ color: tokens.mutedText, fontSize: 12 }}>IMAP password — secret ref</span>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Mailbox password (IMAP + SMTP)</span>
+                <input
+                  type="password"
+                  value={draft.imapPass}
+                  onChange={(e) => setDraft({ ...draft, imapPass: e.target.value })}
+                  placeholder="••••••••  — stored as an encrypted secret"
+                  autoComplete="new-password"
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>SMTP host — to SEND (optional)</span>
                 <input
                   type="text"
-                  value={draft.imapPassRef}
-                  onChange={(e) => setDraft({ ...draft, imapPassRef: e.target.value })}
-                  placeholder="secret_ref_uuid"
+                  value={draft.smtpHost}
+                  onChange={(e) => setDraft({ ...draft, smtpHost: e.target.value })}
+                  placeholder="mail.infomaniak.com — empty = receive-only"
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>SMTP port (465 implicit TLS)</span>
+                <input
+                  type="number"
+                  value={draft.smtpPort}
+                  onChange={(e) => setDraft({ ...draft, smtpPort: Number(e.target.value) })}
                   style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
                 />
               </label>
@@ -904,7 +949,7 @@ export function SettingsPage(_props: PluginPageProps) {
             <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button
                 onClick={onAddAccount}
-                disabled={!draft.address || !draft.imapHost || !draft.imapPassRef || pendingAccountAction === "add"}
+                disabled={!draft.address || !draft.imapHost || !draft.imapPass || pendingAccountAction === "add"}
                 style={{
                   background: tokens.primary,
                   color: "#fff",
@@ -913,16 +958,17 @@ export function SettingsPage(_props: PluginPageProps) {
                   padding: "6px 14px",
                   fontSize: 13,
                   cursor: "pointer",
-                  opacity: !draft.address || !draft.imapHost || !draft.imapPassRef ? 0.5 : 1,
+                  opacity: !draft.address || !draft.imapHost || !draft.imapPass ? 0.5 : 1,
                 }}
               >
                 {pendingAccountAction === "add" ? "Saving…" : "Save account"}
               </button>
             </div>
             <p style={{ marginTop: 10, color: tokens.mutedText, fontSize: 11 }}>
-              The IMAP password must already exist as a Paperclip secret. Paste its
-              reference UUID here. The poller resolves it on every cycle and never
-              caches the value.
+              Enter the mailbox password directly — it is stored as an <strong>encrypted
+              company secret</strong> (never kept in plain text) and reused for both IMAP and
+              SMTP. Set an <strong>SMTP host</strong> to let agents send from this address;
+              leave it empty for a receive-only mailbox. SMTP is implicit-TLS on port 465.
             </p>
           </Card>
         )}
@@ -949,6 +995,11 @@ export function SettingsPage(_props: PluginPageProps) {
                       </div>
                       <div style={{ color: tokens.mutedText, fontSize: 12, marginTop: 2 }}>
                         {acc.address} · {acc.imapHost}:{acc.imapPort} · poll every {acc.pollIntervalMin} min · UID floor {acc.lastSeenUid}
+                      </div>
+                      <div style={{ fontSize: 12, marginTop: 4, fontWeight: 600, color: acc.smtpHost ? tokens.primary : tokens.mutedText }}>
+                        {acc.smtpHost
+                          ? `✉ Sending: SMTP ${acc.smtpHost}:${acc.smtpPort ?? 465}`
+                          : "✉ Receiving only — add an SMTP host to let agents send"}
                       </div>
                       {acc.lastError && (
                         <div style={{ color: tokens.danger, fontSize: 12, marginTop: 4 }}>
