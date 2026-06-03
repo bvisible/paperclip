@@ -205,14 +205,40 @@ function Toggle({
   disabled?: boolean;
   label?: string;
 }) {
+  //// Neocompany Modification — render as a <button role="switch"> instead of a
+  //// <label> wrapping an absolutely-positioned hidden <input type="checkbox">.
+  //// Why: that hidden checkbox had position:absolute with NO positioned
+  //// ancestor (label/card/<main> are all static), so its containing block was
+  //// the document, not <main>. It escaped <main>'s overflow:auto clipping and
+  //// stretched documentElement to ~3161px while <body> stayed ~788px — a tall
+  //// blank "dead zone". Clicking a toggle moved focus to that checkbox and the
+  //// browser scrolled the WINDOW to bring it into view, landing the viewport in
+  //// the blank zone → the whole plugin went white on every category toggle. A
+  //// <button> is focused at the click point (already in view) and creates no
+  //// document-escaping element, so docH stays == body and no window-scroll /
+  //// white can occur. The knob <span> stays absolute but is contained by the
+  //// position:relative pill, so it is clipped normally and never escapes.
+  //// End Neocompany Modification
   return (
-    <label
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 8,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
+        background: "transparent",
+        border: "none",
+        padding: 0,
+        margin: 0,
+        font: "inherit",
+        color: "inherit",
       }}
     >
       <span
@@ -223,6 +249,7 @@ function Toggle({
           background: checked ? tokens.primary : "rgba(100, 116, 139, 0.3)",
           position: "relative",
           transition: "background 120ms",
+          flexShrink: 0,
         }}
       >
         <span
@@ -239,15 +266,8 @@ function Toggle({
           }}
         />
       </span>
-      <input
-        type="checkbox"
-        style={{ position: "absolute", opacity: 0, pointerEvents: "none" }}
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-      />
       {label && <span style={{ fontSize: 13, color: "var(--foreground, #111)" }}>{label}</span>}
-    </label>
+    </button>
   );
 }
 
