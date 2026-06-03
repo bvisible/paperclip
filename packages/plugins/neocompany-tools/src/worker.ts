@@ -2020,25 +2020,43 @@ const plugin = definePlugin({
       if (!companyId || !address) {
         throw new Error("emailAccountUpsert requires companyId and address");
       }
+      //// Neocompany Modification — merge with the existing account (matched by
+      //// address) so EDIT preserves the stored password secret + poll position
+      //// when the caller doesn't re-send them. The Edit form leaves the password
+      //// blank to keep the current one, and sends smtpHost as a string (empty =
+      //// clear sending).
+      const existingRow = (await ctx.entities.list({
+        entityType: "email_account",
+        scopeKind: "company",
+        scopeId: companyId,
+        limit: 200,
+      })).find((r) => (r.data as unknown as EmailAccountData | undefined)?.address === address);
+      const prev = (existingRow?.data ?? undefined) as EmailAccountData | undefined;
       const data: EmailAccountData = {
         address,
-        label: (params.label as string | undefined) ?? undefined,
-        imapHost: (params.imapHost as string | undefined) ?? "",
-        imapPort: Number(params.imapPort ?? 993),
-        imapUser: (params.imapUser as string | undefined) ?? address,
-        imapPassRef: (params.imapPassRef as string | undefined) ?? "",
-        //// Neocompany Modification — optional outbound SMTP (see email/types.ts).
-        smtpHost: (params.smtpHost as string | undefined) ?? undefined,
-        smtpPort: params.smtpPort !== undefined ? Number(params.smtpPort) : undefined,
-        //// End Neocompany Modification
-        pollingEnabled: Boolean(params.pollingEnabled ?? false),
-        pollIntervalMin: Number(params.pollIntervalMin ?? 5),
+        label: (params.label as string | undefined) ?? prev?.label,
+        imapHost: (params.imapHost as string | undefined) ?? prev?.imapHost ?? "",
+        imapPort: Number(params.imapPort ?? prev?.imapPort ?? 993),
+        imapUser: (params.imapUser as string | undefined) ?? prev?.imapUser ?? address,
+        // New password ref wins; otherwise keep the previously stored secret.
+        imapPassRef: ((params.imapPassRef as string | undefined) || prev?.imapPassRef) ?? "",
+        //// Optional outbound SMTP. A string (even empty) overrides; undefined keeps prev.
+        smtpHost: typeof params.smtpHost === "string"
+          ? ((params.smtpHost as string).trim() || undefined)
+          : prev?.smtpHost,
+        smtpPort: params.smtpPort !== undefined ? Number(params.smtpPort) : prev?.smtpPort,
+        pollingEnabled: params.pollingEnabled !== undefined
+          ? Boolean(params.pollingEnabled)
+          : (prev?.pollingEnabled ?? false),
+        pollIntervalMin: Number(params.pollIntervalMin ?? prev?.pollIntervalMin ?? 5),
         allowedAgents: Array.isArray(params.allowedAgents)
           ? (params.allowedAgents as string[])
-          : undefined,
+          : prev?.allowedAgents,
+        lastSeenUid: prev?.lastSeenUid ?? 0,
         status: "active",
         lastError: null,
       };
+      //// End Neocompany Modification
       const record = await ctx.entities.upsert({
         entityType: "email_account",
         scopeKind: "company",
@@ -2106,8 +2124,20 @@ const plugin = definePlugin({
       const target = candidates.find((r) => r.id === id);
       if (!target) throw new Error(`email_account "${id}" not found`);
       const data = (target.data ?? {}) as unknown as EmailAccountData;
-      if (!data.imapPassRef) throw new Error("Account has no IMAP password ref configured");
-      const password = await ctx.secrets.resolve(data.imapPassRef);
+      //// Neocompany Modification — resolve the password DEFENSIVELY. A missing
+      //// or unresolvable secret ref (e.g. a raw password stored before the form
+      //// fix) must return a clear error, NOT throw out of the action — throwing
+      //// rejected the bridge call and left the UI showing nothing ("ça se ferme").
+      let password: string;
+      try {
+        if (!data.imapPassRef) throw new Error("no password configured");
+        password = await ctx.secrets.resolve(data.imapPassRef);
+      } catch {
+        // Don't echo the resolve detail — it can contain the raw value that was
+        // mis-stored as a "ref" (i.e. the password). Keep the message generic.
+        return { ok: false, error: "Password could not be resolved — the stored secret is invalid or missing. Re-enter the mailbox password via Edit." };
+      }
+      //// End Neocompany Modification
       //// Neocompany Modification — test BOTH IMAP (receiving) and, when the
       //// account is configured to send (smtpHost set), SMTP (sending), so the
       //// operator knows in one click whether agents can read AND write mail.

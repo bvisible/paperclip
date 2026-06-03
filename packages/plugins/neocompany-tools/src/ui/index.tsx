@@ -487,6 +487,7 @@ export function SettingsPage(_props: PluginPageProps) {
   const [pendingAccountAction, setPendingAccountAction] = useState<string | null>(null);
   const [accountTestResult, setAccountTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({
     address: "",
     label: "",
@@ -526,26 +527,31 @@ export function SettingsPage(_props: PluginPageProps) {
     [companyId, setCategoryEnabled, accessResp],
   );
 
-  const onAddAccount = useCallback(async () => {
-    if (!companyId || !draft.address || !draft.imapHost || !draft.imapPass) return;
-    setPendingAccountAction("add");
+  //// Neocompany Modification — single save handler for ADD and EDIT.
+  //// On add, the typed password is required and stored as an encrypted company
+  //// secret. On edit, the password field may be left blank to keep the stored
+  //// secret (the worker merges by address and preserves imapPassRef). smtpHost
+  //// is always sent as a string so an empty value can clear sending on edit.
+  const onSaveAccount = useCallback(async () => {
+    const isEdit = editingId !== null;
+    if (!companyId || !draft.address || !draft.imapHost || (!isEdit && !draft.imapPass)) return;
+    setPendingAccountAction(isEdit ? editingId : "add");
     try {
-      //// Neocompany Modification — store the mailbox password as an encrypted
-      //// company secret, then reference it. The operator types the real
-      //// password (used for both IMAP and SMTP, same credentials) — no more
-      //// pasting a pre-created secret ref UUID.
-      const secretRes = await fetch(`/api/companies/${companyId}/secrets`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: `Email mailbox — ${draft.address}`, value: draft.imapPass }),
-      });
-      if (!secretRes.ok) {
-        const detail = await secretRes.text();
-        setAccountTestResult({ id: "__add__", ok: false, message: `Could not store password: ${detail.slice(0, 140)}` });
-        return;
+      let imapPassRef: string | undefined;
+      if (draft.imapPass) {
+        const secretRes = await fetch(`/api/companies/${companyId}/secrets`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: `Email mailbox — ${draft.address}`, value: draft.imapPass }),
+        });
+        if (!secretRes.ok) {
+          const detail = await secretRes.text();
+          setAccountTestResult({ id: editingId ?? "__add__", ok: false, message: `Could not store password: ${detail.slice(0, 140)}` });
+          return;
+        }
+        imapPassRef = ((await secretRes.json()) as { id: string }).id;
       }
-      const secret = (await secretRes.json()) as { id: string };
       await emailAccountUpsert({
         companyId,
         address: draft.address,
@@ -553,31 +559,43 @@ export function SettingsPage(_props: PluginPageProps) {
         imapHost: draft.imapHost,
         imapPort: Number(draft.imapPort),
         imapUser: draft.imapUser || draft.address,
-        imapPassRef: secret.id,
-        smtpHost: draft.smtpHost.trim() || undefined,
-        smtpPort: draft.smtpHost.trim() ? Number(draft.smtpPort) || 465 : undefined,
+        // Omit on edit-without-new-password → the worker keeps the stored secret.
+        ...(imapPassRef ? { imapPassRef } : {}),
+        smtpHost: draft.smtpHost.trim(),
+        smtpPort: Number(draft.smtpPort) || 465,
         pollIntervalMin: Number(draft.pollIntervalMin),
         pollingEnabled: draft.pollingEnabled,
       });
-      //// End Neocompany Modification
       setShowAddForm(false);
+      setEditingId(null);
       setDraft({
-        address: "",
-        label: "",
-        imapHost: "",
-        imapPort: 993,
-        imapUser: "",
-        imapPass: "",
-        smtpHost: "",
-        smtpPort: 465,
-        pollIntervalMin: 5,
-        pollingEnabled: true,
+        address: "", label: "", imapHost: "", imapPort: 993, imapUser: "",
+        imapPass: "", smtpHost: "", smtpPort: 465, pollIntervalMin: 5, pollingEnabled: true,
       });
       emailAccountsResp.refresh();
     } finally {
       setPendingAccountAction(null);
     }
-  }, [companyId, draft, emailAccountUpsert, emailAccountsResp]);
+  }, [companyId, draft, editingId, emailAccountUpsert, emailAccountsResp]);
+
+  const onEditAccount = useCallback((acc: EmailAccountView) => {
+    setAccountTestResult(null);
+    setDraft({
+      address: acc.address,
+      label: acc.label ?? "",
+      imapHost: acc.imapHost,
+      imapPort: acc.imapPort,
+      imapUser: acc.imapUser,
+      imapPass: "", // blank = keep the stored password secret
+      smtpHost: acc.smtpHost ?? "",
+      smtpPort: acc.smtpPort ?? 465,
+      pollIntervalMin: acc.pollIntervalMin,
+      pollingEnabled: acc.pollingEnabled,
+    });
+    setEditingId(acc.id);
+    setShowAddForm(true);
+  }, []);
+  //// End Neocompany Modification
 
   const onDeleteAccount = useCallback(
     async (id: string) => {
@@ -646,6 +664,14 @@ export function SettingsPage(_props: PluginPageProps) {
           id,
           ok: result.ok,
           message: result.ok ? result.message : result.error,
+        });
+      } catch (err) {
+        //// Neocompany Modification — never let a thrown action leave the UI
+        //// silent ("ça se ferme"): always surface a result row.
+        setAccountTestResult({
+          id,
+          ok: false,
+          message: err instanceof Error ? err.message : "Test failed — the server returned an error.",
         });
       } finally {
         setPendingAccountAction(null);
@@ -831,7 +857,19 @@ export function SettingsPage(_props: PluginPageProps) {
             Email accounts {emailAccounts.length > 0 ? `· ${emailAccounts.length}` : ""}
           </h2>
           <button
-            onClick={() => setShowAddForm((v) => !v)}
+            onClick={() => {
+              if (showAddForm) {
+                setShowAddForm(false);
+                setEditingId(null);
+              } else {
+                setEditingId(null);
+                setDraft({
+                  address: "", label: "", imapHost: "", imapPort: 993, imapUser: "",
+                  imapPass: "", smtpHost: "", smtpPort: 465, pollIntervalMin: 5, pollingEnabled: true,
+                });
+                setShowAddForm(true);
+              }
+            }}
             style={{
               background: showAddForm ? "rgba(100, 116, 139, 0.14)" : tokens.primary,
               color: showAddForm ? "var(--foreground, #111)" : "#fff",
@@ -850,13 +888,14 @@ export function SettingsPage(_props: PluginPageProps) {
           <Card style={{ marginBottom: 12 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, fontSize: 13 }}>
               <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Address</span>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Address{editingId ? " (fixed while editing)" : ""}</span>
                 <input
                   type="email"
                   value={draft.address}
                   onChange={(e) => setDraft({ ...draft, address: e.target.value })}
                   placeholder="melvyn@neocompany.ch"
-                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
+                  disabled={editingId !== null}
+                  style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: editingId ? "rgba(100, 116, 139, 0.12)" : "transparent", color: "var(--foreground, #111)" }}
                 />
               </label>
               <label style={{ display: "grid", gap: 4 }}>
@@ -899,12 +938,14 @@ export function SettingsPage(_props: PluginPageProps) {
                 />
               </label>
               <label style={{ display: "grid", gap: 4 }}>
-                <span style={{ color: tokens.mutedText, fontSize: 12 }}>Mailbox password (IMAP + SMTP)</span>
+                <span style={{ color: tokens.mutedText, fontSize: 12 }}>
+                  Mailbox password (IMAP + SMTP){editingId ? " — blank = keep current" : ""}
+                </span>
                 <input
                   type="password"
                   value={draft.imapPass}
                   onChange={(e) => setDraft({ ...draft, imapPass: e.target.value })}
-                  placeholder="••••••••  — stored as an encrypted secret"
+                  placeholder={editingId ? "leave blank to keep the stored password" : "••••••••  — stored as an encrypted secret"}
                   autoComplete="new-password"
                   style={{ padding: "6px 8px", border: tokens.cardBorder, borderRadius: 6, background: "transparent", color: "var(--foreground, #111)" }}
                 />
@@ -948,8 +989,8 @@ export function SettingsPage(_props: PluginPageProps) {
             </div>
             <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button
-                onClick={onAddAccount}
-                disabled={!draft.address || !draft.imapHost || !draft.imapPass || pendingAccountAction === "add"}
+                onClick={onSaveAccount}
+                disabled={!draft.address || !draft.imapHost || (!editingId && !draft.imapPass) || pendingAccountAction === (editingId ?? "add")}
                 style={{
                   background: tokens.primary,
                   color: "#fff",
@@ -958,10 +999,10 @@ export function SettingsPage(_props: PluginPageProps) {
                   padding: "6px 14px",
                   fontSize: 13,
                   cursor: "pointer",
-                  opacity: !draft.address || !draft.imapHost || !draft.imapPass ? 0.5 : 1,
+                  opacity: !draft.address || !draft.imapHost || (!editingId && !draft.imapPass) ? 0.5 : 1,
                 }}
               >
-                {pendingAccountAction === "add" ? "Saving…" : "Save account"}
+                {pendingAccountAction === (editingId ?? "add") ? "Saving…" : editingId ? "Update account" : "Save account"}
               </button>
             </div>
             <p style={{ marginTop: 10, color: tokens.mutedText, fontSize: 11 }}>
@@ -1013,6 +1054,21 @@ export function SettingsPage(_props: PluginPageProps) {
                         {!acc.pollingEnabled && " · paused"}
                       </Pill>
                       <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => onEditAccount(acc)}
+                          disabled={isPending}
+                          style={{
+                            background: "transparent",
+                            border: tokens.cardBorder,
+                            borderRadius: 6,
+                            padding: "3px 8px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                            color: "var(--foreground, #111)",
+                          }}
+                        >
+                          Edit
+                        </button>
                         <button
                           onClick={() => onTestAccount(acc.id)}
                           disabled={isPending}
